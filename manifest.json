@@ -1,0 +1,7 @@
+{
+	  "id"        : "preside-ext-tiptap"
+	, "title"     : "Preside Tiptap"
+	, "author"    : "Pixl8 Group"
+	, "version"   : "$VERSION_NUMBER"
+	, "dependsOn" : []
+}

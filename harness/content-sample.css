@@ -1,0 +1,7 @@
+/* Sample "content CSS" for the harness — stands in for an app's front-end
+   stylesheet loaded into the editor via data-stylesheets (contentsCss). */
+h2 { color: #0a7d5a; font-family: Georgia, serif; }
+p.lead { font-size: 1.25em; color: #444; font-weight: 300; }
+blockquote { border-left: 4px solid #0a7d5a; padding-left: 14px; color: #666; font-style: italic; }
+a { color: #b5179e; }
+ul li { margin-bottom: 4px; }

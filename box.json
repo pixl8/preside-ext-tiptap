@@ -1,0 +1,45 @@
+{
+    "name":"PresideCMS Extension: Tiptap",
+    "type":"preside-extensions",
+    "version":"$VERSION_NUMBER",
+    "location":"$DOWNLOAD_URL",
+    "author":"Pixl8 Group",
+    "directory":"application/extensions",
+    "homepage":"https://github.com/pixl8/preside-ext-tiptap",
+    "repository":{
+        "type":"git",
+        "URL":"https://github.com/pixl8/preside-ext-tiptap"
+    },
+    "bugs":"https://github.com/pixl8/preside-ext-tiptap/issues",
+    "slug":"preside-ext-tiptap",
+    "shortDescription":"Tiptap (v3) rich-editor for Preside. Drop-in replacement for the vendored CKEditor 4, preserving Preside's content tokens, pickers and renderers.",
+    "description":"A self-contained Tiptap v3 based rich editor that replaces Preside's legacy CKEditor 4. It reproduces the Preside integration contract - the {{image}}/{{attachment}}/{{widget}} content tokens, the link/asset/widget picker iframe protocol, the CKEDITOR.instances registry and the PresideRichEditor facade - so all server-side forms, renderers, AJAX endpoints and pickers keep working unchanged. Overrides core Sticker asset ids and the ckEditorJs.cfm view from within the extension, so no core Preside files are edited.",
+    "private":false,
+    "engines":[
+        {
+            "type":"lucee",
+            "version":">=5.x"
+        }
+    ],
+    "license":[
+        {
+            "type":"MIT",
+            "URL":"https://github.com/pixl8/preside-ext-tiptap/blob/stable/LICENSE"
+        }
+    ],
+    "scripts":{
+        "postVersion":"package set location='https://github.com/pixl8/preside-ext-tiptap/archive/v`package version`.tar.gz'",
+        "onRelease":"publish"
+    },
+    "ignore":[
+        ".git/*",
+        ".gitignore",
+        ".github/*",
+        "node_modules/*",
+        "src/*",
+        "harness/*",
+        "package.json",
+        "package-lock.json",
+        "esbuild.mjs"
+    ]
+}
