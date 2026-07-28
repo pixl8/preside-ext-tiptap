@@ -321,10 +321,10 @@ bundle.asset( "tiptap-facade" )
 ```
 
 Cache busting is **filename-based**: the build emits content-hashed filenames
-(`facade.<hash>.min.js`) and `_distFile()` globs the dist directory at
-configure time to resolve the current name (newest match wins; falls back to
-the unhashed name + `?v=` if no hashed build is present). Nothing needs
-bumping when `dist/` changes.
+(`facade.<hash>.min.js`) and each asset is declared with a **Sticker wildcard
+path** (`path="/dist/facade.*.min.js"`) — Sticker itself resolves the pattern
+to the single matching file at configure time, and throws if it matches zero
+or multiple files. Nothing needs bumping when `dist/` changes.
 
 **`views/admin/layout/ckEditorJs.cfm` — the view override.** Core's version of
 this view only includes `ckeditor`; Sticker only emits explicitly-included
@@ -431,7 +431,7 @@ step. `src/` is not shipped/needed at runtime.
   (`StaticAssetDownload.cfc::_translatePath` maps it to
   `application/extensions/<id>/…`).
 - Cache-busting is automatic: content-hashed dist filenames, resolved at
-  configure time by `StickerBundle.cfc::_distFile()`.
+  configure time via Sticker's wildcard asset paths (`StickerBundle.cfc`).
 - **Do not symlink `assets/dist`** into an installed website.
   `StaticAssetDownload._fileExists` is a security guard that rejects files not
   physically under `application/extensions/`; the CFML engine canonicalizes
@@ -441,7 +441,7 @@ step. `src/` is not shipped/needed at runtime.
   component/view resolution with no such guard and may be symlinked.
 - Production mode caches Sticker bundles, views and the extension list —
   restart or `fwreinit` after changing any `.cfc`/view, or after changing
-  `dist/` (the cached Sticker bundle must re-glob the new hashed filenames).
+  `dist/` (the cached Sticker bundle must re-resolve the new hashed filenames).
 
 ## Development harness (`harness/`)
 

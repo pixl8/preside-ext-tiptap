@@ -33,7 +33,8 @@ preside-ext-tiptap/
     admin/layout/ckEditorJs.cfm   VIEW OVERRIDE (adds tiptap-facade + tiptap-css includes + tiptapI18n data)
   assets/
     StickerBundle.cfc     auto-discovered Sticker bundle — the asset-id override;
-                          resolves the CONTENT-HASHED dist filenames by globbing
+                          declares the CONTENT-HASHED dist files via Sticker
+                          wildcard paths (path="/dist/facade.*.min.js")
     dist/                 BUILT + committed, web-served (all filenames content-hashed)
       tiptap.bundle.<hash>.min.js  Tiptap v3 + Preside extensions (window.PresideTiptap)
       facade.<hash>.min.js         window.PresideRichEditor (the CKEditor-API facade)
@@ -120,11 +121,13 @@ Assets are served from the stable, non-fingerprinted **extension mount**:
 
 `Preside-CMS/system/handlers/admin/StaticAssetDownload.cfc::_translatePath` maps
 `/preside/system/assets/extension/<id>/...` → `application/extensions/<id>/...`.
-Cache busting is **filename-based**: dist files are content-hashed and
-`StickerBundle.cfc::_distFile()` globs the dist dir at configure time (newest
-match wins; falls back to the unhashed name + `?v=` if no hashed build exists).
-No version bumping is needed when dist changes — but a server restart/`fwreinit`
-still is, so the cached Sticker bundle re-globs the new filenames.
+Cache busting is **filename-based**: dist files are content-hashed and each
+asset is declared with a **Sticker wildcard path** (`path="/dist/facade.*.min.js"`)
+— Sticker resolves the pattern to the single matching file at configure time,
+throwing if it matches zero or multiple files (so dist must contain exactly one
+build). No version bumping is needed when dist changes — but a server
+restart/`fwreinit` still is, so the cached Sticker bundle re-resolves the new
+filenames.
 
 ## ⚠️ CRITICAL serving constraint — do NOT symlink `assets/dist`
 
@@ -272,7 +275,7 @@ stylesSet appends, custom config files). See `harness/README.md`.
   `userIsTyping()` misses inline contenteditables).
 - If assets 404 after an install change, first suspect a **symlinked `dist`**
   (see the CRITICAL section) or a stale Sticker bundle (restart / `fwreinit` — it
-  globs the hashed filenames at configure time, so it must re-run after a rebuild).
-- rsync `dist` **with `--delete`** — stale hashed files left behind are mostly
-  harmless (`_distFile()` picks the newest match) but waste space and confuse
-  debugging.
+  resolves the hashed filenames at configure time, so it must re-run after a rebuild).
+- rsync `dist` **with `--delete`** — this is now MANDATORY: Sticker's wildcard
+  paths throw `Sticker.multipleAssets` at configure time if a stale hashed file
+  sits alongside the current one.

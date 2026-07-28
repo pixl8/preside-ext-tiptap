@@ -15,9 +15,11 @@
  *
  * The <hash> is esbuild's content hash, so filenames change when (and only
  * when) content changes - browser cache busting with no ?v= query games.
- * assets/StickerBundle.cfc resolves the current filenames by globbing the
- * dist directory; harness/server.mjs does the same for /dist/ requests.
- * Stale hashed outputs are pruned after every (re)build.
+ * assets/StickerBundle.cfc declares each asset with a Sticker wildcard path
+ * (e.g. "/dist/facade.*.min.js") which Sticker resolves to the single matching
+ * file; harness/server.mjs globs /dist/ itself. Stale hashed outputs are
+ * pruned after every (re)build - Sticker throws if a pattern matches more
+ * than one file.
  *
  * Usage:  npm install && npm run build   (or: npm run watch)
  */
