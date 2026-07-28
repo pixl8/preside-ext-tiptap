@@ -1,0 +1,84 @@
+/**
+ * Editor light / dark theme.
+ *
+ * Chrome-only: it themes the editor container (toolbar, dropdowns, footer,
+ * editable background) and never touches the stored content — dark mode is a
+ * viewing preference, not a document property, so getData() is unaffected.
+ *
+ * The choice is a per-user preference (localStorage), not a per-field config:
+ * toggling in one editor re-themes every editor on the page, and the preference
+ * survives page loads. Sites/fields opt out of the control with
+ * `defaultConfigs.darkMode = false`.
+ *
+ * The toggle button itself lives here (rather than in toolbar.js) because it is
+ * rendered into the FOOTER status bar by default - the toolbar only builds one
+ * when a toolbar config names it explicitly ("Theme" / "DarkMode").
+ */
+import { ICONS } from "./icons.js";
+import { t } from "./i18n.js";
+
+const STORAGE_KEY = "presideTiptapTheme";
+const DARK_CLASS  = "tiptap-dark";
+
+export function getTheme() {
+	let stored = null;
+	try { stored = window.localStorage.getItem( STORAGE_KEY ); } catch ( e ) {}
+	return stored === "dark" ? "dark" : "light";
+}
+
+// Called for every editor as it mounts, so a stored preference applies without
+// the user having to toggle again.
+export function applyTheme( container, mode ) {
+	container.classList.toggle( DARK_CLASS, ( mode || getTheme() ) === "dark" );
+}
+
+export function setTheme( mode ) {
+	mode = mode === "dark" ? "dark" : "light";
+	try { window.localStorage.setItem( STORAGE_KEY, mode ); } catch ( e ) {}
+
+	// Re-theme every editor on the page (and refresh their toggle buttons) rather
+	// than keeping a listener registry — editors are created/destroyed freely
+	// (frontend editors, quick-add modals), so the live DOM is the only reliable
+	// source of "which editors exist".
+	const containers = document.querySelectorAll( ".tiptap-editor-container" );
+	Array.prototype.forEach.call( containers, function( c ) { applyTheme( c, mode ); } );
+
+	const buttons = document.querySelectorAll( ".tiptap-theme-toggle" );
+	Array.prototype.forEach.call( buttons, function( b ) {
+		if ( typeof b.__syncTheme === "function" ) { b.__syncTheme(); }
+	} );
+
+	return mode;
+}
+
+export function toggleTheme() {
+	return setTheme( getTheme() === "dark" ? "light" : "dark" );
+}
+
+// Opt out with defaultConfigs.darkMode = false (no toggle rendered anywhere).
+export function themeEnabled( cfg ) {
+	return !cfg || !cfg.defaultConfigs || cfg.defaultConfigs.darkMode !== false;
+}
+
+export function renderThemeToggle() {
+	const btn = document.createElement( "button" );
+	btn.type = "button";
+	btn.className = "tiptap-btn tiptap-theme-toggle";
+	btn.setAttribute( "data-cmd", "Theme" );
+
+	// The icon shows the CURRENT mode (sun = light, moon = dark); the tooltip says
+	// what a click will do. setTheme() calls this on every toggle button on the
+	// page, so all editors' buttons stay in sync.
+	btn.__syncTheme = function() {
+		const mode  = getTheme();
+		const title = t( "toolbar.theme." + ( mode === "dark" ? "light" : "dark" ) );
+		btn.title = title;
+		btn.setAttribute( "aria-label", title );
+		btn.setAttribute( "aria-pressed", mode === "dark" ? "true" : "false" );
+		btn.innerHTML = mode === "dark" ? ICONS.ThemeDark : ICONS.ThemeLight;
+	};
+	btn.__syncTheme();
+
+	btn.addEventListener( "click", function( ev ) { ev.preventDefault(); toggleTheme(); } );
+	return btn;
+}

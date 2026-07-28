@@ -45,6 +45,7 @@
 		, "toolbar.presidelink", "toolbar.presideunlink", "toolbar.presideanchor"
 		, "toolbar.widgets", "toolbar.imagepicker", "toolbar.attachmentpicker"
 		, "toolbar.codesnippet", "toolbar.source", "toolbar.format", "toolbar.styles"
+		, "toolbar.theme.dark", "toolbar.theme.light"
 		, "styles.none"
 		, "format.p", "format.h1", "format.h2", "format.h3", "format.h4", "format.h5", "format.h6", "format.pre", "format.div"
 		, "picker.ok", "picker.cancel", "picker.close"

@@ -44,6 +44,8 @@ preside-ext-tiptap/
     facade.js             -> window.PresideRichEditor + CKEDITOR.instances shim + footer status bar
     toolbar.js            CKEditor-button-name -> Tiptap-command map + renderer
     i18n.js               UI-string lookup: cfrequest.tiptapI18n -> English defaults
+    theme.js              light/dark chrome theme (localStorage per-user preference) + its toggle button
+    maximize.js           full-viewport toggle (portals the container to <body>)
     tiptap.css            css SOURCE (built minified+hashed into dist)
     icons.js              inline SVG toolbar icons (Tabler Icons, MIT)
     pasteFilter.js        disallowedContent / pasteFromWordDisallow paste filtering
@@ -215,9 +217,39 @@ Preside way instead:
 ## Footer status bar
 
 The facade renders a `.tiptap-footer` under each editor with live word / char
-counts and estimated reading time (225 wpm), refreshed on every doc change.
-Disable per site/field with `defaultConfigs.wordcount = false`. Strings are the
-`footer.*` i18n keys.
+counts and estimated reading time (225 wpm), refreshed on every doc change, plus
+the right-aligned light/dark toggle (`.tiptap-footer-right`). Disable per
+site/field with `defaultConfigs.wordcount = false`. Strings are the `footer.*`
+i18n keys.
+
+## Light / dark mode
+
+The toggle (`.tiptap-theme-toggle`) is rendered **right-aligned in the footer
+status bar**. A toolbar config can instead place it in the toolbar with the button
+name `Theme` (or `DarkMode`), in which case the footer does not get one; if the
+footer is disabled (`wordcount = false`) it falls back to the far right of the
+toolbar (`.tiptap-toolbar-right`). `buildToolbar()` returns
+`{ themeEnabled, themeRendered }` so the facade can make that call. Disable the
+control entirely per site/field with `defaultConfigs.darkMode = false`.
+
+- **Chrome only** — dark mode adds `.tiptap-dark` to the container; the stored
+  content is untouched, so `getData()` is identical in either mode.
+- **`src/theme.js`** owns the state: the choice is a per-USER preference in
+  `localStorage` (`presideTiptapTheme`), not per-field, so toggling one editor
+  re-themes every editor on the page (it walks the live DOM rather than keeping a
+  listener registry — editors are created/destroyed freely) and the preference is
+  re-applied on mount. Default is light.
+- **`src/tiptap.css`** drives all chrome colours through `--tt-*` custom
+  properties declared on `.tiptap-editor-container`, so the dark theme is one
+  variable override block at the bottom of the file. Add new colours as variables,
+  not literals. The picker/anchor overlays live outside the container (on `<body>`,
+  hosting admin forms in an iframe) and stay light deliberately.
+- A field's own content stylesheets (`contentsCss`/`stylesheets`) are authored
+  for a light page, so any explicit colour they set still wins inside the
+  editable — intentional (WYSIWYG fidelity), so dark mode is a chrome-comfort
+  feature, not a content preview.
+- Strings are the `toolbar.theme.dark` / `toolbar.theme.light` i18n keys (the
+  tooltip describes what a click will do; the icon shows the current mode).
 
 ## Local dev server
 

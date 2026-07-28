@@ -231,10 +231,48 @@ names are skipped gracefully. Highlights:
   mark.
 - `Source` toggles a raw textarea view showing **tokenized** HTML (the stored
   form) and re-parses it (`detokenize` → `setContent`) on toggle back.
-- `Maximize` toggles an `is-maximized` class on the container (CSS handles
-  full-screen).
+- `Maximize` calls `src/maximize.js`, which **portals the container to `<body>`**
+  and adds `is-maximized` (CSS handles full-screen). The portal is what makes it
+  work on the front end, where the editor sits inside a fixed, `max-width:810px`,
+  `z-index:100` wrapper that would otherwise clip it and trap it under the admin
+  toolbar. Inline `width`/`max-height` (from the field's config) are parked and
+  restored, `<html>` gets `.tiptap-maximized-host` (scroll lock), and the exact
+  DOM position is restored on exit — including from `destroy()`.
+- **Front-end editor width**: core's wrapper caps the editor at `max-width:810px`
+  (~half the viewport on a desktop) and the field renders `data-width="800"` as an
+  inline style. `src/tiptap.css` overrides both — the wrapper to `75vw` (core's
+  `min-width:500px` still floors narrow screens) and the container to `width:100%`
+  (`!important`, to beat the inline style) — so a non-maximized front-end editor
+  gets ~75% of the viewport. The same block lifts the height: the field's inline
+  `data-max-height` (400) is overridden to `max(240px, calc(100vh - 290px))` —
+  the wrapper's `top:100px` + `padding-bottom:100px` (fixed save bar) plus ~90px
+  of toolbar/footer chrome — so the editable fills the available space instead of
+  stopping at 400px. Admin editors are unaffected (different wrapper).
+- The **light/dark toggle** is rendered by `src/theme.js` and placed
+  right-aligned in the **footer status bar** (`.tiptap-footer-right`) — the
+  toolbar only builds one when a toolbar config names it explicitly (`Theme` /
+  `DarkMode`), or when the footer is disabled (`wordcount = false`), in which case
+  it goes to `.tiptap-toolbar-right`. `buildToolbar()` returns
+  `{ themeEnabled, themeRendered }` so the facade can decide. `darkMode = false`
+  suppresses it entirely. See `src/theme.js` below.
 - Active-state highlighting refreshes on every `selectionUpdate` /
   `transaction`.
+
+### `src/theme.js` — light/dark chrome theme
+
+The theme is **chrome only**: it toggles `.tiptap-dark` on the editor container,
+which flips the `--tt-*` custom properties that every chrome colour in
+`src/tiptap.css` reads. The document is never touched, so `getData()` is
+byte-identical in either mode — and a field's content stylesheets keep their
+explicit colours inside the editable (WYSIWYG fidelity wins over a uniformly
+dark surface).
+
+The choice is a per-**user** preference (`localStorage.presideTiptapTheme`,
+default light), not per-field config: `setTheme()` re-themes every
+`.tiptap-editor-container` in the document and re-syncs every toggle button's
+icon/tooltip, and `applyTheme()` runs as each editor mounts. Walking the live
+DOM (rather than keeping a listener registry) is deliberate — editors are
+created and destroyed freely by frontend editors and quick-add modals.
 
 ---
 

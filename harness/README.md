@@ -67,6 +67,13 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
 
   Results render on the page and are exposed as `window.__results` /
   `window.__done` for automation.
+- **`/test-frontend-maximize.html`** — reproduces the hostile chrome around a
+  **front-end** editor (`.content-editor-editor-container`: fixed,
+  `max-width:810px`, `z-index:100`; the admin toolbar at `z-index:103`; the field
+  rendered with `width=800`) so the Maximize command can be checked there. The
+  instance is on `window.testEditor`; maximized, the container must be
+  `document.body`'s child at the full viewport size and paint over the toolbar
+  (see `src/maximize.js` for why the portal is needed).
 
 ## Driving with Playwright
 

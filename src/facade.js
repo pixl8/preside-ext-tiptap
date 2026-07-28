@@ -21,6 +21,8 @@ import { applyContentStyles } from "./presideStyles.js";
 import { normalizeOutput } from "./normalize.js";
 import { createPasteTransform } from "./pasteFilter.js";
 import { getCustomConfig, prefetchCustomConfig } from "./customConfig.js";
+import { applyTheme, renderThemeToggle } from "./theme.js";
+import { toggleMaximize, exitMaximize, isMaximized } from "./maximize.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -103,7 +105,14 @@ import { t } from "./i18n.js";
 		this._t          = tiptap;
 		this.config      = cfg || {};
 		this.mode        = "wysiwyg";
-		this.commands    = { maximize: { state: 0 } };
+		// frontendEditors.js reads commands.maximize.state to un-maximize before
+		// teardown; derive it from the DOM so it stays right no matter who toggled
+		// (toolbar button, alt+enter, execCommand).
+		this.commands    = { maximize: {} };
+		Object.defineProperty( this.commands.maximize, "state", {
+			  get : function() { return isMaximized( container ) ? 1 : 0; }
+			, set : function() {}
+		} );
 		this._el         = textarea;
 		this._container  = container;
 		this._handlers   = {};
@@ -174,6 +183,9 @@ import { t } from "./i18n.js";
 		} catch ( e ) {}
 		this._domListeners = null;
 		try { this._t.destroy(); } catch ( e ) {}
+		// Destroying while maximized would leave <html> scroll-locked and the
+		// restore placeholder orphaned in the page.
+		if ( this._container ) { exitMaximize( this._container ); }
 		if ( this._container && this._container.parentNode ) {
 			this._container.parentNode.removeChild( this._container );
 		}
@@ -187,11 +199,8 @@ import { t } from "./i18n.js";
 	};
 	CompatInstance.prototype.execCommand = function( name ) {
 		if ( name === "maximize" ) {
-			var container = this._t.view.dom.closest( ".tiptap-editor-container" );
-			if ( container ) {
-				var max = container.classList.toggle( "is-maximized" );
-				this.commands.maximize.state = max ? 1 : 0;
-			}
+			var container = this._container || this._t.view.dom.closest( ".tiptap-editor-container" );
+			if ( container ) { toggleMaximize( container, this._t ); }
 		}
 	};
 
@@ -214,6 +223,10 @@ import { t } from "./i18n.js";
 		mount.className = "tiptap-editor-mount";
 		container.appendChild( toolbarEl );
 		container.appendChild( mount );
+
+		// Honour the user's stored light/dark preference from the first paint (the
+		// toolbar's toggle then flips it for every editor on the page - see theme.js).
+		applyTheme( container );
 
 		ta.style.display = "none";
 		ta.setAttribute( "data-tiptap-mounted", "1" );
@@ -259,12 +272,6 @@ import { t } from "./i18n.js";
 		// and no-ops on our nameless editable.
 		try { if ( tiptap.view && tiptap.view.dom ) { tiptap.view.dom.form = ta.form || null; } } catch ( e ) {}
 
-		// Footer status bar: word / char counts + estimated reading time.
-		// Opt out per-site/per-field with defaultConfigs.wordcount = false.
-		if ( cfg.defaultConfigs.wordcount !== false ) {
-			container.appendChild( buildFooter( tiptap ) );
-		}
-
 		var instance = new CompatInstance( name, tiptap, cfg, ta, container );
 		instance.initialdata = instance.getData();
 		ta.value = instance.initialdata;
@@ -279,7 +286,23 @@ import { t } from "./i18n.js";
 		if ( typeof parsedToolbar === "string" && Array.isArray( cfg.defaultConfigs[ "toolbar_" + parsedToolbar ] ) ) {
 			parsedToolbar = cfg.defaultConfigs[ "toolbar_" + parsedToolbar ];
 		}
-		buildToolbar( toolbarEl, tiptap, parsedToolbar, cfg );
+		// Built BEFORE the footer: it reports whether a toolbar config placed the
+		// light/dark toggle explicitly, which decides where the toggle ends up.
+		var toolbarInfo = buildToolbar( toolbarEl, tiptap, parsedToolbar, cfg );
+
+		// Footer status bar: word / char counts + estimated reading time, with the
+		// light/dark toggle right-aligned on the same row.
+		// Opt out per-site/per-field with defaultConfigs.wordcount = false.
+		var wantsTheme = toolbarInfo.themeEnabled && !toolbarInfo.themeRendered;
+		if ( cfg.defaultConfigs.wordcount !== false ) {
+			container.appendChild( buildFooter( tiptap, wantsTheme ) );
+		} else if ( wantsTheme ) {
+			// No footer to host it - fall back to the far right of the toolbar.
+			var right = document.createElement( "span" );
+			right.className = "tiptap-toolbar-group tiptap-toolbar-right";
+			right.appendChild( renderThemeToggle() );
+			toolbarEl.appendChild( right );
+		}
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
 		applyContentStyles( cfg.stylesheets );
@@ -353,7 +376,7 @@ import { t } from "./i18n.js";
 	// false ) refreshes it too).
 	var READING_WORDS_PER_MINUTE = 225;
 
-	function buildFooter( tiptap ) {
+	function buildFooter( tiptap, withThemeToggle ) {
 		var footer = document.createElement( "div" );
 		footer.className = "tiptap-footer";
 
@@ -366,6 +389,14 @@ import { t } from "./i18n.js";
 		footer.appendChild( wordsEl );
 		footer.appendChild( charsEl );
 		footer.appendChild( readingEl );
+
+		// Right-aligned (margin-left:auto in the css) light/dark toggle.
+		if ( withThemeToggle ) {
+			var themeWrap = document.createElement( "span" );
+			themeWrap.className = "tiptap-footer-right";
+			themeWrap.appendChild( renderThemeToggle() );
+			footer.appendChild( themeWrap );
+		}
 
 		function refresh() {
 			var doc   = tiptap.state.doc;

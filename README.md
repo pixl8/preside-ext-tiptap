@@ -33,7 +33,9 @@ every existing dependency, form definition and content renderer.
 
 New niceties on top: a footer status bar under every editor with live **word /
 character counts and estimated reading time** (disable with
-`defaultConfigs.wordcount = false`), and fully localisable editor chrome — add
+`defaultConfigs.wordcount = false`), a right-aligned **light / dark mode
+toggle** on the toolbar (a per-user preference remembered across page loads;
+disable with `defaultConfigs.darkMode = false`), and fully localisable editor chrome — add
 a `tiptap_<lang>.properties` resource-bundle override to translate every
 toolbar tooltip, dialog and footer label.
 

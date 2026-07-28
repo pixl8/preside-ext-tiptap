@@ -1,27 +1,76 @@
 /* Editor chrome + content styles. SOURCE file - built (minified + content-hashed)
-   into assets/dist/ by esbuild.mjs alongside the js bundles. */
-.tiptap-editor-container{border:1px solid #ccc;border-radius:3px;background:#fff}
-.tiptap-toolbar{border-bottom:1px solid #ddd;padding:4px 6px;background:#f7f7f7;display:flex;flex-wrap:wrap;gap:2px;align-items:center}
+   into assets/dist/ by esbuild.mjs alongside the js bundles.
+
+   Colours go through the custom properties declared on .tiptap-editor-container so
+   the dark theme (toolbar toggle -> .tiptap-dark, see src/theme.js) is a single
+   variable override at the bottom of this file rather than a duplicated ruleset.
+   The picker/anchor overlays are appended to <body> (outside the container) and
+   stay light - they host Preside admin forms in an iframe. */
+.tiptap-editor-container{
+	--tt-bg:#fff;
+	--tt-fg:#222;
+	--tt-muted:#777;
+	--tt-border:#ccc;
+	--tt-border-soft:#ddd;
+	--tt-chrome-bg:#f7f7f7;
+	--tt-btn-fg:#333;
+	--tt-btn-hover-bg:#e9e9e9;
+	--tt-active-bg:#dceafc;
+	--tt-active-border:#a9cdf5;
+	--tt-active-fg:#1a5296;
+	--tt-accent:#1a5296;
+	--tt-accent-soft:#eef4fb;
+	--tt-selected:#6cb2f5;
+	--tt-menu-bg:#fff;
+	--tt-menu-shadow:rgba(0,0,0,.16);
+	--tt-embed-bg:#eee;
+	--tt-th-bg:#f0f0f0;
+	--tt-table-border:#bbb;
+	border:1px solid var(--tt-border);border-radius:3px;background:var(--tt-bg);color:var(--tt-fg)
+}
+.tiptap-toolbar{border-bottom:1px solid var(--tt-border-soft);padding:4px 6px;background:var(--tt-chrome-bg);display:flex;flex-wrap:wrap;gap:2px;align-items:center}
 .tiptap-toolbar-group{display:inline-flex;gap:1px;margin-right:6px}
-.tiptap-toolbar-sep{display:inline-block;width:1px;height:18px;background:#ccc;margin:0 4px}
-.tiptap-btn{min-width:26px;height:26px;padding:0 6px;border:1px solid transparent;background:none;border-radius:3px;cursor:pointer;font-size:13px;line-height:24px;color:#333;display:inline-flex;align-items:center;justify-content:center}
+.tiptap-toolbar-sep{display:inline-block;width:1px;height:18px;background:var(--tt-border);margin:0 4px}
+/* Pushed to the far right of the toolbar row (holds the light/dark toggle). */
+.tiptap-toolbar-right{margin-left:auto;margin-right:0}
+.tiptap-btn{min-width:26px;height:26px;padding:0 6px;border:1px solid transparent;background:none;border-radius:3px;cursor:pointer;font-size:13px;line-height:24px;color:var(--tt-btn-fg);display:inline-flex;align-items:center;justify-content:center}
 .tiptap-btn svg{width:16px;height:16px;display:block;pointer-events:none}
-.tiptap-btn:hover{background-color:#e9e9e9;border-color:#ddd}
-.tiptap-btn.is-active{background:#dceafc;border-color:#a9cdf5;color:#1a5296}
+.tiptap-btn:hover{background-color:var(--tt-btn-hover-bg);border-color:var(--tt-border-soft)}
+.tiptap-btn.is-active{background:var(--tt-active-bg);border-color:var(--tt-active-border);color:var(--tt-active-fg)}
+.tiptap-theme-toggle{border-radius:50%;width:26px;min-width:26px;padding:0}
 .tiptap-editor-mount{padding:8px 10px}
 .tiptap-editor-mount .ProseMirror{outline:none;min-height:60px}
 .tiptap-editor-mount .ProseMirror p{margin:0 0 .6em}
-.tiptap-editor-container.is-maximized{position:fixed;inset:0;z-index:1050;border-radius:0;display:flex;flex-direction:column}
-.tiptap-editor-container.is-maximized .tiptap-editor-mount{flex:1;max-height:none}
-.tiptap-editor-mount .ProseMirror a{color:#1a5296;text-decoration:underline}
+/* Maximized: the container is portalled to <body> first (see src/maximize.js) so
+   it escapes any ancestor stacking context / containing block - on the front end
+   it lives inside a fixed, max-width, z-index:100 wrapper. z-index sits above the
+   frontend admin toolbar (103) but below the picker/anchor overlays (2000/2100).
+   `width` is !important because the field's data-width is an inline style. */
+.tiptap-editor-container.is-maximized{position:fixed;inset:0;width:auto!important;height:auto!important;max-width:none;z-index:1050;border:0;border-radius:0;display:flex;flex-direction:column;background:var(--tt-bg)}
+.tiptap-editor-container.is-maximized .tiptap-editor-mount{flex:1;min-height:0;max-height:none!important;overflow-y:auto}
+html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
+/* Frontend (in-page) editors render inside core's `.content-editor-editor-container`
+   (system/views/admin/frontendEditing/_editorTemplate.cfm), which frontendEditor.less
+   caps at max-width:810px - about half the viewport on a desktop. Widen that to 75%
+   of the viewport (core's min-width:500px still floors it on narrow screens) and let
+   the editor fill the wrapper: the field's data-width (800, from _editorTemplate.cfm)
+   is applied as an inline style, hence !important. */
+.content-editor-editor-container{max-width:75vw!important}
+.content-editor-editor-container .tiptap-editor-container{width:100%!important;max-width:100%}
+/* ...and the same for height: the field's data-max-height (400) is inline on the
+   mount, so grow the editable to whatever the fixed wrapper leaves - core's
+   top:100px + padding-bottom:100px (the fixed save bar) plus ~90px of our own
+   toolbar+footer chrome - with a 240px floor for short viewports. */
+.content-editor-editor-container .tiptap-editor-mount{max-height:max(240px,calc(100vh - 290px))!important}
+.tiptap-editor-mount .ProseMirror a{color:var(--tt-accent);text-decoration:underline}
 .tiptap-editor-mount .img-placeholder,.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{display:inline-block;vertical-align:middle}
 /* Widget placeholder glyph: inline data-URI SVG (Tabler "puzzle", MIT) — no icon files. */
-.tiptap-editor-mount .widget-placeholder{background:#eee url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat;border:1px solid #ccc;border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:#333;display:inline-block}
+.tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat;border:1px solid var(--tt-border);border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:var(--tt-fg);display:inline-block}
 .tiptap-editor-mount .attachment-placeholder{padding:2px}
 .tiptap-editor-mount .loading{color:#999;font-style:italic}
 .tiptap-editor-mount .error{color:#c00;border:1px solid #f4b4b4;padding:1px 4px;border-radius:3px}
-.tiptap-editor-mount .ProseMirror-selectednode{outline:2px solid #6cb2f5;outline-offset:1px}
-.tiptap-editor-mount .preside-anchor{display:inline-block;color:#1a5296;border:1px dotted #1a5296;border-radius:3px;padding:0 3px;font-size:.8em;line-height:1.4;background:#eef4fb;cursor:pointer;vertical-align:middle;margin:0 1px}
+.tiptap-editor-mount .ProseMirror-selectednode{outline:2px solid var(--tt-selected);outline-offset:1px}
+.tiptap-editor-mount .preside-anchor{display:inline-block;color:var(--tt-active-fg);border:1px dotted var(--tt-active-fg);border-radius:3px;padding:0 3px;font-size:.8em;line-height:1.4;background:var(--tt-accent-soft);cursor:pointer;vertical-align:middle;margin:0 1px}
 .preside-anchor-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2100;display:flex;align-items:center;justify-content:center}
 .preside-anchor-dialog{background:#fff;border-radius:4px;padding:16px 18px;width:340px;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 .preside-anchor-head{font-weight:bold;margin-bottom:10px}
@@ -32,21 +81,21 @@
 .tiptap-dropdown{position:relative;display:inline-block;margin:0 2px}
 .tiptap-dropdown-trigger{min-width:104px;display:inline-flex;justify-content:space-between;align-items:center;gap:8px}
 .tiptap-dropdown-trigger .caret{font-size:10px;color:#888}
-.tiptap-dropdown-menu{position:absolute;top:100%;left:0;margin-top:3px;min-width:190px;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 4px 16px rgba(0,0,0,.16);z-index:1200;padding:4px 0;display:none;max-height:360px;overflow:auto}
+.tiptap-dropdown-menu{position:absolute;top:100%;left:0;margin-top:3px;min-width:190px;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:4px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:1200;padding:4px 0;display:none;max-height:360px;overflow:auto}
 .tiptap-dropdown-menu.open{display:block}
-.tiptap-dropdown-item{padding:5px 14px;cursor:pointer;color:#222;line-height:1.25;white-space:nowrap}
-.tiptap-dropdown-item:hover{background:#eef4fb}
-.tiptap-dropdown-item.active{background:#dceafc}
-.tiptap-dropdown-empty{color:#999;font-style:italic;cursor:default}
+.tiptap-dropdown-item{padding:5px 14px;cursor:pointer;color:var(--tt-fg);line-height:1.25;white-space:nowrap}
+.tiptap-dropdown-item:hover{background:var(--tt-accent-soft)}
+.tiptap-dropdown-item.active{background:var(--tt-active-bg);color:var(--tt-active-fg)}
+.tiptap-dropdown-empty{color:var(--tt-muted);font-style:italic;cursor:default}
 /* Items render as real h1..h6/p/pre so browser defaults + injected content CSS style them. */
 .tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
-.tiptap-source{width:100%;min-height:220px;border:0;outline:none;font-family:monospace;font-size:12px;padding:8px;box-sizing:border-box}
+.tiptap-source{width:100%;min-height:220px;border:0;outline:none;font-family:monospace;font-size:12px;padding:8px;box-sizing:border-box;background:var(--tt-bg);color:var(--tt-fg)}
 .tiptap-editor-mount table{border-collapse:collapse;margin:8px 0}
-.tiptap-editor-mount td,.tiptap-editor-mount th{border:1px solid #bbb;padding:4px 8px;min-width:44px;position:relative}
-.tiptap-editor-mount th{background:#f0f0f0;font-weight:bold}
+.tiptap-editor-mount td,.tiptap-editor-mount th{border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
+.tiptap-editor-mount th{background:var(--tt-th-bg);font-weight:bold}
 .tiptap-editor-mount pre{background:#2b2b2b;color:#e6e6e6;padding:10px 12px;border-radius:4px;overflow:auto;font-family:monospace}
-.tiptap-editor-mount .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;background:#6cb2f5}
+.tiptap-editor-mount .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;background:var(--tt-selected)}
 .preside-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center}
 .preside-picker-dialog{background:#fff;border-radius:4px;width:96vw;max-width:96vw;height:88vh;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 6px 30px rgba(0,0,0,.3)}
 .preside-picker-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #e5e5e5;font-weight:bold}
@@ -57,5 +106,46 @@
 .preside-picker-footer button{padding:6px 14px;margin-left:8px;border-radius:3px;border:1px solid #ccc;cursor:pointer}
 .preside-picker-ok{background:#1a5296;color:#fff;border-color:#1a5296}
 .preside-picker-ok:disabled{opacity:.5;cursor:not-allowed}
-.tiptap-footer{display:flex;gap:14px;align-items:center;border-top:1px solid #ddd;background:#f7f7f7;padding:3px 10px;font-size:11px;line-height:1.6;color:#777;border-radius:0 0 3px 3px}
+/* Word/char counts on the left, the light/dark toggle right-aligned on the same
+   row (the facade puts it here unless a toolbar config places it explicitly).
+   Tall enough for the 26px toggle button to sit comfortably. */
+.tiptap-footer{display:flex;gap:14px;align-items:center;min-height:34px;border-top:1px solid var(--tt-border-soft);background:var(--tt-chrome-bg);padding:2px 6px 2px 10px;font-size:11px;line-height:1.6;color:var(--tt-muted);border-radius:0 0 3px 3px}
+.tiptap-footer .tiptap-footer-right{margin-left:auto;display:inline-flex;align-items:center;gap:2px}
 .tiptap-editor-container.is-maximized .tiptap-footer{border-radius:0}
+
+/* ---- Dark theme -------------------------------------------------------------
+   Chrome + editable surface only; the document itself is unchanged (getData() is
+   identical in either mode). A field's own content stylesheets
+   (contentsCss/stylesheets) are authored for a light page, so any explicit colour
+   they set still wins inside the editable - that is intentional: what you see is
+   what the site will render. */
+.tiptap-editor-container.tiptap-dark{
+	--tt-bg:#1f2126;
+	--tt-fg:#e6e6e6;
+	--tt-muted:#9a9a9a;
+	--tt-border:#3a3d44;
+	--tt-border-soft:#33363c;
+	--tt-chrome-bg:#282b31;
+	--tt-btn-fg:#d8d8d8;
+	--tt-btn-hover-bg:#35383f;
+	--tt-active-bg:#2c4a72;
+	--tt-active-border:#3f6ea6;
+	--tt-active-fg:#cfe3fb;
+	--tt-accent:#7db3ec;
+	--tt-accent-soft:#2b333d;
+	--tt-selected:#5b9bd9;
+	--tt-menu-bg:#282b31;
+	--tt-menu-shadow:rgba(0,0,0,.5);
+	--tt-embed-bg:#33363c;
+	--tt-th-bg:#2f3238;
+	--tt-table-border:#4a4d55;
+	color-scheme:dark
+}
+.tiptap-editor-container.tiptap-dark .tiptap-editor-mount{color:var(--tt-fg)}
+.tiptap-editor-container.tiptap-dark .tiptap-editor-mount .loading{color:#8d8d8d}
+.tiptap-editor-container.tiptap-dark .tiptap-editor-mount .error{color:#ff9c9c;border-color:#6d3b3b}
+.tiptap-editor-container.tiptap-dark .tiptap-dropdown-trigger .caret{color:#9a9a9a}
+.tiptap-editor-container.tiptap-dark .tiptap-editor-mount pre{background:#15171a}
+/* Recolour the widget-placeholder glyph for the dark surface (the stroke colour is
+   baked into the data-URI, so the whole background shorthand is restated). */
+.tiptap-editor-container.tiptap-dark .tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b0b0b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat}

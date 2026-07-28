@@ -79,6 +79,14 @@
 			<textarea name="t6" class="richeditor"
 				data-toolbar="Bold,Italic"><p>six</p></textarea>
 		</div>
+		<!-- T7: a field opting out of the light/dark toggle
+		     (data-custom-default-configs='{"darkMode":false}' - the same shape a site
+		     sets via settings.ckeditor.defaults.defaultConfigs.darkMode). -->
+		<div class="fixture"><h3>T7 — darkMode:false suppresses the theme toggle</h3>
+			<textarea name="t7" class="richeditor"
+				data-toolbar="Bold,Italic"
+				data-custom-default-configs='{"darkMode":false}'><p>seven</p></textarea>
+		</div>
 	</main>
 
 	<script src="/vendor/jquery.js"></script>
@@ -107,8 +115,14 @@
 		function toolbarOf( name ) {
 			return $( "textarea[name=" + name + "]" ).next( ".tiptap-editor-container" ).find( ".tiptap-toolbar" );
 		}
+		function footerOf( name ) {
+			return $( "textarea[name=" + name + "]" ).next( ".tiptap-editor-container" ).find( ".tiptap-footer" );
+		}
+		// The light/dark toggle is chrome, not a toolbar-config button (it lives in the
+		// footer status bar regardless of the configured toolbar) - excluded here so
+		// these assertions stay about what the config asked for.
 		function buttonTitles( name ) {
-			return toolbarOf( name ).find( "button.tiptap-btn" ).not( ".tiptap-dropdown-trigger" )
+			return toolbarOf( name ).find( "button.tiptap-btn" ).not( ".tiptap-dropdown-trigger" ).not( ".tiptap-theme-toggle" )
 				.map( function() { return this.title || this.getAttribute( "aria-label" ); } ).get();
 		}
 
@@ -147,6 +161,21 @@
 		check( "T6 plugin registration no-ops (CKEDITOR.plugins shimmed)", typeof CKEDITOR.plugins.addExternal === "function" );
 		check( "T6 getData round-trip", inst6 && inst6.getData() === "<p>six</p>", inst6 && inst6.getData() );
 		check( "T6 file extraPlugins captured but harmless", inst6 && /widgets/.test( inst6.config.defaultConfigs.extraPlugins || "" ), inst6 && inst6.config.defaultConfigs.extraPlugins );
+
+		// ---- T7: light/dark toggle ----------------------------------------
+		check( "T7 theme toggle right-aligned in the footer status bar", footerOf( "t1" ).find( ".tiptap-footer-right .tiptap-theme-toggle" ).length === 1 );
+		check( "T7 no toggle left in the toolbar", toolbarOf( "t1" ).find( ".tiptap-theme-toggle" ).length === 0 );
+		check( "T7 darkMode:false field renders no toggle",
+			toolbarOf( "t7" ).find( ".tiptap-theme-toggle" ).length === 0 && footerOf( "t7" ).find( ".tiptap-theme-toggle" ).length === 0 );
+
+		var $anyToggle  = footerOf( "t1" ).find( ".tiptap-theme-toggle" );
+		var containers  = function() { return $( ".tiptap-editor-container" ); };
+		var darkCount   = function() { return containers().filter( ".tiptap-dark" ).length; };
+		$anyToggle[ 0 ].click();
+		check( "T7 toggling re-themes every editor on the page", darkCount() === containers().length, darkCount() + "/" + containers().length );
+		check( "T7 content is untouched by the theme", CKEDITOR.instances.t1.getData() === "<p>one</p>", CKEDITOR.instances.t1.getData() );
+		$anyToggle[ 0 ].click();
+		check( "T7 toggling back returns to light", darkCount() === 0 );
 
 		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --
 		function stylesMenuItems() {

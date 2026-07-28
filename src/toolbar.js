@@ -11,6 +11,8 @@
 import { tokenize, detokenize } from "./tokens.js";
 import { ICONS } from "./icons.js";
 import { getContentSelectors } from "./presideStyles.js";
+import { themeEnabled, renderThemeToggle } from "./theme.js";
+import { toggleMaximize, isMaximized } from "./maximize.js";
 import { t } from "./i18n.js";
 
 function container( e ) { return e.view.dom.closest( ".tiptap-editor-container" ); }
@@ -39,7 +41,7 @@ export const COMMANDS = {
 	, RemoveFormat  : { label: "Tx", run: e => e.chain().focus().unsetAllMarks().clearNodes().run() }
 	, Undo          : { label: "↶", run: e => e.chain().focus().undo().run() }
 	, Redo          : { label: "↷", run: e => e.chain().focus().redo().run() }
-	, Maximize      : { label: "⛶", run: e => { const c = container( e ); if ( c ) { c.classList.toggle( "is-maximized" ); } }, active: e => { const c = container( e ); return !!( c && c.classList.contains( "is-maximized" ) ); } }
+	, Maximize      : { label: "⛶", run: e => toggleMaximize( container( e ), e ), active: e => isMaximized( container( e ) ) }
 	, PresideLink      : { run: e => e.commands.openPresideLinkPicker(), active: e => e.isActive( "presideLink" ) }
 	, PresideUnlink    : { run: e => e.chain().focus().unsetPresideLink().run() }
 	, PresideAnchor    : { run: e => e.commands.openPresideAnchorDialog() }
@@ -71,6 +73,11 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 
 	const groups   = normaliseToolbar( parsedToolbar );
 	const updaters = [];
+	// The light/dark toggle normally lives in the footer status bar (the facade
+	// puts it there); the toolbar only renders one when a toolbar config names it
+	// explicitly ("Theme" / "DarkMode"), which is reported back so the facade
+	// doesn't add a second.
+	let themeRendered = false;
 
 	groups.forEach( function( group ) {
 		if ( group === "/" ) { el.appendChild( document.createElement( "br" ) ); return; }
@@ -88,6 +95,10 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 			if ( name === "Format" ) { groupEl.appendChild( renderFormat( editor, updaters, cfg ) ); return; }
 			if ( name === "Styles" ) { groupEl.appendChild( renderStyles( editor, updaters, cfg ) ); return; }
 			if ( name === "Source" ) { groupEl.appendChild( renderSource( editor ) ); return; }
+			if ( name === "Theme" || name === "DarkMode" ) {
+				if ( themeEnabled( cfg ) ) { groupEl.appendChild( renderThemeToggle() ); themeRendered = true; }
+				return;
+			}
 
 			const cmd = COMMANDS[ name ];
 			if ( !cmd ) { return; } // unknown / not-implemented button — skip
@@ -114,6 +125,8 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 	editor.on( "selectionUpdate", refresh );
 	editor.on( "transaction", refresh );
 	refresh();
+
+	return { themeEnabled: themeEnabled( cfg ), themeRendered: themeRendered };
 }
 
 // Custom dropdown (not a native <select>) so it opens directly under the button

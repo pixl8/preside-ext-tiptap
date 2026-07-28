@@ -50,6 +50,8 @@ export const DEFAULTS = {
 	, "toolbar.attachmentpicker" : "Attachment"
 	, "toolbar.codesnippet"      : "Code snippet"
 	, "toolbar.source"           : "Source"
+	, "toolbar.theme.dark"       : "Switch to dark mode"
+	, "toolbar.theme.light"      : "Switch to light mode"
 	, "toolbar.format"           : "Format"
 	, "toolbar.styles"           : "Styles"
 	, "styles.none"              : "No styles available"
