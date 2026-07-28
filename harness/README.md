@@ -63,7 +63,12 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
   - a site-style **custom CKEditor config file** (`custom-config-fixture.js`:
     `toolbar_<name>` named toolbars, `format_tags`, numeric `CKEDITOR.ENTER_BR`,
     `disallowedContent`) with instance-over-file precedence asserted,
-  - the stock core `/ckeditorExtensions/config.js` executing harmlessly.
+  - the stock core `/ckeditorExtensions/config.js` executing harmlessly,
+  - the **opt-out contract** for the chrome this extension adds (`outline`,
+    `darkMode`, `wordcount`): site-wide via
+    `settings.ckeditor.defaults.defaultConfigs` (as `cfrequest`), per field via
+    the control's `customDefaultConfigs`, and a field overriding the site in
+    either direction.
 
   Results render on the page and are exposed as `window.__results` /
   `window.__done` for automation.
@@ -92,7 +97,12 @@ await page.evaluate(() => window.CKEDITOR.instances.content.getData());  // toke
 - **Tiptap page**: full toolbar (own MIT SVG icon set), live token previews for
   image/attachment/widget embeds (widgets are block-level, matching CKEditor),
   Format + Styles dropdowns, Source view, mocked link/image/widget pickers.
-  Registry hooks (`CKEDITOR.instances`, `ckeditorinstance`) work.
+  Registry hooks (`CKEDITOR.instances`, `ckeditorinstance`) work. Its sample
+  content is deliberately heading-rich and taller than the editable so the
+  **document outline** rail (right edge — hover it, then click an entry) and its
+  click-to-scroll can be exercised. `/test-realworld.html` T8/T9 assert the
+  opt-out plus the adaptive depth, rail/panel agreement, centring and
+  no-overflow invariants (90 headings in a 120px-tall field).
 
 Set `PRESIDE_ASSETS=<Preside-CMS>/system/assets` when the Preside checkout is not
 a sibling of this repo (needed for the CKEditor comparison pane + jquery).

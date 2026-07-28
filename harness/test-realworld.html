@@ -87,6 +87,25 @@
 				data-toolbar="Bold,Italic"
 				data-custom-default-configs='{"darkMode":false}'><p>seven</p></textarea>
 		</div>
+		<!-- T8: a field opting out of the document outline navigator
+		     (data-custom-default-configs='{"outline":false}'). -->
+		<div class="fixture"><h3>T8 — outline:false suppresses the outline navigator</h3>
+			<textarea name="t8" class="richeditor"
+				data-toolbar="Bold,Italic"><h2>eight</h2><p>body</p></textarea>
+		</div>
+		<div class="fixture"><h3>T8 — outline:false</h3>
+			<textarea name="t8b" class="richeditor"
+				data-toolbar="Bold,Italic"
+				data-custom-default-configs='{"outline":false}'><h2>eight b</h2><p>body</p></textarea>
+		</div>
+		<!-- T9: a short field with far more headings than the rail can show, to
+		     exercise railPlan()'s adaptive depth (drop a heading level at a time,
+		     then sample every Nth). Content is injected by the script below. -->
+		<div class="fixture"><h3>T9 — heading-heavy document (adaptive rail depth)</h3>
+			<textarea name="t9" class="richeditor"
+				data-toolbar="Bold,Italic"
+				data-min-height="120" data-max-height="120"><p>filled in by the test script</p></textarea>
+		</div>
 	</main>
 
 	<script src="/vendor/jquery.js"></script>
@@ -129,6 +148,14 @@
 		// Mount explicitly (same as formFields.js / tiptap.html) - jQuery's ready
 		// fires before the facade's own DOMContentLoaded bootstrap, so instances
 		// wouldn't exist yet if we relied on it.
+		// T9's fixture: 30 h2/h3/h4 triplets in a 120px-tall field - far more
+		// headings than its rail can show, so railPlan() has to shed detail.
+		var t9html = "";
+		for ( var t9i = 1; t9i <= 30; t9i++ ) {
+			t9html += "<h2>Section " + t9i + "</h2><p>body</p><h3>Sub " + t9i + "</h3><p>body</p><h4>Detail " + t9i + "</h4><p>body</p>";
+		}
+		$( "textarea[name=t9]" ).val( t9html );
+
 		$( "textarea.richeditor" ).each( function() { new PresideRichEditor( this ); } );
 
 		// ---- T1: cms-basics named toolbar ---------------------------------
@@ -177,6 +204,94 @@
 		$anyToggle[ 0 ].click();
 		check( "T7 toggling back returns to light", darkCount() === 0 );
 
+		// ---- T8/T9: document outline navigator ----------------------------
+		// The rail's row count depends on measured layout, so these run from the
+		// poll below (a few frames in) rather than inline - see outlineChecks().
+		function outlineOf( name ) {
+			return $( "textarea[name=" + name + "]" ).next( ".tiptap-editor-container" ).find( ".tiptap-outline" );
+		}
+		function outlineChecks() {
+			check( "T8 outline rail + panel rendered by default", outlineOf( "t8" ).find( ".tiptap-outline-rail" ).length === 1 );
+			check( "T8 one rail marker + one panel entry per heading",
+				outlineOf( "t8" ).find( ".tiptap-outline-row" ).length === 1 && outlineOf( "t8" ).find( ".tiptap-outline-item" ).length === 1 );
+			check( "T8 outline:false renders no navigator", outlineOf( "t8b" ).length === 0 );
+
+			var $t9   = outlineOf( "t9" );
+			var rows  = $t9.find( ".tiptap-outline-row" ).length;
+			var items = $t9.find( ".tiptap-outline-item" ).length;
+			check( "T9 outline sheds detail to fit (fewer markers than the 90 headings)", rows > 0 && rows < 90, rows + " markers for 90 headings" );
+			check( "T9 panel lists exactly the headings the markers represent", items === rows, items + " entries vs " + rows + " markers" );
+			// Neither list may outgrow the editable it is measured against.
+			var mountH = $t9.closest( ".tiptap-editor-container" ).find( ".tiptap-editor-mount" )[ 0 ].clientHeight;
+			var panelH = $t9.find( ".tiptap-outline-panel" )[ 0 ].scrollHeight;
+			check( "T9 panel fits the editor without scrolling", panelH <= mountH, panelH + "px of list in a " + mountH + "px editable" );
+			// The rail must stay centred on the EDITABLE no matter how long the
+			// heading list is (the panel is out of flow precisely so it cannot
+			// stretch the wrapper and push the rail upwards).
+			var railBox  = $t9.find( ".tiptap-outline-rail" )[ 0 ].getBoundingClientRect();
+			var mountBox = $t9.closest( ".tiptap-editor-container" ).find( ".tiptap-editor-mount" )[ 0 ].getBoundingClientRect();
+			var offCentre = Math.abs( ( railBox.top + railBox.bottom ) / 2 - ( mountBox.top + mountBox.bottom ) / 2 );
+			check( "T9 rail stays centred on the editable", offCentre <= 1, offCentre + "px off centre" );
+
+			check( "T9 rail stays inside the editor",
+				$t9.find( ".tiptap-outline-rail" )[ 0 ].getBoundingClientRect().bottom
+					<= $t9.closest( ".tiptap-editor-container" )[ 0 ].getBoundingClientRect().bottom + 1 );
+
+			// Clicking an entry moves the caret into that heading (and scrolls to it).
+			var inst9 = CKEDITOR.instances.t9;
+			var data9 = inst9.getData();
+			$t9.find( ".tiptap-outline-item" ).eq( 40 ).trigger( "click" );
+			check( "T9 clicking an entry puts the caret in that heading", inst9._t.isActive( "heading" ) );
+			check( "T9 navigating leaves the content untouched", inst9.getData() === data9 );
+
+			// ---- T10: the documented opt-out paths -------------------------
+			// Site-wide is settings.ckeditor.defaults.defaultConfigs reaching the
+			// client as cfrequest.ckeditorDefaultConfigs; per-field is the form
+			// control's customDefaultConfigs struct, serialised by core's
+			// formcontrols/richeditor view into data-custom-default-configs. A field
+			// must be able to override the site either way (README > Configuration).
+			var probes = [];
+			function probe( customDefaultConfigs ) {
+				var ta = document.createElement( "textarea" );
+				ta.className = "richeditor";
+				ta.name      = "probe" + probes.length;
+				ta.value     = "<h2>Alpha</h2><p>x</p>";
+				if ( customDefaultConfigs ) { ta.setAttribute( "data-custom-default-configs", customDefaultConfigs ); }
+				document.querySelector( "main" ).appendChild( ta );
+				new PresideRichEditor( ta );
+				var container = ta.nextSibling;
+				probes.push( CKEDITOR.instances[ ta.name ] );
+				return {
+					  outline    : !!container.querySelector( ".tiptap-outline" )
+					, footer     : !!container.querySelector( ".tiptap-footer" )
+					, themeToggle: !!container.querySelector( ".tiptap-theme-toggle" )
+				};
+			}
+
+			var on = probe();
+			check( "T10 all three chrome features are on by default", on.outline && on.footer && on.themeToggle, JSON.stringify( on ) );
+
+			var siteDefaults = window.cfrequest.ckeditorDefaultConfigs;
+			siteDefaults.outline = siteDefaults.darkMode = siteDefaults.wordcount = false;
+
+			var siteOff = probe();
+			check( "T10 site-wide defaultConfigs turn each of them off",
+				!siteOff.outline && !siteOff.footer && !siteOff.themeToggle, JSON.stringify( siteOff ) );
+
+			var fieldOn = probe( '{"outline":true,"wordcount":true,"darkMode":true}' );
+			check( "T10 a field can re-enable what the site turned off",
+				fieldOn.outline && fieldOn.footer && fieldOn.themeToggle, JSON.stringify( fieldOn ) );
+
+			delete siteDefaults.outline; delete siteDefaults.darkMode; delete siteDefaults.wordcount;
+
+			var fieldOff = probe( '{"outline":false}' );
+			check( "T10 a field can turn the outline off while the site leaves it on",
+				!fieldOff.outline && fieldOff.footer, JSON.stringify( fieldOff ) );
+
+			probes.forEach( function( inst ) { try { inst.destroy(); } catch ( e ) {} } );
+			$( "textarea[name^=probe]" ).remove();
+		}
+
 		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --
 		function stylesMenuItems() {
 			var $tb = toolbarOf( "t3" );
@@ -195,6 +310,7 @@
 				check( "T3 stylesSet append appears in Styles dropdown (table.compact)", hasStylesSet, JSON.stringify( items ) );
 				check( "T4 stylesheet-harvested selector appears (p.lead from /content-sample.css)", hasHarvested, JSON.stringify( items ) );
 				check( "T4 scoped content CSS injected (no admin bleed)", !!document.querySelector( 'style[data-preside-content-css="/content-sample.css"]' ) );
+				outlineChecks();
 				finish();
 				return;
 			}

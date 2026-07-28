@@ -52,6 +52,7 @@
 		, "picker.link.title", "picker.image.title", "picker.attachment.title", "picker.widget.title"
 		, "anchor.dialog.title", "anchor.dialog.placeholder", "anchor.tooltip"
 		, "embed.edithint", "embed.loading.image", "embed.loading.attachment", "embed.error"
+		, "outline.title", "outline.empty", "outline.untitled"
 		, "footer.words", "footer.chars", "footer.readingtime"
 	];
 	tiptapI18n = {};

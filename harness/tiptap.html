@@ -22,12 +22,24 @@
 			placeholder="Type here…"
 			data-toolbar="Maximize,-,Source|Undo,Redo|Bold,Italic,Underline,Strike,Subscript,Superscript,-,RemoveFormat|NumberedList,BulletedList,-,Outdent,Indent,-,Blockquote|JustifyLeft,JustifyCenter,JustifyRight,JustifyBlock|PresideLink,PresideUnlink,PresideAnchor|Widgets,ImagePicker,AttachmentPicker,Table,HorizontalRule,CodeSnippet|Format"
 			data-stylesheets="/content-sample.css"
-			data-min-height="180" data-max-height="420"><h2>Welcome</h2>
+			data-min-height="180" data-max-height="420"><h1>Welcome</h1>
 <p class="lead">This is <strong>bold</strong> and <em>italic</em> text with a <a href="{{link:PAGE-123:link}}">site link</a>.</p>
 <blockquote>A styled blockquote, to show the content CSS applying inside the editor.</blockquote>
 <ul><li>First item</li><li>Second item</li></ul>
 <p>Embedded image: {{image:%7B%22asset%22%3A%22SAMPLE%22%7D:image}}</p>
-<p>Embedded widget: {{widget:featurednews:%7B%22count%22%3A3%7D:widget}}</p></textarea>
+<p>Embedded widget: {{widget:featurednews:%7B%22count%22%3A3%7D:widget}}</p>
+<h2>Outline navigator</h2>
+<p>The rail on the right edge draws one line per heading (wider = higher level). Hover it to see the titles, click one to jump there.</p>
+<h3>Nested section</h3>
+<p>Deeper headings draw shorter lines and indent in the panel.</p>
+<h4>Deeper still</h4>
+<p>Filler so the editable actually scrolls: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
+<p>Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+<h2>Second top-level section</h2>
+<p>Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur.</p>
+<p>Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
+<h3>Wrap up</h3>
+<p>The last section, far enough down that the click-to-scroll is visible.</p></textarea>
 	</main>
 
 	<script src="/vendor/jquery.js"></script>

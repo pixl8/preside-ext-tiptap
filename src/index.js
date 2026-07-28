@@ -10,6 +10,8 @@
  * phases.
  */
 import { Editor, Extension, Node, Mark, mergeAttributes } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import { Subscript } from "@tiptap/extension-subscript";
 import { Superscript } from "@tiptap/extension-superscript";
@@ -98,6 +100,14 @@ window.PresideTiptap = {
 	, Node
 	, Mark
 	, mergeAttributes
+	// ProseMirror primitives the facade needs for view-only decorations (the
+	// outline navigator's "you landed here" highlight). A class set directly on
+	// the rendered node DOM does not survive ProseMirror's next DOM sync, so
+	// anything visual over the document has to be a decoration.
+	, Plugin
+	, PluginKey
+	, Decoration
+	, DecorationSet
 	, StarterKit
 	, extensions : {
 		  createPresideLink        // Phase 2

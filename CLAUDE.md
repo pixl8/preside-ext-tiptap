@@ -46,6 +46,7 @@ preside-ext-tiptap/
     i18n.js               UI-string lookup: cfrequest.tiptapI18n -> English defaults
     theme.js              light/dark chrome theme (localStorage per-user preference) + its toggle button
     maximize.js           full-viewport toggle (portals the container to <body>)
+    outline.js            document outline navigator (heading rail -> hover panel -> scroll to)
     tiptap.css            css SOURCE (built minified+hashed into dist)
     icons.js              inline SVG toolbar icons (Tabler Icons, MIT)
     pasteFilter.js        disallowedContent / pasteFromWordDisallow paste filtering
@@ -255,6 +256,69 @@ counts and estimated reading time (225 wpm), refreshed on every doc change, plus
 the right-aligned light/dark toggle (`.tiptap-footer-right`). Disable per
 site/field with `defaultConfigs.wordcount = false`. Strings are the `footer.*`
 i18n keys.
+
+## Document outline navigator
+
+`src/outline.js` renders a collapsed **rail** of short horizontal lines on the
+right edge of the container — one per heading, wider line = higher level — that
+expands on hover (or focus, or click to pin) into a panel of heading titles;
+clicking a line or an entry drops the caret in that heading and scrolls it into
+view, and the current heading highlights as you scroll past it. Disable per
+site/field with `defaultConfigs.outline = false`. Strings are the `outline.*`
+i18n keys.
+
+- **The outline adapts to the space it has** (`railPlan()`): it shows the
+  **deepest heading level that fits** — h1–h6, else h1–h5, … — then, if even the
+  shallowest level present outnumbers the room, **every Nth** of them
+  (`.is-sampled`, plus `.is-partial` whenever anything was dropped). Levels are
+  never shed below the shallowest level the document actually uses, so a doc
+  starting at h2 still gets a rail.
+- **The rail and the panel show the SAME set** — the panel is the label list for
+  the markers, so it can never offer a heading the rail does not mark. Capacity is
+  `min( (editable − 24)/8px rail rows, (editable − 20)/24px panel rows )`; the
+  panel's taller rows are the binding constraint, which is also what stops either
+  list overflowing the editor. `PANEL_ROW_HEIGHT`/`PANEL_PADDING` in
+  `src/outline.js` MUST track `.tiptap-outline-item`/`.tiptap-outline-panel` in
+  the CSS.
+- Capacity is **measured**, not read from CSS: the computed value of a
+  percentage `max-height` stays a percentage, so `getComputedStyle` cannot give
+  it in px. Same reason the rail has no percentage `max-height` of its own — it
+  would not resolve against the wrapper (whose height is capped, not set) and
+  the rail would run off the bottom of the editor.
+- **Chrome only** — it lives on `.tiptap-editor-container`, never in the
+  editable, so `getData()` is unaffected and the rail does not scroll with the
+  content (the scroller is `.tiptap-editor-mount`, one level in).
+- **It stays vertically centred on the editable** at any heading count. Two
+  things are load-bearing: the panel is **out of flow** (as a hidden flex sibling
+  it still contributed its full height, making the wrapper tall and pushing the
+  top-aligned rail upwards — the bug that made the rail "creep up" as content
+  grew), and `place()` sets the wrapper's `top` in px from the **editable's** box,
+  not the container's (a two-row toolbar puts those centres ~20px apart).
+- The active heading comes from **scroll position** while scrolling (mount or
+  window, rAF-throttled) and from the **caret** otherwise; the rail highlights
+  the marker at or above it, since the rail is a subset.
+- **Colours come from the Preside admin palette** (Preside-CMS
+  `system/assets/css/admin/lessglobals/colours.less`), not from anywhere else:
+  entry hover is `@pale-blue` (`@default-row-hover-colour`), the current entry
+  gets the `@blue` tree-list highlight bar, rail markers are `@grey12` idling and
+  `@blue-darker` active, and the landed-on heading flashes the admin's highlight
+  `@yellow`. The variable-to-admin mapping is listed in the `src/tiptap.css`
+  header - add colours as `--tt-*` variables sourced from that file, never as
+  new hex values.
+- The panel has **no visible heading** - `outline.title` is only its accessible
+  name (`aria-label`).
+- The wrapper is `pointer-events:none`; only the drawn rows and the open panel
+  take clicks, so the right edge of the editable stays usable. Don't "simplify"
+  that away.
+- Clicking scrolls the **mount** directly when the mount is the scroller (field
+  `maxHeight`, or maximized) — `scrollIntoView()` alone would also drag the admin
+  page around.
+- The landed-on-heading highlight is a **ProseMirror node decoration**
+  (`tiptap-outline-target`), NOT a class on the heading element: ProseMirror's
+  next DOM sync rewrites node attributes and wipes any class we set. That is why
+  `src/index.js` exports `Plugin`/`PluginKey`/`Decoration`/`DecorationSet` on
+  `window.PresideTiptap`. Being a decoration also keeps the doc clean — no
+  `update` event, so the form never goes dirty from navigating.
 
 ## Light / dark mode
 

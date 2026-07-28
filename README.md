@@ -31,13 +31,62 @@ Preside file is edited** (the same override mechanism as
 Nothing else changes. Editors get a modern editing surface; developers keep
 every existing dependency, form definition and content renderer.
 
-New niceties on top: a footer status bar under every editor with live **word /
-character counts and estimated reading time** (disable with
-`defaultConfigs.wordcount = false`), a right-aligned **light / dark mode
-toggle** on the toolbar (a per-user preference remembered across page loads;
-disable with `defaultConfigs.darkMode = false`), and fully localisable editor chrome — add
-a `tiptap_<lang>.properties` resource-bundle override to translate every
-toolbar tooltip, dialog and footer label.
+New niceties on top, each of which can be switched off (see
+[Configuration](#configuration)):
+
+- a **footer status bar** under every editor with live word / character counts
+  and estimated reading time;
+- a **light / dark mode toggle**, remembered per user across page loads;
+- a **document outline navigator** — a slim rail of heading markers on the right
+  edge of the editor that expands on hover into a clickable list, jumping the
+  caret and the view to any heading and tracking where you are as you scroll. It
+  adapts its detail to the space available (as many heading levels as fit, and on
+  very long documents every Nth heading), so it never outgrows the editor.
+
+The editor chrome is also fully localisable — add a
+`tiptap_<lang>.properties` resource-bundle override to translate every toolbar
+tooltip, dialog, outline and footer label.
+
+## Configuration
+
+Everything the extension adds is switched off through the **same
+`defaultConfigs` structure CKEditor already used** — no new settings namespace:
+
+| `defaultConfigs` key | Default | Set to `false` to remove |
+| --- | --- | --- |
+| `outline` | on | the document outline navigator (heading rail + hover panel) |
+| `darkMode` | on | the light / dark mode toggle |
+| `wordcount` | on | the footer status bar (word / character counts, reading time) |
+
+**Site-wide** — in your site's (or another extension's) `config/Config.cfc`:
+
+```cfc
+settings.ckeditor.defaults.defaultConfigs.outline   = false;
+settings.ckeditor.defaults.defaultConfigs.darkMode  = false;
+settings.ckeditor.defaults.defaultConfigs.wordcount = false;
+```
+
+**Per field** — `customDefaultConfigs` takes a struct, so pass it where you
+render the control (core's `formcontrols/richeditor` view serialises it into
+`data-custom-default-configs`):
+
+```cfc
+renderFormControl(
+      name                 = "body"
+    , type                 = "richeditor"
+    , customDefaultConfigs = { outline = false }
+);
+```
+
+In a hand-written view or template, the same thing as markup:
+
+```html
+<textarea name="body" class="richeditor"
+          data-custom-default-configs='{"outline":false}'></textarea>
+```
+
+Per-field values are layered over the site-wide ones, so a field can opt out of
+something the site leaves on (and vice versa).
 
 ## What keeps working
 

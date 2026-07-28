@@ -23,6 +23,7 @@ import { createPasteTransform } from "./pasteFilter.js";
 import { getCustomConfig, prefetchCustomConfig } from "./customConfig.js";
 import { applyTheme, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, exitMaximize, isMaximized } from "./maximize.js";
+import { createOutline, outlineEnabled } from "./outline.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -302,6 +303,13 @@ import { t } from "./i18n.js";
 			right.className = "tiptap-toolbar-group tiptap-toolbar-right";
 			right.appendChild( renderThemeToggle() );
 			toolbarEl.appendChild( right );
+		}
+
+		// Document outline navigator: a hover-expanding rail of heading markers on
+		// the right edge of the container (chrome only - see src/outline.js).
+		// Opt out per-site/per-field with defaultConfigs.outline = false.
+		if ( outlineEnabled( cfg ) ) {
+			container.appendChild( createOutline( tiptap, mount ) );
 		}
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
