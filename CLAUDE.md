@@ -69,7 +69,7 @@ preside-ext-tiptap/
 ## Build
 
 ```bash
-npm install
+npm ci             # package-lock.json IS committed - builds must be reproducible
 npm run build      # -> assets/dist/{tiptap.bundle.<hash>.min.js, facade.<hash>.min.js, tiptap.<hash>.min.css}
 npm run watch      # rebuild on change
 ```
@@ -83,6 +83,40 @@ npm run watch      # rebuild on change
   `harness/server.mjs` resolve the current names by globbing the dist dir. A full
   build clears dist first, and watch mode prunes stale hashed outputs, so dist only
   ever contains the current build (a rebuild changes filenames → `git add -A assets/dist`).
+- **`package-lock.json` is committed** and CI uses `npm ci`, because the build output
+  is committed too: without a lockfile a floating `@tiptap/*` or `esbuild` version
+  would change the bundle bytes (and therefore the content hashes) on every CI run.
+
+## Releasing / publishing to ForgeBox
+
+`.github/workflows/ci.yml` runs on every push/PR and **publishes only from a
+`release-*` or `v*` ref** (never from a PR) — the same twgit flow as
+`preside-ext-jsmodern`. **The ref name IS the version number** — there is no
+version to edit anywhere:
+
+| push this ref            | published version    | ForgeBox / GitHub release |
+|--------------------------|----------------------|---------------------------|
+| tag `v1.2.0`             | `1.2.0+<build>`      | stable                    |
+| branch `release-1.2.0`   | `1.2.0-SNAPSHOT<build>` | prerelease             |
+
+`<build>` is the GitHub run number, zero-padded. So a stable release is just
+`git tag v1.2.0 && git push origin v1.2.0`.
+
+Pipeline:
+
+1. every run: `npm ci` → `npm run build` → **fail if `assets/dist` differs from a
+   fresh build** (i.e. someone edited `src/` without committing a rebuild);
+2. publish runs only: `pixl8/github-action-twgit-release-version-generator`
+   generates the semver, envsubst injects it into the `$VERSION_NUMBER`
+   placeholders in **`box.json` + `manifest.json`** (both files ship with the
+   literal placeholder — don't hardcode a version);
+3. the project is zipped (excluding everything in `box.json`'s `ignore` list —
+   `src/`, `harness/`, `node_modules/`, the npm/esbuild files, `CLAUDE.md`),
+   a GitHub release is created with the zip attached, that asset URL is substituted
+   into `box.json`'s `$DOWNLOAD_URL`, and `pixl8/github-action-box-publish` pushes
+   to ForgeBox.
+
+Requires repo/org secrets **`FORGEBOX_USER`** and **`FORGEBOX_PASS`**.
 
 ## How it plugs into Preside (the important part)
 

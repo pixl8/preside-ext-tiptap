@@ -1,0 +1,118 @@
+name: Continuous Integration
+on:
+  push:
+  pull_request:
+jobs:
+  ci:
+    name: CI for Preside Tiptap
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup flow variables
+        run: |
+          branch=${GITHUB_REF##*/}
+          publish=false
+          if [[ "${{ github.event_name }}" != "pull_request" ]] ; then
+            if [[ $branch == release-* ]] || [[ $branch == v* ]] ; then
+              publish=true
+            fi
+          fi
+          echo "PUBLISH=$publish" >> $GITHUB_ENV
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # assets/dist is committed (so the extension needs no build step at deploy),
+      # but it is REBUILT here so the published zip can never ship a dist that is
+      # stale relative to src/. A full build clears dist first (esbuild.mjs), so
+      # no stale content-hashed file can survive into the artifact - which matters
+      # because Sticker's wildcard paths throw on multiple matches.
+      - name: Install build dependencies
+        run: npm ci
+
+      - name: Build assets
+        run: npm run build
+
+      - name: Fail if committed dist is stale
+        run: |
+          if [[ -n "$( git status --porcelain assets/dist )" ]] ; then
+            echo "::error::assets/dist differs from a fresh build of src/ - run 'npm run build' and commit assets/dist"
+            git status --porcelain assets/dist
+            exit 1
+          fi
+
+      - name: Install dependencies
+        uses: pixl8/github-action-box-install@v2
+
+      - name: Generate release version number
+        if: "env.PUBLISH == 'true'"
+        id: versiongen
+        uses: pixl8/github-action-twgit-release-version-generator@v2
+
+      - name: Inject version into box json
+        if: "env.PUBLISH == 'true'"
+        uses: dominicwatson/github-action-envsubst@v1
+        with:
+          files: box.json manifest.json
+          patterns: $VERSION_NUMBER
+        env:
+          VERSION_NUMBER: ${{ steps.versiongen.outputs.semver_release_string }}
+
+      # Everything box.json's `ignore` list excludes is also kept out of the zip:
+      # the esbuild sources are dev-only, the built assets/dist is what ships.
+      - name: Zip project
+        if: "env.PUBLISH == 'true'"
+        run: |
+          zip -rq $ZIP_FILE * \
+            -x jmimemagic.log -x .* -x *.sh -x *.log \
+            -x 'node_modules/**' \
+            -x 'src/**' \
+            -x 'harness/**' \
+            -x package.json -x package-lock.json -x esbuild.mjs \
+            -x CLAUDE.md -x devlocal.md
+        shell: bash
+        env:
+          ZIP_FILE: ${{ steps.versiongen.outputs.semver_release_number }}.zip
+
+      - name: Create release and upload asset
+        if: "env.PUBLISH == 'true'"
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.versiongen.outputs.semver_release_string }}
+          ZIP_FILE: ${{ steps.versiongen.outputs.semver_release_number }}.zip
+          # NB the action's output is semver_is_snapshot, not
+          # semver_release_is_snapshot as jsmodern's workflow has it (that
+          # resolves to empty, so its snapshots are never marked prerelease).
+          IS_SNAPSHOT: ${{ steps.versiongen.outputs.semver_is_snapshot }}
+        run: |
+          prerelease=""
+          if [[ "$IS_SNAPSHOT" == "true" ]] ; then prerelease="--prerelease" ; fi
+          gh release create "$TAG" "$ZIP_FILE" \
+            --title "Release $TAG" \
+            --notes "Release $TAG" \
+            $prerelease
+          echo "download_url=https://github.com/${{ github.repository }}/releases/download/${TAG}/${ZIP_FILE}" >> $GITHUB_OUTPUT
+
+      - name: Inject download location
+        if: "env.PUBLISH == 'true'"
+        uses: dominicwatson/github-action-envsubst@v1
+        with:
+          files: box.json
+          patterns: $DOWNLOAD_URL
+        env:
+          DOWNLOAD_URL: ${{ steps.release.outputs.download_url }}
+
+      - name: Publish to forgebox
+        if: "env.PUBLISH == 'true'"
+        uses: pixl8/github-action-box-publish@v3
+        with:
+          forgebox_user: ${{ secrets.FORGEBOX_USER }}
+          forgebox_pass: ${{ secrets.FORGEBOX_PASS }}
