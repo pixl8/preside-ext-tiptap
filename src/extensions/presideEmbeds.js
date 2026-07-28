@@ -18,15 +18,21 @@
  */
 import { Node } from "@tiptap/core";
 import { openPickerModal, postForm } from "../presidePickerModal.js";
+import { t } from "../i18n.js";
 
 function makeEmbedNode( opts, deps ) {
 	const buildAjaxLink  = deps.buildAjaxLink  || window.buildAjaxLink;
 	const buildAdminLink = deps.buildAdminLink || window.buildAdminLink;
 
+	// All three embeds are BLOCK widgets in CKEditor (<div> templates whose
+	// downcast is the bare token text), so stored tokens sit between paragraphs,
+	// never wrapped in <p>. opts.block mirrors that.
+	const tag = opts.block ? "div" : "span";
+
 	return Node.create( {
 		name      : opts.name,
-		group     : "inline",
-		inline    : true,
+		group     : opts.block ? "block" : "inline",
+		inline    : !opts.block,
 		atom      : true,
 		selectable: true,
 
@@ -39,13 +45,18 @@ function makeEmbedNode( opts, deps ) {
 		},
 
 		parseHTML() {
-			return [ { tag: "span[" + opts.dataAttr + "]", getAttrs: el => ( { raw: el.getAttribute( "data-raw" ) } ) } ];
+			// Match both tags: legacy content saved by earlier extension versions
+			// used a span placeholder for widgets too.
+			return [
+				  { tag: "div["  + opts.dataAttr + "]", getAttrs: el => ( { raw: el.getAttribute( "data-raw" ) } ) }
+				, { tag: "span[" + opts.dataAttr + "]", getAttrs: el => ( { raw: el.getAttribute( "data-raw" ) } ) }
+			];
 		},
 
 		renderHTML( { node } ) {
 			const attrs = { "class": opts.cssClass, "data-raw": node.attrs.raw };
 			attrs[ opts.dataAttr ] = "true";
-			return [ "span", attrs ];
+			return [ tag, attrs ];
 		},
 
 		addNodeView() {
@@ -72,10 +83,10 @@ function makeEmbedNode( opts, deps ) {
 }
 
 function makePreviewDom( node, opts, buildAjaxLink, edit ) {
-	const dom = document.createElement( "span" );
+	const dom = document.createElement( opts.block ? "div" : "span" );
 	dom.className = opts.cssClass + " loading";
 	dom.setAttribute( "contenteditable", "false" );
-	dom.title = "Double-click to edit";
+	dom.title = t( "embed.edithint" );
 	dom.textContent = opts.loadingLabel( node.attrs.raw );
 
 	// Double-click → select this node + open its picker pre-populated for editing.
@@ -91,7 +102,7 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 	postForm( req.url, req.data )
 		.then( r => r.text() )
 		.then( html => { dom.classList.remove( "loading" ); dom.innerHTML = html; } )
-		.catch( () => { dom.classList.remove( "loading" ); dom.classList.add( "error" ); dom.textContent = "preview error"; } );
+		.catch( () => { dom.classList.remove( "loading" ); dom.classList.add( "error" ); dom.textContent = t( "embed.error" ); } );
 
 	return { dom: dom };
 }
@@ -99,7 +110,7 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 function openEmbedPicker( editor, opts, options, buildAdminLink, editRaw ) {
 	const editing = !!editRaw;
 	openPickerModal( {
-		  title       : opts.title
+		  title       : t( opts.titleKey )
 		, editor      : editor
 		, url         : opts.pickerUrl( buildAdminLink, options )
 		, prefillData : ( editing && opts.prefill ) ? opts.prefill( editRaw ) : null
@@ -120,12 +131,13 @@ const WIDGET_RE = /{{widget:([a-zA-Z\$_][a-zA-Z0-9\$_]*):([\s\S]*?):widget}}/;
 export function createPresideImage( deps ) {
 	return makeEmbedNode( {
 		  name        : "presideImage"
+		, block       : true
 		, dataAttr    : "data-preside-image"
 		, cssClass    : "img-placeholder"
-		, title       : "Image"
+		, titleKey    : "picker.image.title"
 		, insertCmd   : "insertPresideImage"
 		, openCmd     : "openPresideImagePicker"
-		, loadingLabel: () => "loading image…"
+		, loadingLabel: () => t( "embed.loading.image" )
 		, previewReq  : ( raw, buildAjaxLink ) => ( { url: buildAjaxLink( "assetManager.renderEmbeddedImageForEditor" ), data: { embeddedImage: raw } } )
 		, pickerUrl   : ( buildAdminLink ) => buildAdminLink( "assetmanager", "pickerForEditorDialog", { type: "image" } )
 		, prefill     : ( raw ) => ( { configJson: inner( raw, /^\{\{image:(.*):image\}\}$/ ) } )
@@ -135,12 +147,13 @@ export function createPresideImage( deps ) {
 export function createPresideAttachment( deps ) {
 	return makeEmbedNode( {
 		  name        : "presideAttachment"
+		, block       : true
 		, dataAttr    : "data-preside-attachment"
 		, cssClass    : "attachment-placeholder"
-		, title       : "Attachment"
+		, titleKey    : "picker.attachment.title"
 		, insertCmd   : "insertPresideAttachment"
 		, openCmd     : "openPresideAttachmentPicker"
-		, loadingLabel: () => "loading attachment…"
+		, loadingLabel: () => t( "embed.loading.attachment" )
 		, previewReq  : ( raw, buildAjaxLink ) => ( { url: buildAjaxLink( "assetManager.renderEmbeddedAttachmentForEditor" ), data: { embeddedAttachment: raw } } )
 		, pickerUrl   : ( buildAdminLink ) => buildAdminLink( "assetmanager", "pickerForEditorDialog", { type: "attachment" } )
 		, prefill     : ( raw ) => ( { configJson: inner( raw, /^\{\{attachment:(.*):attachment\}\}$/ ) } )
@@ -150,9 +163,10 @@ export function createPresideAttachment( deps ) {
 export function createPresideWidget( deps ) {
 	return makeEmbedNode( {
 		  name        : "presideWidget"
+		, block       : true
 		, dataAttr    : "data-preside-widget"
 		, cssClass    : "widget-placeholder"
-		, title       : "Widget"
+		, titleKey    : "picker.widget.title"
 		, insertCmd   : "insertPresideWidget"
 		, openCmd     : "openPresideWidgetPicker"
 		, loadingLabel: ( raw ) => { const m = raw && raw.match( WIDGET_RE ); return m ? m[ 1 ] : "widget"; }

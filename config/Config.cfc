@@ -5,9 +5,10 @@
  * Kept intentionally small: the stored-content contract is unchanged, so the existing
  * settings.ckeditor.* config (toolbars, linkPicker types, defaults) is reused as-is.
  *
- * NB we deliberately do NOT override settings.ckeditor.defaults.configFile: the Tiptap
- * facade ignores the CKEditor customConfig, so pointing it at a non-existent config.js
- * would only mint a phantom 404.
+ * NB we deliberately do NOT override settings.ckeditor.defaults.configFile: the facade
+ * loads and honours custom CKEditor config files (src/customConfig.js), so site
+ * overrides of configFile keep working, and the stock /ckeditorExtensions/config.js
+ * executes harmlessly (its plugin registration no-ops against the CKEDITOR shim).
  */
 component {
 

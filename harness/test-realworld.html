@@ -1,0 +1,186 @@
+<!doctype html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>Harness — real-world config tests</title>
+	<link rel="stylesheet" href="/dist/tiptap.min.css">
+	<style>
+		body{font-family:sans-serif;margin:0;background:#eef1f4;color:#222}
+		header{background:#5a2d7d;color:#fff;padding:10px 16px;font-size:15px}
+		header a{color:#e2c9f0}
+		main{max-width:900px;margin:20px auto;background:#fff;padding:20px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.1)}
+		.note{font-size:12px;color:#666;margin:0 0 14px}
+		#results li{font-size:13px;margin:3px 0}
+		#results .pass{color:#0a7d5a}
+		#results .fail{color:#c0392b;font-weight:bold}
+		#summary{font-size:15px;font-weight:bold;margin:12px 0}
+		.fixture{margin:18px 0}
+		.fixture h3{font-size:13px;margin:0 0 4px;color:#555}
+	</style>
+</head>
+<body>
+	<header>Preside Tiptap — <strong>real-world configuration tests</strong> &nbsp;·&nbsp; <a href="/">index</a></header>
+	<main>
+		<p class="note">
+			Each case reproduces a CKEditor customisation pattern found verbatim in real
+			Preside sites/extensions (named toolbars from <code>settings.ckeditor.toolbars</code>,
+			<code>defaultConfigs.stylesSet</code> appends, stylesheet appends, and custom
+			CKEditor config files / the stock core <code>/ckeditorExtensions/config.js</code>).
+			Assertions run automatically; results below and on <code>window.__results</code> /
+			<code>window.__done</code>.
+		</p>
+
+		<div id="summary">running…</div>
+		<ul id="results"></ul>
+
+		<!-- T1: preside-ext-ready-membership-cms-basics named toolbar
+		     settings.ckeditor.toolbars.bolditaliclinkandformat = 'Bold|Italic|PresideLink,PresideUnlink|Format'
+		     (arrives client-side pre-resolved by CkEditorToolbarHelper.getToolbarDefinition) -->
+		<div class="fixture"><h3>T1 — cms-basics “bolditaliclinkandformat” toolbar</h3>
+			<textarea name="t1" class="richeditor"
+				data-toolbar="Bold|Italic|PresideLink,PresideUnlink|Format"><p>one</p></textarea>
+		</div>
+
+		<!-- T2: preside-ext-pdf-templating toolbar - full CKEditor button set incl.
+		     many buttons with no Tiptap analogue (Find/Replace/Scayt/SpecialChar/
+		     CreateDiv/BidiLtr/BidiRtl/Language/Cut/Copy/SelectAll). Must mount and
+		     skip the unmapped names gracefully. -->
+		<div class="fixture"><h3>T2 — pdf-templating toolbar (unmapped CKEditor buttons)</h3>
+			<textarea name="t2" class="richeditor"
+				data-toolbar="Maximize,-,Source,|Cut,Copy,-,Undo,Redo|Find,Replace,-,SelectAll,-,Scayt|ImagePicker,SpecialChar|Bold,Italic,Underline,Strike,Subscript,Superscript,RemoveFormat|NumberedList,BulletedList,Table,HorizontalRule,-,Outdent,Indent,-,Blockquote,CreateDiv|JustifyLeft,JustifyCenter,JustifyRight,JustifyBlock,-,BidiLtr,BidiRtl,Language"><p>two</p></textarea>
+		</div>
+
+		<!-- T3/T4: rptestbed site Config.cfc appends content stylesheets;
+		     cms-basics appends a stylesSet entry:
+		     ArrayAppend( settings.ckeditor.defaults.defaultConfigs.stylesSet,
+		       { name:'table.compact', element:'table', attributes:{ 'class':'table table-compact' } } )
+		     (stylesSet lands in cfrequest.ckeditorDefaultConfigs - set in the script below) -->
+		<div class="fixture"><h3>T3/T4 — stylesSet append + content stylesheets → Styles dropdown</h3>
+			<textarea name="t3" class="richeditor"
+				data-toolbar="Bold,Italic|Styles"
+				data-stylesheets="/content-sample.css"><p>three</p><table><tr><td>x</td></tr></table></textarea>
+		</div>
+
+		<!-- T5: site-provided custom CKEditor config file (the
+		     settings.ckeditor.defaults.configFile / per-field customConfig contract).
+		     custom-config-fixture.js mirrors the stock core file's plugin boilerplate
+		     plus real config: toolbar_harnessCustom, format_tags, ENTER_BR,
+		     disallowedContent. -->
+		<div class="fixture"><h3>T5 — custom config file (named toolbar, enterMode, filters)</h3>
+			<textarea name="t5" class="richeditor"
+				data-toolbar="harnessCustom"
+				data-custom-config="/custom-config-fixture.js"><p>five</p></textarea>
+		</div>
+
+		<!-- T6: stock core config file (cfrequest.ckeditorConfig =
+		     /ckeditorExtensions/config.js via mocks.js) - plugin registration must
+		     no-op against the shim and the editor must be fully functional. -->
+		<div class="fixture"><h3>T6 — stock core /ckeditorExtensions/config.js is harmless</h3>
+			<textarea name="t6" class="richeditor"
+				data-toolbar="Bold,Italic"><p>six</p></textarea>
+		</div>
+	</main>
+
+	<script src="/vendor/jquery.js"></script>
+	<script src="/mocks.js"></script>
+	<script>
+		// What preside-ext-ready-membership-cms-basics does server-side, as it
+		// reaches the client (ckEditorJs.cfm includeData -> cfrequest).
+		window.cfrequest.ckeditorDefaultConfigs.stylesSet = [
+			{ name: "table.compact", element: "table", attributes: { "class": "table table-compact" } }
+		];
+	</script>
+	<script src="/dist/tiptap.bundle.min.js"></script>
+	<script src="/dist/facade.min.js"></script>
+	<script>
+	presideJQuery( function() {
+		var $ = presideJQuery;
+		var results = [], listEl = document.getElementById( "results" );
+
+		function check( label, ok, detail ) {
+			results.push( { label: label, ok: !!ok, detail: detail || "" } );
+			var li = document.createElement( "li" );
+			li.className = ok ? "pass" : "fail";
+			li.textContent = ( ok ? "✓ " : "✗ " ) + label + ( !ok && detail ? " — " + detail : "" );
+			listEl.appendChild( li );
+		}
+		function toolbarOf( name ) {
+			return $( "textarea[name=" + name + "]" ).next( ".tiptap-editor-container" ).find( ".tiptap-toolbar" );
+		}
+		function buttonTitles( name ) {
+			return toolbarOf( name ).find( "button.tiptap-btn" ).not( ".tiptap-dropdown-trigger" )
+				.map( function() { return this.title || this.getAttribute( "aria-label" ); } ).get();
+		}
+
+		// Mount explicitly (same as formFields.js / tiptap.html) - jQuery's ready
+		// fires before the facade's own DOMContentLoaded bootstrap, so instances
+		// wouldn't exist yet if we relied on it.
+		$( "textarea.richeditor" ).each( function() { new PresideRichEditor( this ); } );
+
+		// ---- T1: cms-basics named toolbar ---------------------------------
+		var t1 = buttonTitles( "t1" );
+		check( "T1 toolbar renders exactly Bold/Italic/Link/Unlink", JSON.stringify( t1 ) === JSON.stringify( [ "Bold", "Italic", "Link", "Unlink" ] ), JSON.stringify( t1 ) );
+		check( "T1 Format dropdown present", toolbarOf( "t1" ).find( ".tiptap-dropdown-trigger" ).length === 1 );
+
+		// ---- T2: pdf-templating toolbar -----------------------------------
+		var inst2 = CKEDITOR.instances.t2;
+		var t2 = buttonTitles( "t2" );
+		check( "T2 editor mounted despite unmapped buttons", !!inst2 && toolbarOf( "t2" ).length === 1 );
+		check( "T2 mapped buttons render (Bold, Image, Table, Undo)",
+			t2.indexOf( "Bold" ) > -1 && t2.indexOf( "Image" ) > -1 && t2.indexOf( "Table" ) > -1 && t2.indexOf( "Undo" ) > -1, JSON.stringify( t2 ) );
+		var unmapped = [ "Find", "Replace", "Scayt", "SelectAll", "SpecialChar", "CreateDiv", "BidiLtr", "BidiRtl", "Language", "Cut", "Copy" ];
+		check( "T2 unmapped CKEditor buttons skipped silently", t2.filter( function( t ) { return unmapped.indexOf( t ) > -1; } ).length === 0, JSON.stringify( t2 ) );
+		check( "T2 editor functional (getData round-trip)", inst2 && inst2.getData() === "<p>two</p>", inst2 && inst2.getData() );
+
+		// ---- T5: custom config file ---------------------------------------
+		var inst5 = CKEDITOR.instances.t5;
+		var t5 = buttonTitles( "t5" );
+		check( "T5 toolbar_harnessCustom resolved from config file", JSON.stringify( t5 ) === JSON.stringify( [ "Bold", "Italic" ] ), JSON.stringify( t5 ) );
+		check( "T5 numeric CKEDITOR.ENTER_BR → enterMode 'br'", inst5 && inst5.config.enterMode === "br", inst5 && inst5.config.enterMode );
+		check( "T5 file disallowedContent reaches paste filtering config", inst5 && inst5.config.defaultConfigs.disallowedContent === "*{text-shadow*}" );
+		check( "T5 instance defaultConfigs override file format_tags (CKEditor precedence)",
+			inst5 && inst5.config.defaultConfigs.format_tags === "p;h1;h2;h3;h4;h5;h6;pre;div", inst5 && inst5.config.defaultConfigs.format_tags );
+
+		// ---- T6: stock core config file -----------------------------------
+		var inst6 = CKEDITOR.instances.t6;
+		check( "T6 editor mounts with the stock core config.js loaded", !!inst6 && !!toolbarOf( "t6" ).length );
+		check( "T6 plugin registration no-ops (CKEDITOR.plugins shimmed)", typeof CKEDITOR.plugins.addExternal === "function" );
+		check( "T6 getData round-trip", inst6 && inst6.getData() === "<p>six</p>", inst6 && inst6.getData() );
+		check( "T6 file extraPlugins captured but harmless", inst6 && /widgets/.test( inst6.config.defaultConfigs.extraPlugins || "" ), inst6 && inst6.config.defaultConfigs.extraPlugins );
+
+		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --
+		function stylesMenuItems() {
+			var $tb = toolbarOf( "t3" );
+			$tb.find( ".tiptap-dropdown-trigger" ).trigger( "click" ); // build lazily
+			var items = $tb.find( ".tiptap-dropdown-menu .tiptap-fmt-preview" )
+				.map( function() { return $( this ).text(); } ).get();
+			$tb.find( ".tiptap-dropdown-trigger" ).trigger( "click" ); // close again
+			return items;
+		}
+		var tries = 0;
+		( function pollStyles() {
+			var items = stylesMenuItems();
+			var hasStylesSet = items.indexOf( "table.compact" ) > -1;
+			var hasHarvested = items.indexOf( "p.lead" ) > -1;
+			if ( ( hasStylesSet && hasHarvested ) || ++tries > 40 ) {
+				check( "T3 stylesSet append appears in Styles dropdown (table.compact)", hasStylesSet, JSON.stringify( items ) );
+				check( "T4 stylesheet-harvested selector appears (p.lead from /content-sample.css)", hasHarvested, JSON.stringify( items ) );
+				check( "T4 scoped content CSS injected (no admin bleed)", !!document.querySelector( 'style[data-preside-content-css="/content-sample.css"]' ) );
+				finish();
+				return;
+			}
+			setTimeout( pollStyles, 100 );
+		} )();
+
+		function finish() {
+			var failed = results.filter( function( r ) { return !r.ok; } ).length;
+			document.getElementById( "summary" ).textContent =
+				( results.length - failed ) + " passed, " + failed + " failed";
+			document.getElementById( "summary" ).style.color = failed ? "#c0392b" : "#0a7d5a";
+			window.__results = results;
+			window.__done = true;
+		}
+	} );
+	</script>
+</body>
+</html>

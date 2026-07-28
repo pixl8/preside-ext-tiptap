@@ -13,6 +13,8 @@
  * commitContent(), hide(), click("ok"), `_plugin`, and `_.selectedElement`.
  */
 
+import { t } from "./i18n.js";
+
 let seq = 0;
 
 export function openPickerModal( opts ) {
@@ -26,11 +28,11 @@ export function openPickerModal( opts ) {
 	overlay.innerHTML =
 		'<div class="preside-picker-dialog" role="dialog" aria-modal="true">'
 		+   '<div class="preside-picker-header"><span class="preside-picker-title"></span>'
-		+     '<button type="button" class="preside-picker-close" aria-label="Close">&times;</button></div>'
+		+     '<button type="button" class="preside-picker-close">&times;</button></div>'
 		+   '<div class="preside-picker-body"><iframe class="preside-picker-iframe" frameborder="0"></iframe></div>'
 		+   '<div class="preside-picker-footer">'
-		+     '<button type="button" class="preside-picker-cancel">Cancel</button>'
-		+     '<button type="button" class="preside-picker-ok" disabled>OK</button>'
+		+     '<button type="button" class="preside-picker-cancel"></button>'
+		+     '<button type="button" class="preside-picker-ok" disabled></button>'
 		+   '</div>'
 		+ '</div>';
 	document.body.appendChild( overlay );
@@ -40,6 +42,10 @@ export function openPickerModal( opts ) {
 	const okBtn    = overlay.querySelector( ".preside-picker-ok" );
 	const cancelBtn = overlay.querySelector( ".preside-picker-cancel" );
 	const closeBtn = overlay.querySelector( ".preside-picker-close" );
+
+	okBtn.textContent     = t( "picker.ok" );
+	cancelBtn.textContent = t( "picker.cancel" );
+	closeBtn.setAttribute( "aria-label", t( "picker.close" ) );
 
 	// A stand-in for CKEditor's dialog content element. The iframe behaviour files
 	// write _config / _widgetConfig onto it and call dialog.commitContent().
@@ -108,11 +114,20 @@ export function openPickerModal( opts ) {
 
 // POST the (possibly complex) prefill data as form-encoded, mirroring the jQuery
 // $.ajax the CKEditor dialogs use for ajaxhelper.temporarilyStoreData.
+//
+// Arrays are joined as a comma list: the stored data round-trips through CFML's
+// rc into the picker page's `cfrequest` verbatim, and the picker JS expects
+// e.g. `cfrequest.anchors` to be a comma string (it does `anchors.split(",")` -
+// see core linkPickerFormBehaviour.js). JSON.stringify-ing here leaks brackets
+// and quotes into the anchor dropdown items.
 export function postForm( url, data ) {
 	const body = new URLSearchParams();
 	Object.keys( data || {} ).forEach( function( k ) {
-		const v = data[ k ];
-		body.append( k, ( v === null || v === undefined ) ? "" : ( typeof v === "object" ? JSON.stringify( v ) : v ) );
+		let v = data[ k ];
+		if ( v === null || v === undefined ) { v = ""; }
+		else if ( Array.isArray( v ) ) { v = v.join( "," ); }
+		else if ( typeof v === "object" ) { v = JSON.stringify( v ); }
+		body.append( k, v );
 	} );
 	return fetch( url, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: body.toString(), credentials: "same-origin" } );
 }

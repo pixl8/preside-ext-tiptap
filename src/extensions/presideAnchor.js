@@ -11,6 +11,7 @@
  *   the link picker "anchor" type lists these (see collectAnchors in presideLink)
  */
 import { Node } from "@tiptap/core";
+import { t } from "../i18n.js";
 
 export function createPresideAnchor() {
 	return Node.create( {
@@ -61,7 +62,7 @@ function makeAnchorDom( node, editor, getPos ) {
 	const dom = document.createElement( "span" );
 	dom.className = "preside-anchor";
 	dom.setAttribute( "contenteditable", "false" );
-	dom.title = "Anchor: " + ( node.attrs.name || "" ) + " (double-click to edit)";
+	dom.title = t( "anchor.tooltip", { name: node.attrs.name || "" } );
 	dom.textContent = "⚓"; // ⚓
 	dom.addEventListener( "dblclick", function( e ) {
 		e.preventDefault(); e.stopPropagation();
@@ -81,13 +82,18 @@ function openAnchorDialog( editor ) {
 	overlay.className = "preside-anchor-overlay";
 	overlay.innerHTML =
 		'<div class="preside-anchor-dialog" role="dialog" aria-modal="true">'
-		+   '<div class="preside-anchor-head">Anchor name</div>'
-		+   '<input type="text" class="preside-anchor-input" placeholder="e.g. section-2" />'
-		+   '<div class="preside-anchor-foot"><button type="button" class="pa-cancel">Cancel</button><button type="button" class="pa-ok">OK</button></div>'
+		+   '<div class="preside-anchor-head"></div>'
+		+   '<input type="text" class="preside-anchor-input" />'
+		+   '<div class="preside-anchor-foot"><button type="button" class="pa-cancel"></button><button type="button" class="pa-ok"></button></div>'
 		+ '</div>';
 	document.body.appendChild( overlay );
 
+	overlay.querySelector( ".preside-anchor-head" ).textContent = t( "anchor.dialog.title" );
+	overlay.querySelector( ".pa-cancel" ).textContent = t( "picker.cancel" );
+	overlay.querySelector( ".pa-ok" ).textContent = t( "picker.ok" );
+
 	const input = overlay.querySelector( ".preside-anchor-input" );
+	input.setAttribute( "placeholder", t( "anchor.dialog.placeholder" ) );
 	input.value = current;
 	setTimeout( function() { input.focus(); input.select(); }, 0 );
 

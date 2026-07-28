@@ -1,8 +1,11 @@
+/* Editor chrome + content styles. SOURCE file - built (minified + content-hashed)
+   into assets/dist/ by esbuild.mjs alongside the js bundles. */
 .tiptap-editor-container{border:1px solid #ccc;border-radius:3px;background:#fff}
 .tiptap-toolbar{border-bottom:1px solid #ddd;padding:4px 6px;background:#f7f7f7;display:flex;flex-wrap:wrap;gap:2px;align-items:center}
 .tiptap-toolbar-group{display:inline-flex;gap:1px;margin-right:6px}
 .tiptap-toolbar-sep{display:inline-block;width:1px;height:18px;background:#ccc;margin:0 4px}
-.tiptap-btn{min-width:26px;height:26px;padding:0 6px;border:1px solid transparent;background:none;border-radius:3px;cursor:pointer;font-size:13px;line-height:24px;color:#333}
+.tiptap-btn{min-width:26px;height:26px;padding:0 6px;border:1px solid transparent;background:none;border-radius:3px;cursor:pointer;font-size:13px;line-height:24px;color:#333;display:inline-flex;align-items:center;justify-content:center}
+.tiptap-btn svg{width:16px;height:16px;display:block;pointer-events:none}
 .tiptap-btn:hover{background-color:#e9e9e9;border-color:#ddd}
 .tiptap-btn.is-active{background:#dceafc;border-color:#a9cdf5;color:#1a5296}
 .tiptap-editor-mount{padding:8px 10px}
@@ -12,17 +15,8 @@
 .tiptap-editor-container.is-maximized .tiptap-editor-mount{flex:1;max-height:none}
 .tiptap-editor-mount .ProseMirror a{color:#1a5296;text-decoration:underline}
 .tiptap-editor-mount .img-placeholder,.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{display:inline-block;vertical-align:middle}
-.tiptap-editor-mount .widget-placeholder{background:#eee url(icons/widgets.png) 6px 9px no-repeat;border:1px solid #ccc;border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:#333;display:inline-block}
-/* Toolbar buttons that use the actual CKEditor icon PNGs (relative to this CSS file). */
-.tiptap-btn-img{background-repeat:no-repeat;background-position:center;background-size:16px 16px;font-size:0;color:transparent}
-.tiptap-btn-img.is-active{background-color:#dceafc}
-.tiptap-btn-img.ck-presidelink{background-image:url(icons/presidelink.png)}
-.tiptap-btn-img.ck-presideunlink{background-image:url(icons/presideunlink.png)}
-.tiptap-btn-img.ck-presideanchor{background-image:url(icons/presideanchor.png)}
-.tiptap-btn-img.ck-imagepicker{background-image:url(icons/imagepicker.png)}
-.tiptap-btn-img.ck-attachmentpicker{background-image:url(icons/attachmentpicker.png)}
-.tiptap-btn-img.ck-widgets{background-image:url(icons/widgets.png)}
-.tiptap-btn-img.ck-codesnippet{background-image:url(icons/codesnippet.png)}
+/* Widget placeholder glyph: inline data-URI SVG (Tabler "puzzle", MIT) — no icon files. */
+.tiptap-editor-mount .widget-placeholder{background:#eee url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat;border:1px solid #ccc;border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:#333;display:inline-block}
 .tiptap-editor-mount .attachment-placeholder{padding:2px}
 .tiptap-editor-mount .loading{color:#999;font-style:italic}
 .tiptap-editor-mount .error{color:#c00;border:1px solid #f4b4b4;padding:1px 4px;border-radius:3px}
@@ -43,6 +37,7 @@
 .tiptap-dropdown-item{padding:5px 14px;cursor:pointer;color:#222;line-height:1.25;white-space:nowrap}
 .tiptap-dropdown-item:hover{background:#eef4fb}
 .tiptap-dropdown-item.active{background:#dceafc}
+.tiptap-dropdown-empty{color:#999;font-style:italic;cursor:default}
 /* Items render as real h1..h6/p/pre so browser defaults + injected content CSS style them. */
 .tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
@@ -62,3 +57,5 @@
 .preside-picker-footer button{padding:6px 14px;margin-left:8px;border-radius:3px;border:1px solid #ccc;cursor:pointer}
 .preside-picker-ok{background:#1a5296;color:#fff;border-color:#1a5296}
 .preside-picker-ok:disabled{opacity:.5;cursor:not-allowed}
+.tiptap-footer{display:flex;gap:14px;align-items:center;border-top:1px solid #ddd;background:#f7f7f7;padding:3px 10px;font-size:11px;line-height:1.6;color:#777;border-radius:0 0 3px 3px}
+.tiptap-editor-container.is-maximized .tiptap-footer{border-radius:0}

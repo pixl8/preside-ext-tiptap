@@ -18,6 +18,24 @@
 // exactly like CKEditor.
 const SCOPES = [ ".tiptap-editor-mount .ProseMirror", ".tiptap-fmt-preview" ];
 
+// Raw selectors harvested from the fetched content stylesheets — the Styles
+// dropdown (CKEditor stylesheetParser equivalent) filters these against
+// stylesheetParser_validSelectors. Populated asynchronously as sheets load.
+const contentSelectors = [];
+
+export function getContentSelectors() { return contentSelectors; }
+
+function collectSelectors( rules ) {
+	for ( let i = 0; i < rules.length; i++ ) {
+		const rule = rules[ i ];
+		if ( rule.type === 1 /* STYLE_RULE */ ) {
+			if ( contentSelectors.indexOf( rule.selectorText ) === -1 ) { contentSelectors.push( rule.selectorText ); }
+		} else if ( rule.cssRules && rule.cssRules.length ) {
+			collectSelectors( rule.cssRules );
+		}
+	}
+}
+
 export function applyContentStyles( stylesheetsCsv ) {
 	if ( !stylesheetsCsv ) { return; }
 	const urls = String( stylesheetsCsv ).split( "," ).map( s => s.trim() ).filter( Boolean );
@@ -54,6 +72,7 @@ function scopeCss( css, scopes ) {
 	document.head.appendChild( probe );
 	let out = "";
 	try {
+		collectSelectors( probe.sheet.cssRules );
 		out = serialiseRules( probe.sheet.cssRules, scopes );
 	} catch ( e ) {
 		out = css; // last resort: inject as-is

@@ -35,11 +35,14 @@
         ".git/*",
         ".gitignore",
         ".github/*",
+        ".DS_Store",
         "node_modules/*",
         "src/*",
         "harness/*",
         "package.json",
         "package-lock.json",
-        "esbuild.mjs"
+        "esbuild.mjs",
+        "CLAUDE.md",
+        "devlocal.md"
     ]
 }

@@ -10,29 +10,24 @@
  * core uses, this bundle serves the Tiptap vendor bundle instead of CKEditor -
  * with no core StickerBundle edit. (Same override mechanism as preside-ext-jsmodern.)
  *
- * Assets are served from this extension's own mount:
- *   /preside/system/assets/extension/preside-ext-tiptap/assets/dist/...
- * a stable (non-fingerprinted) directory mount, so the bundle's relative
- * `url(icons/*.png)` references keep resolving.
+ * Cache busting is done via CONTENT-HASHED FILENAMES: the build (esbuild.mjs)
+ * emits e.g. facade.<hash>.min.js, and each asset is declared with a WILDCARD
+ * `path` - Sticker itself resolves the single matching file at configure time
+ * (https://sticker.readthedocs.io/ - wildcard asset paths). The build prunes
+ * stale hashed outputs so each pattern only ever matches one file.
+ * (Toolbar icons are inline SVGs in the js bundle - no separate icon files.)
  */
 component output=false {
 
-	// Extension asset mount (StickerForPreside adds rootUrl
-	// "/preside/system/assets/extension/<ext-dir>/assets" for each extension).
-	variables.base    = "/preside/system/assets/extension/preside-ext-tiptap/assets/dist";
-	variables.version = "0.0.7";
-
 	public void function configure( required any bundle ) {
-		var v = "?v=" & variables.version;
-
 		// 1) Replace the CKEditor library with the Tiptap bundle (exposes window.PresideTiptap).
-		bundle.addAsset( id="ckeditor", url=variables.base & "/tiptap.bundle.min.js" & v );
+		bundle.addAsset( id="ckeditor", path="/dist/tiptap.bundle.*.min.js" );
 
 		// 2) The Tiptap facade - re-assigns window.PresideRichEditor after presidecore.
-		bundle.addAsset( id="tiptap-facade", url=variables.base & "/facade.min.js" & v );
+		bundle.addAsset( id="tiptap-facade", path="/dist/facade.*.min.js" );
 
 		// 3) Editor content / chrome styles.
-		bundle.addAsset( id="tiptap-css", url=variables.base & "/tiptap.min.css" & v );
+		bundle.addAsset( id="tiptap-css", path="/dist/tiptap.*.min.css" );
 
 		// ORDER: the facade needs window.PresideTiptap (the "ckeditor" id now = the
 		// Tiptap bundle) and must load AFTER presidecore so it can overwrite the

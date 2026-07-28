@@ -15,8 +15,9 @@
  * class/style is left wrapped so those attributes are never lost.
  */
 
-export function normalizeOutput( html ) {
+export function normalizeOutput( html, opts ) {
 	if ( !html ) { return ""; }
+	opts = opts || {};
 
 	const root = document.createElement( "div" );
 	root.innerHTML = html;
@@ -44,7 +45,31 @@ export function normalizeOutput( html ) {
 	const last = root.lastElementChild;
 	if ( last && last.tagName === "P" && last.innerHTML.trim() === "" ) { last.remove(); }
 
+	// enterMode=br (CKEditor ENTER_BR): paragraphs are not the line separator -
+	// unwrap every top-level attribute-less <p>, joining consecutive ones with
+	// <br />, matching what CKEditor stores for such fields.
+	if ( opts.enterMode === "br" ) {
+		let prevWasP = false;
+		Array.prototype.slice.call( root.children ).forEach( function( el ) {
+			const isBareP = el.tagName === "P" && el.attributes.length === 0;
+			if ( isBareP && prevWasP ) { root.insertBefore( document.createElement( "br" ), el ); }
+			if ( isBareP ) { unwrap( el ); }
+			prevWasP = isBareP;
+		} );
+	} else if ( isFalse( opts.autoParagraph ) ) {
+		// autoParagraph=false: CKEditor does not wrap lone inline content in <p>.
+		// Mirror that when the whole document is a single attribute-less paragraph.
+		const kids = elementChildren( root );
+		if ( kids.length === 1 && kids[ 0 ].tagName === "P" && kids[ 0 ].attributes.length === 0 ) {
+			unwrap( kids[ 0 ] );
+		}
+	}
+
 	return root.innerHTML;
+}
+
+function isFalse( v ) {
+	return v === false || v === "false" || v === 0;
 }
 
 function elementChildren( el ) {

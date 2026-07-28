@@ -25,16 +25,24 @@ const WIDGET_RE     = /{{widget:[a-zA-Z$_][a-zA-Z0-9$_]*:[\s\S]*?:widget}}/gi;
 function attrEscape( s ) {
 	return String( s ).replace( /&/g, "&amp;" ).replace( /"/g, "&quot;" ).replace( /</g, "&lt;" ).replace( />/g, "&gt;" );
 }
-function embedSpan( dataAttr, cssClass, raw ) {
-	return '<span ' + dataAttr + '="true" class="' + cssClass + '" data-raw="' + attrEscape( raw ) + '"></span>';
+function embedEl( tag, dataAttr, cssClass, raw ) {
+	return '<' + tag + ' ' + dataAttr + '="true" class="' + cssClass + '" data-raw="' + attrEscape( raw ) + '"></' + tag + '>';
 }
+
+const P_WRAPPED_TOKEN_RE = /<p>\s*({{(?:image|attachment|widget):[\s\S]*?:(?:image|attachment|widget)}})\s*<\/p>/gi;
 
 export function detokenize( stored ) {
 	if ( !stored ) { return ""; }
+	// All embeds are block-level <div>s (CKEditor treats image/attachment/widget
+	// as BLOCK widgets, so stored tokens are never <p>-wrapped). Legacy content
+	// saved by earlier extension versions p-wrapped tokens - unwrap those first,
+	// otherwise the browser parser splits the <p> around the div and leaves empty
+	// <p></p> shells in the document.
 	return stored
-		.replace( IMAGE_RE,      m => embedSpan( "data-preside-image",      "img-placeholder",        m ) )
-		.replace( ATTACHMENT_RE, m => embedSpan( "data-preside-attachment", "attachment-placeholder", m ) )
-		.replace( WIDGET_RE,     m => embedSpan( "data-preside-widget",     "widget-placeholder",     m ) );
+		.replace( P_WRAPPED_TOKEN_RE, "$1" )
+		.replace( IMAGE_RE,      m => embedEl( "div", "data-preside-image",      "img-placeholder",        m ) )
+		.replace( ATTACHMENT_RE, m => embedEl( "div", "data-preside-attachment", "attachment-placeholder", m ) )
+		.replace( WIDGET_RE,     m => embedEl( "div", "data-preside-widget",     "widget-placeholder",     m ) );
 }
 
 export function tokenize( html ) {

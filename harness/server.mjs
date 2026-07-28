@@ -21,13 +21,15 @@
  */
 import http from "node:http";
 import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const __dirname   = path.dirname( fileURLToPath( import.meta.url ) );
-const MODULE_DIR  = path.resolve( __dirname, ".." );                 // system/externals/tiptap
-const PRESIDE_ASSETS = path.resolve( __dirname, "../../../assets" ); // system/assets
+const MODULE_DIR  = path.resolve( __dirname, ".." );                 // extension repo root
+// Preside core assets (jquery/presidecore/ckeditor for the comparison pane) -
+// point PRESIDE_ASSETS at <Preside-CMS>/system/assets; defaults to a sibling checkout.
+const PRESIDE_ASSETS = process.env.PRESIDE_ASSETS || path.resolve( __dirname, "../../Preside-CMS/system/assets" );
 const PORT = Number( process.argv[ 2 ] || 8700 );
 
 const TYPES = {
@@ -241,7 +243,21 @@ const server = http.createServer( async ( req, res ) => {
 	} else if ( p.startsWith( "/vendor/" ) ) {
 		filePath = path.join( PRESIDE_ASSETS, "js/admin/presidecore", p.slice( "/vendor/".length ) );
 	} else if ( p.startsWith( "/dist/" ) ) {
-		filePath = path.join( MODULE_DIR, p );
+		filePath = path.join( MODULE_DIR, "assets", p ); // built bundles live in assets/dist/
+		// dist outputs are content-hashed (facade.<hash>.min.js) but the harness
+		// pages reference stable names (facade.min.js) - resolve like
+		// StickerBundle.cfc does: newest hashed match wins.
+		if ( !existsSync( filePath ) ) {
+			const m = p.match( /^\/dist\/(.+)\.min\.(js|css)(\.map)?$/ );
+			if ( m ) {
+				const distDir = path.join( MODULE_DIR, "assets", "dist" );
+				const re      = new RegExp( "^" + m[ 1 ].replace( /\./g, "\\." ) + "\\.[A-Z0-9]+\\.min\\." + m[ 2 ] + ( m[ 3 ] ? "\\.map" : "" ) + "$", "i" );
+				const match   = readdirSync( distDir )
+					.filter( ( f ) => re.test( f ) )
+					.sort( ( a, b ) => statSync( path.join( distDir, b ) ).mtimeMs - statSync( path.join( distDir, a ) ).mtimeMs )[ 0 ];
+				if ( match ) { filePath = path.join( distDir, match ); }
+			}
+		}
 	} else {
 		filePath = path.join( __dirname, p ); // harness-local files
 	}

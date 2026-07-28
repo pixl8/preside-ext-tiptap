@@ -18,7 +18,8 @@ import { Extension, Mark, mergeAttributes } from "@tiptap/core";
 const BLOCK_TYPES = [
 	"paragraph", "heading", "blockquote", "codeBlock",
 	"bulletList", "orderedList", "listItem",
-	"table", "tableRow", "tableHeader", "tableCell"
+	"table", "tableRow", "tableHeader", "tableCell",
+	"presideDiv"
 ];
 
 function passthroughAttr( name ) {

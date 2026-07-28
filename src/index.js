@@ -51,14 +51,40 @@ import { createPresideAttributes, createPresideInlineStyle } from "./extensions/
 	}
 } )();
 
+// Simple-content <div> block — backs the "Normal (DIV)" Format entry and
+// div-based Styles (core's format_tags default includes div). Only claims divs
+// whose children are inline: wrapper divs (which contain blocks) keep today's
+// behaviour of being unwrapped, so pasted layout markup is not mangled.
+const BLOCK_CHILD = /^(P|DIV|UL|OL|LI|H[1-6]|TABLE|BLOCKQUOTE|PRE|FIGURE|SECTION|ARTICLE|HEADER|FOOTER|ASIDE|NAV|FORM|DL|HR)$/;
+const PresideDiv = Node.create( {
+	  name    : "presideDiv"
+	, group   : "block"
+	, content : "inline*"
+	, priority: 50
+	, parseHTML() {
+		return [ {
+			  tag     : "div"
+			, priority: 40
+			, getAttrs: function( el ) {
+				for ( let i = 0; i < el.children.length; i++ ) {
+					if ( BLOCK_CHILD.test( el.children[ i ].tagName ) ) { return false; }
+				}
+				return null;
+			}
+		} ];
+	}
+	, renderHTML( { HTMLAttributes } ) { return [ "div", mergeAttributes( HTMLAttributes ), 0 ]; }
+} );
+
 // Extra rich-text extensions backing the wider Preside toolbar (Phase 4).
 function buildRichText( cfg ) {
 	cfg = cfg || {};
 	const exts = [
 		  Subscript
 		, Superscript
-		, TextAlign.configure( { types: [ "heading", "paragraph" ] } )
+		, TextAlign.configure( { types: [ "heading", "paragraph", "presideDiv" ] } )
 		, TableKit   // registers Table + TableRow + TableHeader + TableCell
+		, PresideDiv
 	];
 	if ( cfg.placeholder ) {
 		exts.push( Placeholder.configure( { placeholder: cfg.placeholder } ) );

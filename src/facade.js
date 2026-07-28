@@ -12,14 +12,16 @@
  *     serialize-object (AJAX submit), dirtyforms, quick-add reset, frontend version restore
  *   - $textarea.data('ckeditorinstance') with getData() - used by jquery.validate
  *   - instance API: getData/setData/on/fire/focus/destroy/execCommand/commands
- *
- * PHASE 0/1 skeleton: StarterKit editing + save/load round-trip + registry hooks
- * + basic toolbar. Token nodes/marks and the picker iframe shim land in later phases.
+ *   - custom CKEditor config files (settings.ckeditor.defaults.configFile /
+ *     per-field customConfig) are loaded and honoured - see customConfig.js
  */
 import { buildToolbar } from "./toolbar.js";
 import { tokenize, detokenize } from "./tokens.js";
 import { applyContentStyles } from "./presideStyles.js";
 import { normalizeOutput } from "./normalize.js";
+import { createPasteTransform } from "./pasteFilter.js";
+import { getCustomConfig, prefetchCustomConfig } from "./customConfig.js";
+import { t } from "./i18n.js";
 
 ( function() {
 	"use strict";
@@ -47,30 +49,63 @@ import { normalizeOutput } from "./normalize.js";
 	function cfreq() { return window.cfrequest || {}; }
 
 	// ---- Config assembly (mirror of core preside.richeditor.js) -----------
+
+	// enterMode arrives as a string ("br"/"div") from the data attribute, or as
+	// a numeric CKEDITOR.ENTER_* constant when set by a custom config file.
+	function normaliseEnterMode( v ) {
+		if ( v === CK.ENTER_BR  ) { return "br"; }
+		if ( v === CK.ENTER_DIV ) { return "div"; }
+		if ( v === CK.ENTER_P   ) { return "p"; }
+		return String( v || "" ).toLowerCase();
+	}
+
+	// contentsCss may be a single URL or an array of URLs in a config file;
+	// Preside's stylesheets value is a comma list.
+	function contentsCssToCsv( v ) {
+		if ( !v ) { return ""; }
+		return Array.isArray( v ) ? v.join( "," ) : String( v );
+	}
+
 	function readConfig( ta ) {
 		var $ta = $( ta ), cf = cfreq();
+
+		// The custom CKEditor config file (per-field customConfig attr, falling
+		// back to settings.ckeditor.defaults.configFile via cfrequest.ckeditorConfig)
+		// supplies BASE values that anything set per-instance overrides - exactly
+		// CKEditor's precedence (file config < CKEDITOR.replace() config).
+		var fileCfg = getCustomConfig( $ta.data( "customConfig" ) || cf.ckeditorConfig );
+
+		// settings.ckeditor.defaults.defaultConfigs merged with the form control's
+		// customDefaultConfigs arg (data-custom-default-configs, JSON - jQuery
+		// .data() parses it), exactly like core preside.richeditor.js - both
+		// layered over the config file's values.
+		var defaultConfigs = $.extend( {}, fileCfg, cf.ckeditorDefaultConfigs || {}, $ta.data( "customDefaultConfigs" ) || {} );
+
 		return {
-			  placeholder        : $ta.attr( "placeholder" )          || cf.ckeditorDefaultPlaceholder || ""
-			, toolbar            : $ta.data( "toolbar" )              || cf.ckeditorDefaultToolbar     || ""
-			, width              : $ta.data( "width" )                || cf.ckeditorDefaultWidth
-			, minHeight          : $ta.data( "minHeight" )            || cf.ckeditorDefaultMinHeight
-			, maxHeight          : $ta.data( "maxHeight" )            || cf.ckeditorDefaultMaxHeight
-			, stylesheets        : $ta.data( "stylesheets" )
-			, enterMode          : $ta.data( "enterMode" )
+			  placeholder        : $ta.attr( "placeholder" )          || cf.ckeditorDefaultPlaceholder || fileCfg.editorplaceholder || ""
+			, toolbar            : $ta.data( "toolbar" )              || cf.ckeditorDefaultToolbar     || fileCfg.toolbar           || ""
+			, width              : $ta.data( "width" )                || cf.ckeditorDefaultWidth       || fileCfg.width
+			, minHeight          : $ta.data( "minHeight" )            || cf.ckeditorDefaultMinHeight   || fileCfg.autoGrow_minHeight
+			, maxHeight          : $ta.data( "maxHeight" )            || cf.ckeditorDefaultMaxHeight   || fileCfg.autoGrow_maxHeight
+			, stylesheets        : $ta.data( "stylesheets" )          || contentsCssToCsv( fileCfg.contentsCss )
+			, enterMode          : normaliseEnterMode( $ta.data( "enterMode" ) || fileCfg.enterMode )
 			, widgetCategories   : $ta.data( "widgetCategories" )     || cf.widgetCategories   || ""
 			, linkPickerCategory : $ta.data( "linkPickerCategory" )   || cf.linkPickerCategory || ""
-			, autoParagraph      : $ta.data( "autoParagraph" ) !== undefined ? $ta.data( "autoParagraph" ) : cf.ckeditorAutoParagraph
+			, autoParagraph      : $ta.data( "autoParagraph" ) !== undefined ? $ta.data( "autoParagraph" )
+			                     : ( cf.ckeditorAutoParagraph !== undefined ? cf.ckeditorAutoParagraph : fileCfg.autoParagraph )
+			, defaultConfigs     : defaultConfigs
 		};
 	}
 
 	// ---- Compat instance: CKEditor-shaped API over a Tiptap editor --------
-	function CompatInstance( name, tiptap, cfg, textarea ) {
+	function CompatInstance( name, tiptap, cfg, textarea, container ) {
 		this.name        = name;
 		this._t          = tiptap;
 		this.config      = cfg || {};
 		this.mode        = "wysiwyg";
 		this.commands    = { maximize: { state: 0 } };
 		this._el         = textarea;
+		this._container  = container;
 		this._handlers   = {};
 		this.initialdata = "";
 
@@ -81,7 +116,10 @@ import { normalizeOutput } from "./normalize.js";
 		} );
 	}
 	CompatInstance.prototype.getData = function() {
-		return normalizeOutput( tokenize( this._t.getHTML() ) );
+		return normalizeOutput( tokenize( this._t.getHTML() ), {
+			  autoParagraph: this.config.autoParagraph
+			, enterMode    : this.config.enterMode
+		} );
 	};
 	CompatInstance.prototype.setData = function( html ) {
 		this._t.commands.setContent( detokenize( html || "" ), { emitUpdate: false } );
@@ -95,9 +133,23 @@ import { normalizeOutput } from "./normalize.js";
 
 		var self = this;
 		if ( evt === "key" ) {
-			this._t.view.dom.addEventListener( "keydown", function( e ) {
-				fn( { editor: self, data: { keyCode: e.keyCode, domEvent: e } } );
-			} );
+			// CKEditor ORs modifier masks into keyCode - consumers test e.g.
+			// `13 + CKEDITOR.CTRL` for ctrl+enter (frontendEditors save-draft /
+			// alt+enter maximize) - and a handler returning false cancels the
+			// keystroke (real CKEditor's event.cancel()).
+			var listener = function( e ) {
+				var code = e.keyCode
+					+ ( ( e.ctrlKey || e.metaKey ) ? CK.CTRL  : 0 )
+					+ ( e.shiftKey                 ? CK.SHIFT : 0 )
+					+ ( e.altKey                   ? CK.ALT   : 0 );
+				var result = fn( { editor: self, data: { keyCode: code, domEvent: e } } );
+				if ( result === false ) {
+					e.preventDefault();
+					e.stopPropagation();
+				}
+			};
+			this._t.view.dom.addEventListener( "keydown", listener );
+			( this._domListeners = this._domListeners || [] ).push( [ "keydown", listener ] );
 		}
 		return this;
 	};
@@ -110,8 +162,27 @@ import { normalizeOutput } from "./normalize.js";
 	CompatInstance.prototype.fire = function( evt, data ) { this._emit( evt, data ); };
 	CompatInstance.prototype.focus = function() { this._t.commands.focus(); };
 	CompatInstance.prototype.getSelection = function() { return null; }; // TODO Phase 2
+	// Mirrors real CKEditor's destroy(): tear down the editor DOM and restore the
+	// textarea so a later `new PresideRichEditor()` on the same element starts
+	// clean (frontend editors create/destroy on every edit-mode toggle).
 	CompatInstance.prototype.destroy = function() {
+		try {
+			if ( this._domListeners && this._t.view && this._t.view.dom ) {
+				var dom = this._t.view.dom;
+				this._domListeners.forEach( function( l ) { dom.removeEventListener( l[ 0 ], l[ 1 ] ); } );
+			}
+		} catch ( e ) {}
+		this._domListeners = null;
 		try { this._t.destroy(); } catch ( e ) {}
+		if ( this._container && this._container.parentNode ) {
+			this._container.parentNode.removeChild( this._container );
+		}
+		this._container = null;
+		if ( this._el ) {
+			this._el.style.display = "";
+			this._el.removeAttribute( "data-tiptap-mounted" );
+			$( this._el ).removeData( "ckeditorinstance" );
+		}
 		if ( this.name && CK.instances[ this.name ] === this ) { delete CK.instances[ this.name ]; }
 	};
 	CompatInstance.prototype.execCommand = function( name ) {
@@ -145,16 +216,36 @@ import { normalizeOutput } from "./normalize.js";
 		container.appendChild( mount );
 
 		ta.style.display = "none";
+		ta.setAttribute( "data-tiptap-mounted", "1" );
 		ta.parentNode.insertBefore( container, ta.nextSibling );
+
+		// CKEditor's editable lived in an iframe, so keystrokes never reached the
+		// admin document. Tiptap edits inline, and Preside's admin hotkeys
+		// (preside.hotkeys.js) fail to detect a focused contenteditable as "typing"
+		// (jQuery .prop('contenteditable') misses the camelCase DOM property) - so
+		// e.g. typing "e" toggles quick-edit. Reproduce the iframe isolation: let
+		// everything inside the editor (ProseMirror, our key bridge, the source
+		// textarea) handle keys, then stop them bubbling to the admin page.
+		[ "keydown", "keypress", "keyup" ].forEach( function( evt ) {
+			container.addEventListener( evt, function( e ) { e.stopPropagation(); } );
+		} );
 
 		if ( cfg.minHeight ) { mount.style.minHeight = ( parseInt( cfg.minHeight, 10 ) || 0 ) + "px"; }
 		if ( cfg.maxHeight ) { mount.style.maxHeight = ( parseInt( cfg.maxHeight, 10 ) || 0 ) + "px"; mount.style.overflowY = "auto"; }
+		if ( cfg.width && cfg.width !== "auto" ) {
+			container.style.width = String( cfg.width ).match( /^\d+$/ ) ? cfg.width + "px" : cfg.width;
+		}
+
+		// disallowedContent / pasteFromWordDisallow filtering (core applies these
+		// via CKEDITOR.filter on paste - see preside.richeditor.js).
+		var pasteTransform = createPasteTransform( cfg.defaultConfigs );
 
 		var self   = this;
 		var tiptap = new T.Editor( {
 			  element    : mount
 			, extensions : this.buildExtensions( cfg )
 			, content    : detokenize( ta.value || "" )
+			, editorProps: pasteTransform ? { transformPastedHTML: pasteTransform } : {}
 		} );
 
 		// jquery.validate delegates focusin/focusout/keyup on a selector that
@@ -168,11 +259,27 @@ import { normalizeOutput } from "./normalize.js";
 		// and no-ops on our nameless editable.
 		try { if ( tiptap.view && tiptap.view.dom ) { tiptap.view.dom.form = ta.form || null; } } catch ( e ) {}
 
-		var instance = new CompatInstance( name, tiptap, cfg, ta );
+		// Footer status bar: word / char counts + estimated reading time.
+		// Opt out per-site/per-field with defaultConfigs.wordcount = false.
+		if ( cfg.defaultConfigs.wordcount !== false ) {
+			container.appendChild( buildFooter( tiptap ) );
+		}
+
+		var instance = new CompatInstance( name, tiptap, cfg, ta, container );
 		instance.initialdata = instance.getData();
 		ta.value = instance.initialdata;
 
-		buildToolbar( toolbarEl, tiptap, this.parseToolbarConfig( cfg.toolbar ), cfg );
+		// Toolbar: a config file may set config.toolbar to a CKEditor array
+		// directly, and a bare toolbar NAME that reached the client unresolved
+		// (i.e. not defined in settings.ckeditor.toolbars, which the server
+		// resolves before rendering data-toolbar) is looked up against the config
+		// file's `config.toolbar_<name>` definitions - CKEditor's named-toolbar
+		// semantics.
+		var parsedToolbar = Array.isArray( cfg.toolbar ) ? cfg.toolbar : this.parseToolbarConfig( cfg.toolbar );
+		if ( typeof parsedToolbar === "string" && Array.isArray( cfg.defaultConfigs[ "toolbar_" + parsedToolbar ] ) ) {
+			parsedToolbar = cfg.defaultConfigs[ "toolbar_" + parsedToolbar ];
+		}
+		buildToolbar( toolbarEl, tiptap, parsedToolbar, cfg );
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
 		applyContentStyles( cfg.stylesheets );
@@ -219,8 +326,65 @@ import { normalizeOutput } from "./normalize.js";
 			ext.buildRichText( { placeholder: cfg.placeholder } ).forEach( function( e ) { exts.push( e ); } );
 		}
 
+		// enterMode=br: Enter inserts <br> instead of a new paragraph (CKEditor's
+		// ENTER_BR). Lists/code blocks keep their native Enter behaviour.
+		if ( cfg.enterMode === "br" && T.Extension ) {
+			exts.push( T.Extension.create( {
+				  name    : "presideEnterBr"
+				, priority: 1000
+				, addKeyboardShortcuts: function() {
+					return {
+						Enter: function( args ) {
+							var editor = args.editor;
+							if ( editor.isActive( "listItem" ) || editor.isActive( "codeBlock" ) ) { return false; }
+							return editor.commands.setHardBreak();
+						}
+					};
+				}
+			} ) );
+		}
+
 		return exts;
 	};
+
+	// ---- Footer status bar --------------------------------------------------
+	// Words / chars / estimated reading time, refreshed on every doc change
+	// ("transaction" rather than "update" so programmatic setData( emitUpdate:
+	// false ) refreshes it too).
+	var READING_WORDS_PER_MINUTE = 225;
+
+	function buildFooter( tiptap ) {
+		var footer = document.createElement( "div" );
+		footer.className = "tiptap-footer";
+
+		var wordsEl   = document.createElement( "span" );
+		var charsEl   = document.createElement( "span" );
+		var readingEl = document.createElement( "span" );
+		wordsEl.className   = "tiptap-footer-words";
+		charsEl.className   = "tiptap-footer-chars";
+		readingEl.className = "tiptap-footer-reading";
+		footer.appendChild( wordsEl );
+		footer.appendChild( charsEl );
+		footer.appendChild( readingEl );
+
+		function refresh() {
+			var doc   = tiptap.state.doc;
+			var text  = doc.textBetween( 0, doc.content.size, " ", " " ).trim();
+			var words = text.length ? text.split( /\s+/ ).length : 0;
+			var mins  = Math.max( 1, Math.ceil( words / READING_WORDS_PER_MINUTE ) );
+
+			wordsEl.textContent   = t( "footer.words", { count: words } );
+			charsEl.textContent   = t( "footer.chars", { count: text.length } );
+			readingEl.textContent = t( "footer.readingtime", { count: mins } );
+		}
+
+		tiptap.on( "transaction", function( args ) {
+			if ( !args || !args.transaction || args.transaction.docChanged ) { refresh(); }
+		} );
+		refresh();
+
+		return footer;
+	}
 
 	// Ported verbatim from core preside.richeditor.js.
 	PresideRichEditor.prototype.parseToolbarConfig = function( rawToolbarText ) {
@@ -275,6 +439,10 @@ import { normalizeOutput } from "./normalize.js";
 	}
 	// Expose so AJAX-loaded forms (quick-add modals etc.) can re-scan their content.
 	PresideRichEditor.bootstrap = bootstrapRichEditors;
+
+	// Warm the custom-config-file cache as early as possible so editor mounts
+	// (DOM-ready) resolve it without getCustomConfig's blocking-XHR fallback.
+	prefetchCustomConfig( cfreq().ckeditorConfig );
 
 	if ( document.readyState === "loading" ) {
 		document.addEventListener( "DOMContentLoaded", function() { bootstrapRichEditors( document ); } );

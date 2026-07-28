@@ -13,6 +13,7 @@ import { Mark, mergeAttributes } from "@tiptap/core";
 import { Plugin } from "@tiptap/pm/state";
 import { getLinkAttributes, parseLinkAttributes } from "../presideLinkSerialization.js";
 import { openPickerModal } from "../presidePickerModal.js";
+import { t } from "../i18n.js";
 
 export function createPresideLink( deps ) {
 	deps = deps || {};
@@ -142,7 +143,7 @@ function openLinkPicker( editor, markName, options, deps ) {
 	};
 
 	openPickerModal( {
-		  title           : "Link"
+		  title           : t( "picker.link.title" )
 		, editor          : editor
 		, url             : buildAdminLink( "linkpicker", "index", { linkPickerCategory: options.linkPickerCategory || "" } )
 		, prefillData     : data
