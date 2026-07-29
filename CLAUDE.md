@@ -48,6 +48,7 @@ preside-ext-tiptap/
     maximize.js           full-viewport toggle (portals the container to <body>)
     outline.js            document outline navigator (heading rail -> hover panel -> scroll to)
     imageTools.js         smart images: drag-resize + alignment bubble over an embedded image
+    tableTools.js         table chrome: bubble toolbar (row/col/cell ops) over the caret's table
     tiptap.css            css SOURCE (built minified+hashed into dist)
     icons.js              inline SVG toolbar icons (Tabler Icons, MIT)
     pasteFilter.js        disallowedContent / pasteFromWordDisallow paste filtering
@@ -420,6 +421,97 @@ Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
   `richEditor.cfm` closely enough to exercise all of this without a Preside boot,
   including serving the mock svg AT the requested size so the aspect ratio the
   editor reads is real.
+
+## Alignment dropdown
+
+CKEditor exposed alignment as four separate toolbar buttons
+(`JustifyLeft/Center/Right/Block`). Four buttons for one mutually-exclusive
+property is a lot of toolbar width, so `renderAlign()` in `src/toolbar.js`
+collapses them into **one trigger plus a compact single ROW of icons** (the shape
+`reactjs-tiptap-editor` uses).
+
+- **The trigger shows the CURRENT alignment**, not a fixed icon like the
+  reference's — the state is readable without opening the menu, matching how the
+  Format dropdown displays its current value. With nothing applied it falls back
+  to the first offered icon and is **not** marked `is-active`, so the fallback
+  never makes the button look permanently on.
+- **Collapsing is scoped to the toolbar GROUP, and the menu offers exactly the
+  alignments that group named** — never all four. A site that deliberately left
+  `JustifyBlock` out of its toolbar must not silently get it back.
+- **One alignment stays a plain button.** A single-item menu is worse than the
+  button it replaced, so `collapseAlign` requires more than one in the group.
+  Consequence: a config splitting them across groups (`JustifyLeft|JustifyRight`)
+  gets two plain buttons — the site's own grouping is respected rather than
+  overridden.
+- The trigger is a plain `.tiptap-btn` (`data-cmd="Align"`), deliberately **not**
+  `.tiptap-dropdown-trigger` — same reasoning as the Table picker: that class
+  means "labelled by its current value" and toolbar-enumerating code skips it.
+- Existing per-button i18n keys are reused for the menu items
+  (`toolbar.justifyleft`, …); the trigger adds `toolbar.align`.
+- Behaviour is unchanged from the four buttons: picking an alignment calls the
+  same `COMMANDS[ name ].run()`. In particular there is still **no toggle-off**
+  (`setTextAlign` only, as before) — worth knowing if unsetting alignment is ever
+  asked for, since it was never possible here.
+
+## Tables (grid-size picker + bubble toolbar)
+
+Tables used to be a single toolbar button that dropped a fixed 3x3 in and then
+left the user with no controls at all. They now have two pieces, both modelled on
+`reactjs-tiptap-editor`'s table UX (`src/extensions/Table/` there):
+
+- **`renderTable()` in `src/toolbar.js`** — the `Table` toolbar button opens a
+  **grid-size picker**: hover (or drag, via pointer capture, so it works on
+  touch) to choose the size, with a live `"R x C"` caption and a **"With header
+  row"** checkbox; release/click inserts. The grid starts at 5x5 and **grows
+  towards 10x10 as the pointer reaches its current edge**, rather than showing
+  the full 10x10 up front like the reference does — the common table is small,
+  and a big grid makes the small sizes a fiddly target.
+  - The trigger is deliberately **NOT** `.tiptap-dropdown-trigger`: that class
+    means "a control labelled by its current value" (Format/Styles), and
+    toolbar-enumerating code skips those — including `buttonTitles()` in
+    `harness/test-realworld.html`. This is an ordinary icon button that happens to
+    open a popover, so it keeps a stable title and stays enumerable.
+  - `withHeaderRowPref` is remembered per page, not per field, so a user who
+    never wants header rows stops re-unticking it. It is not persisted — it is a
+    per-insert decision, not a lasting preference like the theme.
+- **`src/tableTools.js`** — a **bubble toolbar** over the table the caret is in:
+  insert/delete column, insert/delete row, merge/split cells, header row/column
+  toggles, delete table. Every button is greyed via `editor.can()` rather than
+  offered as a silent no-op (merge needs a multi-cell `CellSelection`; delete
+  column fails on the last one).
+  - **Chrome only** — it lives on `.tiptap-editor-container`, never in the
+    editable, so `getData()` is byte-identical whether it is on or off.
+  - Header row/column toggles are **ours, not the reference's** (its bubble has
+    no header controls). CKEditor's table dialog had them and Preside content
+    uses `<th>` widely, so leaving them out would regress against the editor
+    this replaces.
+  - It is drawn **above** the table, flipping below only when there is no room —
+    the opposite of the reference (always below), and deliberate: the last row is
+    where you are usually typing when you reach for "add row", and a bubble
+    pinned under the table covers the row you just created.
+  - Left-anchored to the table then clamped into the mount — **never centred**,
+    which clips the end buttons off a narrow or right-hand table (the same lesson
+    as `imageTools`' `placeBubble()`).
+  - Hand-rolled rather than Tiptap's `BubbleMenu`, which ships only as a
+    React/Vue component (`@tiptap/react/menus`); this bundle is vanilla.
+  - `.selectedCell` needs an explicit highlight in `src/tiptap.css` (an `:after`
+    overlay, `--tt-selected`) — merge/split act on that selection, so it has to be
+    visible.
+
+Disable both per site/field with `defaultConfigs.tableTools = false`. Strings are
+the `table.*` i18n keys.
+
+**Two things NOT copied from the reference, both content-fidelity issues here:**
+
+- Its `HTMLAttributes.style` (`border:1px solid #000; border-collapse:collapse;
+  width:100%`) bakes presentation into every stored `<table>`. Ours stays CSS-only
+  via `--tt-table-border`, so site content stylesheets keep control.
+- Its `resizable: true`. **Column resizing is deliberately still off**:
+  `normalize.js` strips `<colgroup>` and the table `style` attribute from
+  `getData()` (CKEditor byte-fidelity), so dragging a column would appear to work
+  and then silently lose every width on save. Turning it on is a real decision,
+  not a flag flip — it needs a documented exception in the normaliser and changes
+  the stored table markup.
 
 ## Light / dark mode
 

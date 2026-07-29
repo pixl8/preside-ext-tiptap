@@ -9,17 +9,17 @@
     "watch": "node esbuild.mjs --watch"
   },
   "dependencies": {
-    "@tiptap/core": "^3.0.0",
-    "@tiptap/extension-placeholder": "^3.28.0",
-    "@tiptap/extension-subscript": "^3.28.0",
-    "@tiptap/extension-superscript": "^3.28.0",
-    "@tiptap/extension-table": "^3.28.0",
-    "@tiptap/extension-table-cell": "^3.28.0",
-    "@tiptap/extension-table-header": "^3.28.0",
-    "@tiptap/extension-table-row": "^3.28.0",
-    "@tiptap/extension-text-align": "^3.28.0",
-    "@tiptap/pm": "^3.0.0",
-    "@tiptap/starter-kit": "^3.0.0"
+    "@tiptap/core": "^3.29.2",
+    "@tiptap/extension-placeholder": "^3.29.2",
+    "@tiptap/extension-subscript": "^3.29.2",
+    "@tiptap/extension-superscript": "^3.29.2",
+    "@tiptap/extension-table": "^3.29.2",
+    "@tiptap/extension-table-cell": "^3.29.2",
+    "@tiptap/extension-table-header": "^3.29.2",
+    "@tiptap/extension-table-row": "^3.29.2",
+    "@tiptap/extension-text-align": "^3.29.2",
+    "@tiptap/pm": "^3.29.2",
+    "@tiptap/starter-kit": "^3.29.2"
   },
   "devDependencies": {
     "esbuild": "^0.24.0"

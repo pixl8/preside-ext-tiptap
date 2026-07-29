@@ -124,6 +124,42 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-dropdown-item:hover{background:var(--tt-accent-soft)}
 .tiptap-dropdown-item.active{background:var(--tt-active-bg);color:var(--tt-active-fg)}
 .tiptap-dropdown-empty{color:var(--tt-muted);font-style:italic;cursor:default}
+
+/* Alignment dropdown (src/toolbar.js renderAlign) — one trigger showing the
+   current alignment, opening a compact single ROW of icons rather than the
+   stacked list the format/styles menus use. */
+.tiptap-align-picker .tiptap-btn[data-cmd=Align]{gap:1px;padding:0 3px}
+.tiptap-align-icon{display:inline-flex}
+.tiptap-align-icon svg{width:16px;height:16px;display:block;pointer-events:none}
+.tiptap-align-picker .caret{font-size:9px;color:var(--tt-muted);line-height:1}
+.tiptap-align-menu{min-width:0;padding:3px;display:none}
+.tiptap-align-menu.open{display:flex;gap:1px}
+.tiptap-align-item{height:24px;min-width:24px}
+
+/* Table grid-size picker (toolbar "Table" button -> src/toolbar.js renderTable).
+   Reuses .tiptap-dropdown for the positioning context only - the trigger is a
+   plain .tiptap-btn (see renderTable), and the menu shrink-wraps the grid
+   instead of taking the 190px list width. */
+.tiptap-table-grid-menu{min-width:0;padding:8px;overflow:visible}
+.tiptap-table-grid{display:flex;flex-direction:column;gap:2px;cursor:pointer}
+.tiptap-table-grid-row{display:flex;gap:2px}
+.tiptap-table-grid-cell{width:16px;height:16px;box-sizing:border-box;border:1px solid var(--tt-border);border-radius:2px;background:var(--tt-bg)}
+.tiptap-table-grid-cell.is-on{background:var(--tt-active-bg);border-color:var(--tt-accent)}
+.tiptap-table-grid-caption{margin-top:6px;text-align:center;font-size:11px;color:var(--tt-muted);white-space:nowrap}
+.tiptap-table-grid-header{display:flex;align-items:center;gap:2px;margin-top:6px;padding-top:6px;border-top:1px solid var(--tt-border-soft);font-size:11px;color:var(--tt-fg);white-space:nowrap;cursor:pointer}
+.tiptap-table-grid-header input{margin:0}
+
+/* Table bubble toolbar (src/tableTools.js). Positioned in px against
+   .tiptap-editor-container, so it must not be display:none while measuring -
+   `is-open` is added before place() reads offsetWidth/offsetHeight. */
+.tiptap-table-bubble{position:absolute;top:0;left:0;display:none;align-items:center;gap:1px;padding:3px 4px;white-space:nowrap;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:5px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:6}
+.tiptap-table-bubble.is-open{display:flex}
+.tiptap-table-bubble .tiptap-btn{height:24px;min-width:24px}
+.tiptap-table-bubble .tiptap-btn:disabled{opacity:.35;cursor:default;background:none}
+/* Selected cells (ProseMirror CellSelection) — the merge/split buttons act on
+   these, so the selection has to be visible. --tt-selected is @lighter-blue. */
+.tiptap-editor-mount .selectedCell{position:relative}
+.tiptap-editor-mount .selectedCell:after{content:"";position:absolute;inset:0;background:var(--tt-selected);opacity:.28;pointer-events:none}
 /* Items render as real h1..h6/p/pre so browser defaults + injected content CSS style them. */
 .tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}

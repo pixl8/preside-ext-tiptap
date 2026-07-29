@@ -25,6 +25,7 @@ import { applyTheme, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, exitMaximize, isMaximized } from "./maximize.js";
 import { createOutline, outlineEnabled } from "./outline.js";
 import { imageToolsEnabled } from "./imageTools.js";
+import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -317,6 +318,13 @@ import { t } from "./i18n.js";
 		// Opt out per-site/per-field with defaultConfigs.outline = false.
 		if ( outlineEnabled( cfg ) ) {
 			container.appendChild( createOutline( tiptap, mount ) );
+		}
+
+		// Table bubble toolbar: row/column/cell controls over the table the caret
+		// is in (chrome only - see src/tableTools.js).
+		// Opt out per-site/per-field with defaultConfigs.tableTools = false.
+		if ( tableToolsEnabled( cfg ) ) {
+			createTableTools( tiptap, container, mount );
 		}
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.

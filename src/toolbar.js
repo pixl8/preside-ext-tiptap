@@ -37,7 +37,9 @@ export const COMMANDS = {
 	, JustifyRight  : { label: "≡", run: e => e.chain().focus().setTextAlign( "right" ).run(),   active: e => e.isActive( { textAlign: "right" } ) }
 	, JustifyBlock  : { label: "≡", run: e => e.chain().focus().setTextAlign( "justify" ).run(), active: e => e.isActive( { textAlign: "justify" } ) }
 	, HorizontalRule: { label: "―", run: e => e.chain().focus().setHorizontalRule().run() }
-	, Table         : { label: "▦", run: e => e.chain().focus().insertTable( { rows: 3, cols: 3, withHeaderRow: true } ).run() }
+	// Table is rendered as a grid-size picker (renderTable), not a plain button —
+	// `run` is the keyboard/fallback path and the picker's default size.
+	, Table         : { label: "▦", run: e => e.chain().focus().insertTable( { rows: 3, cols: 3, withHeaderRow: true } ).run(), active: e => e.isActive( "table" ) }
 	, RemoveFormat  : { label: "Tx", run: e => e.chain().focus().unsetAllMarks().clearNodes().run() }
 	, Undo          : { label: "↶", run: e => e.chain().focus().undo().run() }
 	, Redo          : { label: "↷", run: e => e.chain().focus().redo().run() }
@@ -85,7 +87,21 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 		const groupEl = document.createElement( "span" );
 		groupEl.className = "tiptap-toolbar-group";
 
+		// The four Justify* buttons collapse into ONE dropdown (renderAlign) to save
+		// a lot of toolbar width. Scoped to the group, and only when the group names
+		// more than one of them: a toolbar naming a single alignment gets a plain
+		// button, because a one-item menu is worse than the button it replaced.
+		const alignNames    = group.filter ? group.filter( function( n ) { return ALIGN_NAMES.indexOf( n ) !== -1; } ) : [];
+		const collapseAlign = alignNames.length > 1;
+
 		group.forEach( function( name ) {
+			// Render the dropdown where the first alignment button sat and drop the
+			// rest. The menu offers EXACTLY the ones this toolbar named - never all
+			// four - so a site that deliberately withheld e.g. Justify keeps it out.
+			if ( collapseAlign && ALIGN_NAMES.indexOf( name ) !== -1 ) {
+				if ( name === alignNames[ 0 ] ) { groupEl.appendChild( renderAlign( editor, updaters, alignNames ) ); }
+				return;
+			}
 			if ( name === "-" ) {
 				const sep = document.createElement( "span" );
 				sep.className = "tiptap-toolbar-sep";
@@ -94,6 +110,7 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 			}
 			if ( name === "Format" ) { groupEl.appendChild( renderFormat( editor, updaters, cfg ) ); return; }
 			if ( name === "Styles" ) { groupEl.appendChild( renderStyles( editor, updaters, cfg ) ); return; }
+			if ( name === "Table"  ) { groupEl.appendChild( renderTable( editor, updaters ) ); return; }
 			if ( name === "Source" ) { groupEl.appendChild( renderSource( editor ) ); return; }
 			if ( name === "Theme" || name === "DarkMode" ) {
 				if ( themeEnabled( cfg ) ) { groupEl.appendChild( renderThemeToggle() ); themeRendered = true; }
@@ -197,6 +214,288 @@ function currentFormat( editor ) {
 	if ( editor.isActive( "codeBlock" ) ) { return "pre"; }
 	if ( editor.isActive( "presideDiv" ) ) { return "div"; }
 	return "p";
+}
+
+// ---- Alignment dropdown ------------------------------------------------------
+// CKEditor gave alignment four separate toolbar buttons; four buttons for one
+// mutually-exclusive property is a lot of width, so they collapse into one
+// trigger + a compact row of icons (as reactjs-tiptap-editor does).
+//
+// Unlike that editor's fixed "AlignJustify" trigger icon, ours shows the CURRENT
+// alignment, so the state is readable without opening the menu - matching how the
+// Format dropdown displays its current value.
+//
+// Button name -> the textAlign value it applies. Order here is CKEditor's
+// canonical order, but the menu follows the toolbar's own order (see renderAlign).
+const ALIGN_VALUES = {
+	  JustifyLeft  : "left"
+	, JustifyCenter: "center"
+	, JustifyRight : "right"
+	, JustifyBlock : "justify"
+};
+const ALIGN_NAMES = Object.keys( ALIGN_VALUES );
+
+function currentAlign( editor ) {
+	for ( let i = 0; i < ALIGN_NAMES.length; i++ ) {
+		const v = ALIGN_VALUES[ ALIGN_NAMES[ i ] ];
+		if ( editor.isActive( { textAlign: v } ) ) { return ALIGN_NAMES[ i ]; }
+	}
+	return null;
+}
+
+function renderAlign( editor, updaters, names ) {
+	const wrap = document.createElement( "span" );
+	wrap.className = "tiptap-dropdown tiptap-align-picker";
+
+	const title   = t( "toolbar.align" );
+	const trigger = document.createElement( "button" );
+	trigger.type = "button";
+	trigger.className = "tiptap-btn";
+	trigger.title = title;
+	trigger.setAttribute( "aria-label", title );
+	trigger.setAttribute( "data-cmd", "Align" );
+	trigger.setAttribute( "aria-haspopup", "true" );
+
+	// Icon slot + caret. The icon is swapped by the updater below, so the caret
+	// lives in its own span rather than being rewritten with it.
+	const iconEl = document.createElement( "span" );
+	iconEl.className = "tiptap-align-icon";
+	const caret = document.createElement( "span" );
+	caret.className = "caret";
+	caret.innerHTML = "&#9662;";
+	trigger.appendChild( iconEl );
+	trigger.appendChild( caret );
+
+	const menu = document.createElement( "div" );
+	menu.className = "tiptap-dropdown-menu tiptap-align-menu";
+
+	function closeMenu() { menu.classList.remove( "open" ); document.removeEventListener( "mousedown", onDocDown, true ); }
+	function openMenu()  { menu.classList.add( "open" );    document.addEventListener( "mousedown", onDocDown, true ); }
+	function onDocDown( e ) { if ( !wrap.contains( e.target ) ) { closeMenu(); } }
+
+	const itemBtns = {};
+	names.forEach( function( name ) {
+		const label = t( "toolbar." + name.toLowerCase() );
+		const item  = document.createElement( "button" );
+		item.type = "button";
+		item.className = "tiptap-btn tiptap-align-item";
+		item.title = label;
+		item.setAttribute( "aria-label", label );
+		item.innerHTML = ICONS[ name ];
+		item.addEventListener( "mousedown", function( e ) { e.preventDefault(); } ); // keep the selection
+		item.addEventListener( "click", function( e ) {
+			e.preventDefault();
+			COMMANDS[ name ].run( editor );
+			closeMenu();
+		} );
+		itemBtns[ name ] = item;
+		menu.appendChild( item );
+	} );
+
+	trigger.addEventListener( "click", function( ev ) {
+		ev.preventDefault();
+		if ( menu.classList.contains( "open" ) ) { closeMenu(); } else { openMenu(); }
+	} );
+
+	wrap.appendChild( trigger );
+	wrap.appendChild( menu );
+
+	updaters.push( function() {
+		const cur = currentAlign( editor );
+		// Show the current alignment, falling back to the first option this toolbar
+		// offers (left, in every real config) when nothing is explicitly set.
+		iconEl.innerHTML = ICONS[ cur && itemBtns[ cur ] ? cur : names[ 0 ] ];
+		// Only "active" when an alignment really is applied - the fallback icon
+		// above must not make the button look permanently on.
+		trigger.classList.toggle( "is-active", !!( cur && itemBtns[ cur ] ) );
+		names.forEach( function( n ) { itemBtns[ n ].classList.toggle( "is-active", cur === n ); } );
+	} );
+
+	return wrap;
+}
+
+// ---- Table grid-size picker --------------------------------------------------
+// Click the toolbar button -> a grid of cells; hover (or drag) to choose the
+// size, release/click to insert. Replaces the old fixed 3x3 insert.
+//
+// The grid GROWS towards the max as you reach its current edge, rather than
+// showing the full 10x10 up front: the common table is small, and a big grid
+// makes the small sizes a fiddly target. Dragging past the edge keeps extending,
+// so the large sizes stay reachable without a second interaction.
+const TABLE_GRID_MAX  = 10;
+const TABLE_GRID_INIT = 5;
+
+// "With header row" choice, remembered across opens and across editors on the
+// page (a page-level preference, not a per-field one - same reasoning as the
+// theme toggle, minus the persistence: it is a per-insert decision, so it is not
+// worth a localStorage entry).
+let withHeaderRowPref = true;
+
+function renderTable( editor, updaters ) {
+	const wrap = document.createElement( "span" );
+	wrap.className = "tiptap-dropdown tiptap-table-picker";
+
+	const title   = t( "toolbar.table" );
+	// Deliberately NOT .tiptap-dropdown-trigger: that class means "a control whose
+	// label is its current value" (Format/Styles), and things that enumerate the
+	// toolbar skip those. This is an ordinary icon button that happens to open a
+	// popover, so it keeps its stable title and stays enumerable.
+	const trigger = document.createElement( "button" );
+	trigger.type = "button";
+	trigger.className = "tiptap-btn";
+	trigger.title = title;
+	trigger.setAttribute( "aria-label", title );
+	trigger.setAttribute( "data-cmd", "Table" );
+	trigger.setAttribute( "aria-haspopup", "true" );
+	trigger.innerHTML = ICONS.Table;
+
+	const menu = document.createElement( "div" );
+	menu.className = "tiptap-dropdown-menu tiptap-table-grid-menu";
+
+	const grid = document.createElement( "div" );
+	grid.className = "tiptap-table-grid";
+	grid.style.touchAction = "none";
+
+	const caption = document.createElement( "div" );
+	caption.className = "tiptap-table-grid-caption";
+
+	// "With header row" is a real choice, not a hidden default: Preside content
+	// uses <th> widely, and the old fixed insert always made one. Sticky within
+	// the session so a user who never wants headers stops fighting it.
+	const hdrLabel = document.createElement( "label" );
+	hdrLabel.className = "tiptap-table-grid-header";
+	const hdrBox = document.createElement( "input" );
+	hdrBox.type = "checkbox";
+	hdrBox.checked = withHeaderRowPref;
+	hdrLabel.appendChild( hdrBox );
+	hdrLabel.appendChild( document.createTextNode( " " + t( "table.withheaderrow" ) ) );
+	hdrBox.addEventListener( "change", function() { withHeaderRowPref = hdrBox.checked; } );
+	// Toggling the box must not count as picking a cell, nor close the menu.
+	hdrLabel.addEventListener( "mousedown", function( e ) { e.stopPropagation(); } );
+	hdrLabel.addEventListener( "pointerdown", function( e ) { e.stopPropagation(); } );
+
+	let rows = TABLE_GRID_INIT, cols = TABLE_GRID_INIT;   // grid extent
+	let selR = 0, selC = 0;                               // hovered size
+	let dragging = false;
+
+	function build() {
+		grid.innerHTML = "";
+		for ( let r = 1; r <= rows; r++ ) {
+			const rowEl = document.createElement( "div" );
+			rowEl.className = "tiptap-table-grid-row";
+			for ( let c = 1; c <= cols; c++ ) {
+				const cell = document.createElement( "span" );
+				cell.className = "tiptap-table-grid-cell";
+				cell.setAttribute( "data-r", r );
+				cell.setAttribute( "data-c", c );
+				rowEl.appendChild( cell );
+			}
+			grid.appendChild( rowEl );
+		}
+		paint();
+	}
+
+	function paint() {
+		Array.prototype.forEach.call( grid.querySelectorAll( ".tiptap-table-grid-cell" ), function( cell ) {
+			const r = +cell.getAttribute( "data-r" ), c = +cell.getAttribute( "data-c" );
+			cell.classList.toggle( "is-on", r <= selR && c <= selC );
+		} );
+		caption.textContent = selR && selC
+			? t( "table.gridsize", { rows: selR, cols: selC } )
+			: t( "table.insert" );
+	}
+
+	// Grow towards the max when the pointer reaches the current edge.
+	function select( r, c ) {
+		selR = r; selC = c;
+		let grew = false;
+		if ( r === rows && rows < TABLE_GRID_MAX ) { rows++; grew = true; }
+		if ( c === cols && cols < TABLE_GRID_MAX ) { cols++; grew = true; }
+		if ( grew ) { build(); } else { paint(); }
+	}
+
+	// elementFromPoint (not the event target) so a pointer-captured drag still
+	// tracks cells: with capture set, every move event targets the grid itself.
+	function cellAt( e ) {
+		const el = document.elementFromPoint( e.clientX, e.clientY );
+		const cell = el && el.closest ? el.closest( ".tiptap-table-grid-cell" ) : null;
+		return ( cell && grid.contains( cell ) ) ? cell : null;
+	}
+	function trackFrom( e ) {
+		const cell = cellAt( e );
+		if ( !cell ) { return false; }
+		select( +cell.getAttribute( "data-r" ), +cell.getAttribute( "data-c" ) );
+		return true;
+	}
+
+	grid.addEventListener( "pointerdown", function( e ) {
+		if ( !e.isPrimary || ( e.pointerType === "mouse" && e.button !== 0 ) ) { return; }
+		if ( !trackFrom( e ) ) { return; }
+		e.preventDefault();
+		dragging = true;
+		try { grid.setPointerCapture( e.pointerId ); } catch ( err ) {}
+	} );
+	grid.addEventListener( "pointermove", function( e ) {
+		// Hover tracks even without a drag - a plain click-then-click is the
+		// mouse-friendly path, the drag is the touch-friendly one.
+		trackFrom( e );
+	} );
+	grid.addEventListener( "pointerup", function( e ) {
+		trackFrom( e );
+		if ( dragging ) {
+			dragging = false;
+			try { if ( grid.hasPointerCapture( e.pointerId ) ) { grid.releasePointerCapture( e.pointerId ); } } catch ( err ) {}
+		}
+		if ( selR && selC ) { insert(); }
+	} );
+	grid.addEventListener( "pointercancel", function( e ) {
+		dragging = false;
+		try { if ( grid.hasPointerCapture( e.pointerId ) ) { grid.releasePointerCapture( e.pointerId ); } } catch ( err ) {}
+	} );
+	grid.addEventListener( "pointerleave", function() {
+		if ( !dragging ) { selR = 0; selC = 0; paint(); }
+	} );
+
+	function insert() {
+		const r = selR, c = selC;
+		closeMenu();
+		editor.chain().focus().insertTable( { rows: r, cols: c, withHeaderRow: hdrBox.checked } ).run();
+	}
+
+	function reset() {
+		rows = TABLE_GRID_INIT; cols = TABLE_GRID_INIT;
+		selR = 0; selC = 0;
+		hdrBox.checked = withHeaderRowPref;
+		build();
+	}
+	function closeMenu() {
+		menu.classList.remove( "open" );
+		document.removeEventListener( "mousedown", onDocDown, true );
+		document.removeEventListener( "keydown", onKeyDown, true );
+	}
+	function openMenu() {
+		reset();
+		menu.classList.add( "open" );
+		document.addEventListener( "mousedown", onDocDown, true );
+		document.addEventListener( "keydown", onKeyDown, true );
+	}
+	function onDocDown( e ) { if ( !wrap.contains( e.target ) ) { closeMenu(); } }
+	function onKeyDown( e ) { if ( e.key === "Escape" ) { e.stopPropagation(); closeMenu(); } }
+
+	trigger.addEventListener( "click", function( ev ) {
+		ev.preventDefault();
+		if ( menu.classList.contains( "open" ) ) { closeMenu(); } else { openMenu(); }
+	} );
+
+	menu.appendChild( grid );
+	menu.appendChild( caption );
+	menu.appendChild( hdrLabel );
+	wrap.appendChild( trigger );
+	wrap.appendChild( menu );
+
+	updaters.push( function() { trigger.classList.toggle( "is-active", editor.isActive( "table" ) ); } );
+
+	return wrap;
 }
 
 // ---- Styles dropdown ---------------------------------------------------------

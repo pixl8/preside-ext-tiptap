@@ -265,11 +265,17 @@
 					  outline    : !!container.querySelector( ".tiptap-outline" )
 					, footer     : !!container.querySelector( ".tiptap-footer" )
 					, themeToggle: !!container.querySelector( ".tiptap-theme-toggle" )
+					, tableTools : !!container.querySelector( ".tiptap-table-bubble" )
 				};
 			}
 
 			var on = probe();
-			check( "T10 all three chrome features are on by default", on.outline && on.footer && on.themeToggle, JSON.stringify( on ) );
+			check( "T10 all four chrome features are on by default",
+				on.outline && on.footer && on.themeToggle && on.tableTools, JSON.stringify( on ) );
+
+			var tableOff = probe( '{"tableTools":false}' );
+			check( "T10 a field can turn the table tools off",
+				!tableOff.tableTools && tableOff.outline, JSON.stringify( tableOff ) );
 
 			var siteDefaults = window.cfrequest.ckeditorDefaultConfigs;
 			siteDefaults.outline = siteDefaults.darkMode = siteDefaults.wordcount = false;
@@ -322,8 +328,197 @@
 			try { CKEDITOR.instances.shortfield.destroy(); } catch ( e ) {}
 			$( shortTa ).remove();
 
+			// ---- T12: table grid picker + bubble toolbar ---------------------
+			// T2's toolbar includes Table, so it already has the picker.
+			var $t2tb    = toolbarOf( "t2" );
+			var $t2c     = $t2tb.closest( ".tiptap-editor-container" );
+			var $trigger = $t2tb.find( '.tiptap-btn[data-cmd=Table]' );
+
+			// The picker tracks the pointer through document.elementFromPoint (so a
+			// captured drag keeps working), which only resolves for on-screen
+			// coordinates - scroll the fixture in before synthesising pointer events.
+			$t2c[ 0 ].scrollIntoView( { block: "center" } );
+
+			check( "T12 the Table button is an enumerable icon button, not a value-labelled dropdown",
+				$trigger.length === 1 && !$trigger.hasClass( "tiptap-dropdown-trigger" ) && $trigger.attr( "title" ) === "Table" );
+
+			$trigger.trigger( "click" );
+			var $menu = $t2c.find( ".tiptap-table-grid-menu" );
+			check( "T12 clicking it opens the grid-size picker", $menu.hasClass( "open" ) );
+			check( "T12 the grid starts at 5x5 (it grows towards 10x10 on demand)",
+				$menu.find( ".tiptap-table-grid-row" ).length === 5
+				&& $menu.find( ".tiptap-table-grid-row:first-child .tiptap-table-grid-cell" ).length === 5 );
+
+			// Hovering a cell highlights the whole R x C block and captions it.
+			function hoverCell( r, c ) {
+				var cell = $menu.find( '.tiptap-table-grid-cell[data-r=' + r + '][data-c=' + c + ']' )[ 0 ];
+				var box  = cell.getBoundingClientRect();
+				$menu.find( ".tiptap-table-grid" )[ 0 ].dispatchEvent( new PointerEvent( "pointermove", {
+					  clientX: box.left + box.width / 2, clientY: box.top + box.height / 2
+					, bubbles: true, isPrimary: true, pointerId: 1, pointerType: "mouse"
+				} ) );
+			}
+			hoverCell( 2, 3 );
+			check( "T12 hovering highlights the R x C block and captions it",
+				$menu.find( ".tiptap-table-grid-cell.is-on" ).length === 6
+				&& $menu.find( ".tiptap-table-grid-caption" ).text() === "2 x 3",
+				$menu.find( ".tiptap-table-grid-caption" ).text() );
+
+			// Reaching the current edge grows the grid rather than capping there.
+			hoverCell( 5, 5 );
+			check( "T12 reaching the edge grows the grid", $menu.find( ".tiptap-table-grid-row" ).length === 6 );
+
+			// Commit 2x3 with the header row ticked (the default).
+			var inst2Data = CKEDITOR.instances.t2.getData();
+			hoverCell( 2, 3 );
+			var $grid = $menu.find( ".tiptap-table-grid" );
+			[ "pointerdown", "pointerup" ].forEach( function( type ) {
+				var box = $menu.find( '.tiptap-table-grid-cell[data-r=2][data-c=3]' )[ 0 ].getBoundingClientRect();
+				$grid[ 0 ].dispatchEvent( new PointerEvent( type, {
+					  clientX: box.left + box.width / 2, clientY: box.top + box.height / 2
+					, bubbles: true, cancelable: true, isPrimary: true, button: 0, pointerId: 1, pointerType: "mouse"
+				} ) );
+			} );
+			check( "T12 releasing closes the picker", !$menu.hasClass( "open" ) );
+
+			var $tbl = $t2c.find( ".tiptap-editor-mount table" );
+			check( "T12 the chosen size is what gets inserted", $tbl.find( "tr" ).length === 2
+				&& $tbl.find( "tr:first-child > *" ).length === 3, $tbl.find( "tr" ).length + " rows" );
+			check( "T12 'with header row' produces <th> in the first row only",
+				$tbl.find( "tr:first-child > th" ).length === 3 && $tbl.find( "tr:last-child > td" ).length === 3 );
+
+			// ---- T13: alignment collapses into one dropdown ------------------
+			// CKEditor named the four alignments as four separate buttons. They now
+			// render as a single trigger + a row of icons, but the menu must offer
+			// EXACTLY what the toolbar named - never all four - or a site that
+			// deliberately withheld one would silently get it back.
+			function alignFixture( toolbar, name ) {
+				var ta = document.createElement( "textarea" );
+				ta.className = "richeditor";
+				ta.name      = name;
+				ta.value     = "<p>x</p>";
+				ta.setAttribute( "data-toolbar", toolbar );
+				document.querySelector( "main" ).appendChild( ta );
+				new PresideRichEditor( ta );
+				var $c = $( ta ).next( ".tiptap-editor-container" );
+				alignFixtures.push( ta );
+				return {
+					  cmds : $c.find( ".tiptap-toolbar [data-cmd]" ).map( function() { return this.getAttribute( "data-cmd" ); } ).get()
+					, items: $c.find( ".tiptap-align-menu button" ).map( function() { return this.title; } ).get()
+					, $c   : $c
+				};
+			}
+			var alignFixtures = [];
+
+			var aAll = alignFixture( "Bold|JustifyLeft,JustifyCenter,JustifyRight,JustifyBlock", "a_all" );
+			check( "T13 four Justify buttons collapse to one Align trigger",
+				JSON.stringify( aAll.cmds ) === JSON.stringify( [ "Bold", "Align" ] ), JSON.stringify( aAll.cmds ) );
+			check( "T13 the menu offers all four when all four were named",
+				JSON.stringify( aAll.items ) === JSON.stringify( [ "Align left", "Align center", "Align right", "Justify" ] ),
+				JSON.stringify( aAll.items ) );
+
+			var aSub = alignFixture( "Bold|JustifyLeft,JustifyCenter", "a_sub" );
+			check( "T13 a subset toolbar gets a menu of ONLY the alignments it named",
+				JSON.stringify( aSub.items ) === JSON.stringify( [ "Align left", "Align center" ] ), JSON.stringify( aSub.items ) );
+
+			var aOne = alignFixture( "Bold|JustifyCenter", "a_one" );
+			check( "T13 a single alignment stays a plain button (no one-item menu)",
+				JSON.stringify( aOne.cmds ) === JSON.stringify( [ "Bold", "JustifyCenter" ] ) && !aOne.items.length,
+				JSON.stringify( aOne.cmds ) );
+
+			var aSplit = alignFixture( "Bold|JustifyLeft,Italic,JustifyRight", "a_split" );
+			check( "T13 non-adjacent alignments still collapse, at the first one's slot",
+				JSON.stringify( aSplit.cmds ) === JSON.stringify( [ "Bold", "Align", "Italic" ] ), JSON.stringify( aSplit.cmds ) );
+
+			// The trigger reflects the CURRENT alignment rather than a fixed icon.
+			var $alignC   = aAll.$c;
+			var alignTrig = $alignC.find( '[data-cmd=Align]' )[ 0 ];
+			var alignMenu = $alignC.find( ".tiptap-align-menu" )[ 0 ];
+			function alignIcon() { return alignTrig.querySelector( ".tiptap-align-icon" ).innerHTML; }
+			function pickAlign( label ) {
+				alignTrig.click();
+				var b = $( alignMenu ).find( 'button[title="' + label + '"]' )[ 0 ];
+				b.dispatchEvent( new MouseEvent( "mousedown", { bubbles: true, cancelable: true } ) );
+				b.click();
+				return alignIcon();
+			}
+			CKEDITOR.instances.a_all._t.commands.focus();
+			check( "T13 nothing is active with no alignment applied", !alignTrig.classList.contains( "is-active" ) );
+
+			var icons = [ pickAlign( "Align left" ), pickAlign( "Align center" ), pickAlign( "Align right" ), pickAlign( "Justify" ) ];
+			check( "T13 the trigger icon tracks the current alignment", new Set( icons ).size === 4 );
+			check( "T13 the trigger is active once an alignment is applied", alignTrig.classList.contains( "is-active" ) );
+			check( "T13 the chosen alignment is the one marked active in the menu",
+				$( alignMenu ).find( "button.is-active" ).attr( "title" ) === "Justify",
+				$( alignMenu ).find( "button.is-active" ).attr( "title" ) );
+			check( "T13 picking an alignment writes it to the content",
+				/text-align:\s*justify/.test( CKEDITOR.instances.a_all.getData() ), CKEDITOR.instances.a_all.getData() );
+
+			alignFixtures.forEach( function( ta ) {
+				try { CKEDITOR.instances[ ta.name ].destroy(); } catch ( e ) {}
+				$( ta ).remove();
+			} );
+
+			// It is chrome: nothing it draws may reach getData().
+			var withTable = CKEDITOR.instances.t2.getData();
+			check( "T12 the table serialises without colgroup / style / chrome classes",
+				!/colgroup/i.test( withTable ) && !/<table[^>]*style=/i.test( withTable )
+				&& !/tiptap-table|selectedCell/.test( withTable ), withTable );
+
 			probes.forEach( function( inst ) { try { inst.destroy(); } catch ( e ) {} } );
 			$( "textarea[name^=probe]" ).remove();
+
+			// The bubble's own state lands a frame later (tableTools.js throttles
+			// its refresh through requestAnimationFrame), so its assertions have to
+			// wait for one - checking synchronously here would read the pre-refresh
+			// DOM and pass/fail for the wrong reason.
+			return tableBubbleChecks( $t2c, inst2Data );
+		}
+
+		// Resolves once the deferred table-bubble assertions have run.
+		function tableBubbleChecks( $t2c, originalData ) {
+			return new Promise( function( resolve ) {
+				requestAnimationFrame( function() { requestAnimationFrame( function() {
+					var $bubble = $t2c.find( ".tiptap-table-bubble" );
+					function bubbleBtn( label ) { return $bubble.find( 'button[title="' + label + '"]' )[ 0 ]; }
+
+					check( "T12 the bubble opens with the caret in a cell", $bubble.hasClass( "is-open" ) );
+					check( "T12 merge/split are disabled without a multi-cell selection",
+						bubbleBtn( "Merge cells" ).disabled && bubbleBtn( "Split cell" ).disabled );
+					check( "T12 row/column ops are enabled", !bubbleBtn( "Insert row below" ).disabled
+						&& !bubbleBtn( "Delete column" ).disabled );
+
+					// A real cell selection highlights the cells and enables merge.
+					var ed = CKEDITOR.instances.t2._t;
+					var cellPositions = [];
+					ed.state.doc.descendants( function( node, pos ) {
+						if ( node.type.name === "tableCell" ) { cellPositions.push( pos ); }
+					} );
+					ed.commands.setCellSelection( { anchorCell: cellPositions[ 0 ], headCell: cellPositions[ 1 ] } );
+
+					requestAnimationFrame( function() { requestAnimationFrame( function() {
+						check( "T12 a multi-cell selection is highlighted and enables merge",
+							$t2c.find( ".selectedCell" ).length === 2 && !bubbleBtn( "Merge cells" ).disabled,
+							$t2c.find( ".selectedCell" ).length + " cells highlighted" );
+
+						// A bubble command must actually edit the table.
+						ed.chain().focus().addRowAfter().run();
+						check( "T12 a bubble command actually edits the table",
+							$t2c.find( ".tiptap-editor-mount table tr" ).length === 3,
+							$t2c.find( ".tiptap-editor-mount table tr" ).length + " rows" );
+
+						ed.chain().focus().deleteTable().run();
+						check( "T12 deleting the table restores the original content",
+							CKEDITOR.instances.t2.getData() === originalData, CKEDITOR.instances.t2.getData() );
+
+						requestAnimationFrame( function() { requestAnimationFrame( function() {
+							check( "T12 the bubble closes when the table is gone",
+								!$t2c.find( ".tiptap-table-bubble" ).hasClass( "is-open" ) );
+							resolve();
+						} ); } );
+					} ); } );
+				} ); } );
+			} );
 		}
 
 		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --
@@ -344,8 +539,9 @@
 				check( "T3 stylesSet append appears in Styles dropdown (table.compact)", hasStylesSet, JSON.stringify( items ) );
 				check( "T4 stylesheet-harvested selector appears (p.lead from /content-sample.css)", hasHarvested, JSON.stringify( items ) );
 				check( "T4 scoped content CSS injected (no admin bleed)", !!document.querySelector( 'style[data-preside-content-css="/content-sample.css"]' ) );
-				outlineChecks();
-				finish();
+				// outlineChecks() ends with the deferred table-bubble assertions, so
+				// the summary has to wait for them rather than render mid-run.
+				Promise.resolve( outlineChecks() ).then( finish, finish );
 				return;
 			}
 			setTimeout( pollStyles, 100 );
