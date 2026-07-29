@@ -15,9 +15,12 @@
  *   renderWidgetPlaceholder).
  * - the toolbar command opens the real Preside picker iframe via PresidePickerModal
  *   using its _config / _widgetConfig commit channel.
+ * - presideImage additionally gets drag-to-resize + alignment chrome over that
+ *   preview (src/imageTools.js), which writes back into the same token.
  */
 import { Node } from "@tiptap/core";
 import { openPickerModal, postForm } from "../presidePickerModal.js";
+import { attachImageTools } from "../imageTools.js";
 import { t } from "../i18n.js";
 
 function makeEmbedNode( opts, deps ) {
@@ -61,7 +64,15 @@ function makeEmbedNode( opts, deps ) {
 
 		addNodeView() {
 			const options = this.options;
-			return ( { editor, node, getPos } ) => makePreviewDom( node, opts, buildAjaxLink, { editor: editor, getPos: getPos, options: options, buildAdminLink: buildAdminLink } );
+			return ( { editor, node, getPos } ) => makePreviewDom( node, opts, buildAjaxLink, {
+				  editor        : editor
+				, getPos        : getPos
+				, options       : options
+				, buildAdminLink: buildAdminLink
+				// presideImage only, and only when editable and not opted out
+				// (defaultConfigs.imageTools = false).
+				, imageTools    : !!( opts.resizable && deps.imageTools !== false && editor.isEditable )
+			} );
 		},
 
 		addCommands() {
@@ -84,27 +95,91 @@ function makeEmbedNode( opts, deps ) {
 
 function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 	const dom = document.createElement( opts.block ? "div" : "span" );
-	dom.className = opts.cssClass + " loading";
+	dom.className = opts.cssClass;
 	dom.setAttribute( "contenteditable", "false" );
 	dom.title = t( "embed.edithint" );
-	dom.textContent = opts.loadingLabel( node.attrs.raw );
+
+	// The server-rendered preview gets its own child so chrome drawn over it (the
+	// image tools' handles / bubble / refresh button) can be a sibling rather than
+	// something the next innerHTML wipes out. `frame` is the shrink-wrapping
+	// position:relative box those absolutely-positioned overlays measure against.
+	const frame = document.createElement( opts.block ? "div" : "span" );
+	frame.className = "tiptap-embed-frame";
+	const preview = document.createElement( opts.block ? "div" : "span" );
+	preview.className = "tiptap-embed-preview";
+	frame.appendChild( preview );
+	dom.appendChild( frame );
+
+	function openPicker() {
+		if ( typeof edit.getPos === "function" ) { edit.editor.chain().setNodeSelection( edit.getPos() ).run(); }
+		openEmbedPicker( edit.editor, opts, edit.options, edit.buildAdminLink, node.attrs.raw );
+	}
 
 	// Double-click → select this node + open its picker pre-populated for editing.
 	if ( edit && edit.editor ) {
 		dom.addEventListener( "dblclick", function( e ) {
 			e.preventDefault(); e.stopPropagation();
-			if ( typeof edit.getPos === "function" ) { edit.editor.chain().setNodeSelection( edit.getPos() ).run(); }
-			openEmbedPicker( edit.editor, opts, edit.options, edit.buildAdminLink, node.attrs.raw );
+			openPicker();
 		} );
 	}
 
-	const req = opts.previewReq( node.attrs.raw, buildAjaxLink );
-	postForm( req.url, req.data )
-		.then( r => r.text() )
-		.then( html => { dom.classList.remove( "loading" ); dom.innerHTML = html; } )
-		.catch( () => { dom.classList.remove( "loading" ); dom.classList.add( "error" ); dom.textContent = t( "embed.error" ); } );
+	function loadPreview() {
+		const req = opts.previewReq( node.attrs.raw, buildAjaxLink );
+		dom.classList.add( "loading" );
+		dom.classList.remove( "error" );
+		preview.textContent = opts.loadingLabel( node.attrs.raw );
 
-	return { dom: dom };
+		return postForm( req.url, req.data )
+			.then( r => r.text() )
+			.then( function( html ) {
+				dom.classList.remove( "loading" );
+				preview.innerHTML = html;
+				if ( tools ) { tools.previewLoaded(); }
+			} )
+			.catch( function() {
+				dom.classList.remove( "loading" );
+				dom.classList.add( "error" );
+				preview.textContent = t( "embed.error" );
+			} );
+	}
+
+	const tools = edit.imageTools ? attachImageTools( {
+		  dom          : dom
+		, frame        : frame
+		, preview      : preview
+		, node         : node
+		, editor       : edit.editor
+		, getPos       : edit.getPos
+		, buildAjaxLink: buildAjaxLink
+		, refresh      : loadPreview
+		, openPicker   : openPicker
+	} ) : null;
+
+	loadPreview();
+
+	return {
+		  dom: dom
+		// Without an update() ProseMirror destroys and rebuilds the node view on
+		// every attribute change — which would re-request the preview (and so make
+		// Preside generate a derivative) on every single resize commit. Keep the DOM,
+		// and only re-request when something the SERVER renders differently changed:
+		// the image tools report a geometry-only change as handled.
+		, update: function( newNode ) {
+			if ( newNode.type.name !== node.type.name ) { return false; }
+
+			const rawChanged = newNode.attrs.raw !== node.attrs.raw;
+			const handled    = tools ? tools.update( newNode ) : false;
+			node = newNode;
+
+			if ( rawChanged && !handled ) { loadPreview(); }
+			return true;
+		  }
+		, selectNode  : function() { dom.classList.add( "ProseMirror-selectednode" ); if ( tools ) { tools.selectNode(); } }
+		, deselectNode: function() { dom.classList.remove( "ProseMirror-selectednode" ); if ( tools ) { tools.deselectNode(); } }
+		// Let ProseMirror keep handling clicks on the image itself (that is what
+		// selects the node), but keep its hands off our own controls.
+		, stopEvent   : function( e ) { return tools ? tools.ownsEvent( e ) : false; }
+	};
 }
 
 function openEmbedPicker( editor, opts, options, buildAdminLink, editRaw ) {
@@ -132,6 +207,7 @@ export function createPresideImage( deps ) {
 	return makeEmbedNode( {
 		  name        : "presideImage"
 		, block       : true
+		, resizable   : true   // drag handles + alignment bubble (src/imageTools.js)
 		, dataAttr    : "data-preside-image"
 		, cssClass    : "img-placeholder"
 		, titleKey    : "picker.image.title"

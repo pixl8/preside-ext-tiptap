@@ -90,6 +90,20 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Widget placeholder glyph: inline data-URI SVG (Tabler "puzzle", MIT) — no icon files. */
 .tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat;border:1px solid var(--tt-border);border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:var(--tt-fg);display:inline-block}
 .tiptap-editor-mount .attachment-placeholder{padding:2px}
+/* All three embeds render as `dom > frame > preview`: `preview` holds the
+   server-rendered HTML (replaced wholesale on every refresh), `frame` shrink-wraps
+   it and is the containing block the image tools' absolute chrome measures
+   against - so handles land on the image's edges, not the paragraph's. */
+.tiptap-editor-mount .tiptap-embed-frame{position:relative;display:inline-block;max-width:100%;vertical-align:middle}
+.tiptap-editor-mount .tiptap-embed-preview{display:block}
+.tiptap-editor-mount .tiptap-embed-preview img{max-width:100%;height:auto}
+/* The selection outline goes on the FRAME, which shrink-wraps the embed, not on the
+   node view's wrapper: a centre-aligned image makes that wrapper a full-width block
+   (that is how it centres), so outlining it drew a selection box spanning the whole
+   editor instead of the image. The frame is also where the resize handles live, so
+   outline and handles now always agree. */
+.tiptap-editor-mount .ProseMirror-selectednode>.tiptap-embed-frame{outline:2px solid var(--tt-selected);outline-offset:1px}
+.tiptap-editor-mount .img-placeholder.ProseMirror-selectednode,.tiptap-editor-mount .attachment-placeholder.ProseMirror-selectednode,.tiptap-editor-mount .widget-placeholder.ProseMirror-selectednode{outline:none}
 .tiptap-editor-mount .loading{color:#999;font-style:italic}
 .tiptap-editor-mount .error{color:#c00;border:1px solid #f4b4b4;padding:1px 4px;border-radius:3px}
 .tiptap-editor-mount .ProseMirror-selectednode{outline:2px solid var(--tt-selected);outline-offset:1px}
@@ -177,6 +191,59 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    (@yellow), so it reads as "here" instead of competing with the blues that mean
    selection everywhere else in the chrome. */
 .tiptap-editor-mount .tiptap-outline-target{background:var(--tt-outline-flash);border-radius:2px;transition:background-color .5s ease}
+
+/* ---- Image tools (src/imageTools.js) ----------------------------------------
+   Corner drag handles + a bubble toolbar over the SELECTED image, and a refresh
+   button that appears in the middle whenever the local geometry has moved ahead
+   of the server-rendered preview. Everything here is chrome inside the node
+   view's wrapper: it never enters the document, so getData() is unaffected.
+   Colours are the admin palette's blues, as elsewhere - @blue for the handles
+   (they read as "selected"), the standard menu surface for the bubble. */
+.tiptap-image-tools{position:absolute;inset:0;pointer-events:none;z-index:2}
+.tiptap-image-handle{position:absolute;width:10px;height:10px;box-sizing:border-box;border:1px solid #fff;border-radius:2px;background:var(--tt-accent);opacity:0;pointer-events:none;transition:opacity .1s ease}
+.img-placeholder.is-selected .tiptap-image-handle,.img-placeholder.is-resizing .tiptap-image-handle{opacity:1;pointer-events:auto}
+.tiptap-image-handle.is-tl{top:-5px;left:-5px;cursor:nwse-resize}
+.tiptap-image-handle.is-tr{top:-5px;right:-5px;cursor:nesw-resize}
+.tiptap-image-handle.is-bl{bottom:-5px;left:-5px;cursor:nesw-resize}
+.tiptap-image-handle.is-br{bottom:-5px;right:-5px;cursor:nwse-resize}
+/* Live WxH readout, only written to during a drag. */
+.tiptap-image-size{position:absolute;bottom:6px;right:6px;padding:1px 6px;border-radius:3px;background:rgba(0,0,0,.66);color:#fff;font-size:11px;line-height:1.6;font-family:ui-monospace,Menlo,monospace;pointer-events:none;white-space:nowrap}
+.tiptap-image-size:empty{display:none}
+/* Sits above the image, out of the way of the top handles. Anchored to the image's
+   LEFT edge (not centred on it) and never wrapping, so a narrow image still gets the
+   full control set; src/imageTools.js placeBubble() then nudges `left` to keep it
+   inside the editable - centring it would clip half the buttons off the editor's
+   left border on any small or left-floated image. */
+.tiptap-image-bubble{position:absolute;bottom:100%;left:0;transform:translateY(-8px);display:none;align-items:center;gap:1px;padding:3px 4px;white-space:nowrap;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:5px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:4}
+.img-placeholder.is-selected .tiptap-image-bubble{display:flex}
+.img-placeholder.is-resizing .tiptap-image-bubble{display:none}
+.tiptap-image-bubble .tiptap-btn{height:24px;min-width:24px}
+.tiptap-image-bubble .tiptap-image-preset{font-size:11px;padding:0 5px}
+.tiptap-image-bubble .tiptap-btn.is-busy{opacity:.5;pointer-events:none}
+/* Stale-preview affordance: shown whenever the token's geometry differs from what
+   the visible HTML was rendered for - resizing does NOT re-request the preview
+   (that would make Preside generate a derivative per drag), so this is how the
+   real render is asked for. */
+.tiptap-image-refresh{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:34px;height:34px;min-width:34px;border-radius:50%;background:var(--tt-menu-bg);border:1px solid var(--tt-border);box-shadow:0 2px 10px var(--tt-menu-shadow);color:var(--tt-active-fg);z-index:3;display:flex}
+.tiptap-image-refresh[hidden]{display:none}
+.tiptap-image-refresh:hover{background:var(--tt-active-bg);border-color:var(--tt-active-border)}
+.tiptap-image-refresh.is-busy{opacity:.6;pointer-events:none}
+.img-placeholder.is-resizing .tiptap-image-refresh{display:none}
+.img-placeholder.is-resizing .tiptap-embed-preview img{pointer-events:none}
+/* Alignment AND spacing live on the node view WRAPPER, always, computed from the
+   token by src/imageTools.js applyAlignment - not only while the preview is stale,
+   and not copied off the rendered HTML. richEditor.cfm renders float/margins onto the
+   image (or its figure/link) itself, which cannot work inside the frame that
+   shrink-wraps it - the same wall CKEditor's imagepicker plugin hit and solved by
+   moving those styles onto its widget wrapper. So the rendered element's own float
+   and margins are zeroed here: the wrapper is the single owner of both, which is what
+   makes the geometry exact whether or not the preview has been re-rendered. The
+   direct child of `preview` is whichever of <figure>/<a>/<img> carries them. */
+.tiptap-editor-mount .img-placeholder[data-tt-align] .tiptap-embed-preview>*{float:none!important;margin:0!important}
+.tiptap-editor-mount .img-placeholder[data-tt-align="left"]{float:left}
+.tiptap-editor-mount .img-placeholder[data-tt-align="right"]{float:right}
+.tiptap-editor-mount .img-placeholder[data-tt-align="center"]{display:block;float:none;text-align:center}
+.tiptap-editor-mount .img-placeholder[data-tt-align="auto"]{float:none}
 
 /* ---- Dark theme -------------------------------------------------------------
    Chrome + editable surface only; the document itself is unchanged (getData() is

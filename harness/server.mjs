@@ -92,7 +92,16 @@ const PICKER_CHOICES = {
 	]
 };
 
-function imageToken( asset, alt ) { return "{{image:" + encodeURIComponent( JSON.stringify( { asset: asset, alt_text: alt } ) ) + ":image}}"; }
+// Shaped like a real picker commit (core dialogEventListeners.js serialises the
+// WHOLE richeditor.image form), so the image tools get the same key set to edit.
+function imageToken( asset, alt ) {
+	return "{{image:" + encodeURIComponent( JSON.stringify( {
+		  asset: asset, asset_alt: "", alt_text: alt, alignment: "", derivative: "none"
+		, dimensions: "480x270", quality: "highestPerformance"
+		, spacing_top: "5", spacing_right: "5", spacing_bottom: "5", spacing_left: "5"
+		, copyright: "", caption: "", link: "", link_asset: "", link_page: "", link_target: "_self"
+	} ) ) + ":image}}";
+}
 function attachmentToken( asset, name ) { return "{{attachment:" + encodeURIComponent( JSON.stringify( { asset: asset, name: name } ) ) + ":attachment}}"; }
 function widgetToken( id, cfg ) { return "{{widget:" + id + ":" + encodeURIComponent( JSON.stringify( cfg ) ) + ":widget}}"; }
 
@@ -100,11 +109,58 @@ function esc( s ) { return String( s == null ? "" : s ).replace( /&/g, "&amp;" )
 function decodeConfig( s ) { try { return JSON.parse( decodeURIComponent( s ) ); } catch ( e ) { return {}; } }
 function parseEmbed( token, re ) { const m = String( token || "" ).match( re ); return m ? decodeConfig( m[ 1 ] ) : {}; }
 function colorFor( seed ) { let h = 0; seed = String( seed ); for ( let i = 0; i < seed.length; i++ ) { h = ( h * 31 + seed.charCodeAt( i ) ) >>> 0; } return PALETTE[ h % PALETTE.length ]; }
-function imgSvg( label, color ) {
-	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="${color}"/><text x="80" y="50" font-family="sans-serif" font-size="13" fill="#123" text-anchor="middle">${esc( label )}</text></svg>`;
+function imgSvg( label, color, width, height ) {
+	const w = width  || 160;
+	const h = height || 90;
+	const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="${w}" height="${h}" fill="${color}"/><text x="${Math.round( w / 2 )}" y="${Math.round( h / 2 )}" font-family="sans-serif" font-size="13" fill="#123" text-anchor="middle">${esc( label )}</text></svg>`;
 	return "data:image/svg+xml;base64," + Buffer.from( svg ).toString( "base64" );
 }
 function summarise( cfg ) { return Object.keys( cfg ).map( k => k + ": " + cfg[ k ] ).join( ", " ); }
+
+// Mirrors Preside-CMS system/views/renderers/asset/image/richEditor.cfm closely
+// enough to exercise the editor's image tools: `dimensions` ("WxH") sizes the img,
+// `alignment` becomes float / centred margins, and spacing_* becomes margins - so
+// what the mock sends back is what a committed token really renders as.
+function renderMockImage( cfg, label ) {
+	const dims  = String( cfg.dimensions || "" ).split( /x/i );
+	const w     = parseInt( dims[ 0 ], 10 ) || 0;
+	const h     = parseInt( dims[ 1 ], 10 ) || 0;
+	const align = String( cfg.alignment || "" ).toLowerCase();
+	const sp    = k => Number( cfg[ "spacing_" + k ] || 0 ) || 0;
+
+	let style = "";
+	if ( align === "left" || align === "right" ) { style += `float:${align};`; }
+	if ( align === "center" ) { style += `margin:${sp("top")}px auto ${sp("bottom")}px auto;display:block;`; }
+	else { style += `margin:${sp("top")}px ${sp("right")}px ${sp("bottom")}px ${sp("left")}px;`; }
+	if ( w ) { style += `width:${w}px;`; }
+
+	// The real renderer serves a derivative generated AT the requested size, so the
+	// mock svg is generated at that size too (its natural size is what the editor
+	// reads the aspect ratio from).
+	const src = imgSvg( label, colorFor( cfg.asset || label ), w || 320, h || 180 );
+	const img = `<img src="${src}" alt="${esc( label )}" />`;
+
+	// richEditor.cfm moves the style onto the <figure> when there is a caption or
+	// copyright, and onto the wrapping <a> when there is a link - so the element
+	// carrying float/margins is not always the img. The editor's css zeroes
+	// `.tiptap-embed-preview > *` for exactly that reason; render all three shapes so
+	// the harness actually exercises it.
+	const hasFigure = !!( String( cfg.copyright || "" ).trim() || String( cfg.caption || "" ).trim() );
+	const link      = String( cfg.link || cfg.link_asset || cfg.link_page || "" ).trim();
+
+	if ( hasFigure ) {
+		const maxW = w ? `max-width:${w}px;` : "";
+		const inner = link ? `<a href="#">${img}</a>` : img;
+		return `<figure style="${style}${maxW}">${inner}<figcaption>`
+			+ ( cfg.copyright ? `<small class="copyright">&copy; ${esc( cfg.copyright )}</small>` : "" )
+			+ ( cfg.caption ? esc( cfg.caption ) : "" )
+			+ `</figcaption></figure>`;
+	}
+	if ( link ) {
+		return `<a href="#" style="display:block;${style}">${img}</a>`;
+	}
+	return `<img src="${src}" alt="${esc( label )}" style="${style}" />`;
+}
 
 // ---- Mock preview renderers (what the CKEditor/Tiptap widgets fetch) --------
 // Reflects the picked asset/widget so different choices render differently.
@@ -114,11 +170,17 @@ function mockAjax( action, body ) {
 		case "assetManager.renderEmbeddedImageForEditor": {
 			const cfg = parseEmbed( body.get( "embeddedImage" ), /^\{\{image:(.*):image\}\}$/ );
 			const label = cfg.alt_text || cfg.asset || "image";
-			return `<img src="${imgSvg( label, colorFor( cfg.asset || label ) )}" alt="${esc( label )}" style="max-width:160px" />`;
+			return renderMockImage( cfg, label );
 		}
 		case "assetManager.renderEmbeddedAttachmentForEditor": {
 			const cfg = parseEmbed( body.get( "embeddedAttachment" ), /^\{\{attachment:(.*):attachment\}\}$/ );
 			return `<a href="#">&#128206; ${esc( cfg.name || cfg.asset || "document" )}</a>`;
+		}
+		// Read by the image tools' "Original size" button (real handler measures the
+		// asset binary; upper-cased keys because CFML serialises struct keys that way).
+		case "assetmanager.getImageDetailsForCKEditorImageDialog": {
+			const cfg = { asset: body.get( "asset" ) || "" };
+			return JSON.stringify( { WIDTH: 1200, HEIGHT: 675, LABEL: cfg.asset, ALT_TEXT: "" } );
 		}
 		case "widgets.renderWidgetPlaceholder": {
 			const id = body.get( "widgetId" ) || "widget";

@@ -47,6 +47,7 @@ preside-ext-tiptap/
     theme.js              light/dark chrome theme (localStorage per-user preference) + its toggle button
     maximize.js           full-viewport toggle (portals the container to <body>)
     outline.js            document outline navigator (heading rail -> hover panel -> scroll to)
+    imageTools.js         smart images: drag-resize + alignment bubble over an embedded image
     tiptap.css            css SOURCE (built minified+hashed into dist)
     icons.js              inline SVG toolbar icons (Tabler Icons, MIT)
     pasteFilter.js        disallowedContent / pasteFromWordDisallow paste filtering
@@ -324,6 +325,101 @@ i18n keys.
   `src/index.js` exports `Plugin`/`PluginKey`/`Decoration`/`DecorationSet` on
   `window.PresideTiptap`. Being a decoration also keeps the doc clean — no
   `update` event, so the form never goes dirty from navigating.
+
+## Smart images (drag-resize + alignment)
+
+`src/imageTools.js` puts corner drag handles and a bubble toolbar over the
+**selected** embedded image (align left/centre/right, 25/50/100%-of-editor-width
+presets, original size, edit-in-picker, remove), and writes the result back into
+the same `{{image:...:image}}` token the picker produces. Disable per site/field
+with `defaultConfigs.imageTools = false`. Strings are the `image.*` i18n keys.
+Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
+
+- **It writes only three config keys** - and each one is a documented Preside
+  contract, not a choice we are free to change:
+  - `dimensions` - the `"WxH"` px string. Preside-CMS
+    `system/handlers/renderers/asset/Image.cfc::RichEditor` turns it into an
+    on-the-fly derivative `"WxH-<quality>"` via a `resize` with
+    `maintainAspectRatio=true`. **That is why dragging is always proportional**: a
+    non-proportional height would simply be ignored by the server.
+  - `alignment` - `auto|left|right|center`, applied by
+    `system/views/renderers/asset/image/richEditor.cfm` as `float:` / `margin:...
+    auto`.
+  - `derivative` - reset to `"none"` on resize, because
+    `ContentRendererService.renderEmbeddedImages` **deletes**
+    width/height/quality/dimensions whenever a named derivative is set. Named
+    derivatives only exist on sites that configure some with `inEditor=true`
+    (`DerivativePicker.cfc` renders nothing otherwise), so on most sites this
+    never fires.
+- **The preview is NOT re-requested on resize/align** - every distinct size makes
+  Preside generate and store a derivative, so a drag would litter the asset
+  store. The geometry is applied locally over the already-rendered HTML and a
+  **refresh button appears in the middle of the image**; the real derivative
+  arrives on the next load or when that button is clicked. Do not "fix" this into
+  an automatic (even debounced) refetch.
+- **ALIGNMENT AND SPACING ARE ALWAYS APPLIED BY US, COMPUTED FROM THE TOKEN, onto the
+  node view wrapper** (`data-tt-align` + an inline margin) - never only while the
+  preview is stale, and never copied back off the rendered HTML.
+  - *Why the wrapper*: `richEditor.cfm` puts `float:`/auto-margins and the spacing
+    margins on the rendered element, and those are inert inside the frame that
+    shrink-wraps the preview - there is no room to float in a box that is exactly the
+    image's width. CKEditor hit the same wall and solved it the same way
+    (`addEmbeddedImageStylesToWidgetWrapper` copied those styles onto its widget
+    wrapper). The css zeroes `float`/`margin` on `.tiptap-embed-preview > *` so the
+    wrapper is the single owner of both.
+  - *Why computed, not copied*: the rendered HTML is only ever as fresh as the last
+    render, and a stored `center` renders `margin:Xpx auto` - so copying gave an
+    image re-aligned left/right the wrong side spacing until it was refreshed.
+    `spacingPx()` mirrors `richEditor.cfm` exactly (`spacing_<side> ?: spacing ?: 0`,
+    and centre gets NO horizontal spacing), which makes the geometry exact in every
+    state.
+  - *The element carrying the styles is not always the `<img>`*: it is the `<figure>`
+    when there is a caption/copyright and the `<a>` when there is a link - hence the
+    css selector is `preview > *`. The harness mock renders all three shapes.
+  - Applying alignment only while stale was the bug where refresh made a right-aligned
+    image jump left and then refuse to re-align: the config still said `right`, so the
+    button was "active" and clicking it toggled the alignment *off*.
+- **Two key sets, and they are not the same set.** `LOCAL_KEYS`
+  (dimensions/alignment/derivative) are what this module writes - a change confined
+  to them is handled locally with no refetch. `STALE_KEYS` (dimensions/derivative)
+  are the ones that make the already-rendered HTML *wrong*, i.e. mark it stale and
+  offer the refresh button. **`alignment` is deliberately in the first and not the
+  second**: we render alignment ourselves, so re-requesting for it would achieve
+  nothing and just flash a pointless refresh button.
+- **Stale is derived, never flagged**: `renderedGeom` records the geometry the
+  visible HTML was rendered for, so undo/redo back to the rendered state clears the
+  marker on its own. The SIZE override is applied only while stale, so an untouched
+  image is exactly what the server produced (the derivative's own natural size).
+- **Empty / `"auto"` / `"none"` compare equal** in `geometryKey()`: clicking an
+  alignment off writes the picker's own `"auto"`, which renders identically to the
+  empty value it replaced, and would otherwise mark the preview stale forever.
+- **A local-key-only change must not refetch, anything else must.** The node view's
+  `update()` decides by comparing the non-local keys, so this holds for undo, redo
+  and picker edits alike - not just for changes this module made. Without an
+  `update()` at all, ProseMirror rebuilds the node view on every attribute change
+  and refetches every time.
+- Embeds render as **`dom > .tiptap-embed-frame > .tiptap-embed-preview`** (all
+  three, for uniformity). The server HTML replaces `preview`'s innerHTML, so the
+  chrome has to be a sibling of it; `frame` shrink-wraps the embed and is what the
+  absolute overlays measure against. **The selection outline is on the frame, not
+  the wrapper** - a centre-aligned image makes the wrapper a full-width block (that
+  is how it centres), so outlining the wrapper drew a selection box across the
+  whole editor.
+- The bubble is anchored to the image's **left** edge and then nudged by
+  `placeBubble()` to stay inside the editable; centring it on the image clipped
+  half its buttons off the editor border on any small or left-floated image.
+- Clicking the refresh button **also selects** the node, and so does starting a
+  drag: the button covers the middle of the image, so a click aimed at the image
+  lands there instead, and that must not be a dead end.
+- **Byte fidelity**: the token is rebuilt only when the user actually changes
+  something. Never parse-and-reserialise on load - it reformats the JSON and
+  breaks `getData()`'s byte match with CKEditor.
+- "Original size" is the one action allowed to exceed the editor width (the site's
+  layout may be wider); drags and the % presets cap there.
+- The harness mock (`harness/server.mjs` `renderMockImage()`) mirrors
+  `richEditor.cfm` closely enough to exercise all of this without a Preside boot,
+  including serving the mock svg AT the requested size so the aspect ratio the
+  editor reads is real.
 
 ## Light / dark mode
 

@@ -24,6 +24,7 @@ import { getCustomConfig, prefetchCustomConfig } from "./customConfig.js";
 import { applyTheme, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, exitMaximize, isMaximized } from "./maximize.js";
 import { createOutline, outlineEnabled } from "./outline.js";
+import { imageToolsEnabled } from "./imageTools.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -353,6 +354,9 @@ import { t } from "./i18n.js";
 			, buildAjaxLink     : window.buildAjaxLink
 			, widgetCategories  : cfg.widgetCategories
 			, linkPickerCategory: cfg.linkPickerCategory
+			// Drag-to-resize + alignment chrome on embedded images
+			// (defaultConfigs.imageTools = false opts a site/field out).
+			, imageTools        : imageToolsEnabled( cfg )
 		};
 		if ( ext.createPresideImage )      { exts.push( ext.createPresideImage( embedDeps ) ); }
 		if ( ext.createPresideAttachment ) { exts.push( ext.createPresideAttachment( embedDeps ) ); }
