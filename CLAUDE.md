@@ -541,6 +541,21 @@ doubles as "select this"). Disable per site/field with
   `view.dragging = { slice, move: true }`, and attach `text/html` +
   `setDragImage` (some browsers cancel a drag with no data attached). ProseMirror's
   own drop handling does the move.
+- **`allowTableNodeSelection: true` is REQUIRED on the Table extension** (set in
+  `src/index.js`) and is not optional polish. `prosemirror-tables` defaults it to
+  `false`, which silently **normalises away** a NodeSelection on a table - the
+  grip's selection collapsed to a cell inside it, so ProseMirror's move-on-drop
+  deleted that cell selection instead of the table and left the original in place:
+  **dragging a table DUPLICATED it.** Regression test: T16.
+- Because a dispatch can be normalised away like that, `dragstart` **verifies the
+  NodeSelection actually stuck** (`sel.node && sel.from === offset`) and refuses to
+  start the drag otherwise. A grip that does nothing is a far better failure than
+  one that silently copies content, and it makes any future node type with similar
+  plugin behaviour fail safe.
+- **Testing note on undo:** ProseMirror's history amalgamates transactions within
+  `newGroupDelay` (500ms), so a test that inserts a block and drags it immediately
+  gets ONE undo step for both - which looks exactly like "undo is broken". T16
+  waits 900ms between the two, as a real user's pause does.
 - **Testing note:** Playwright's `dragTo` uses mouse events and does **not** drive
   native HTML5 drag-and-drop - it reports success while changing nothing. T15
   dispatches the real sequence (`dragstart`/`dragover`/`drop`/`dragend`) with one

@@ -647,11 +647,89 @@
 
 								try { inst.destroy(); } catch ( e ) {}
 								$( ta ).remove();
-								resolve();
+								resolve( tableDragChecks() );
 							} ); } );
 						} ); } );
 					} ); } );
 				} ); } );
+			} );
+		}
+
+		// ---- T16: dragging a TABLE must move it, not copy it -------------------
+		// Regression: prosemirror-tables silently normalises a NodeSelection on a
+		// table away unless allowTableNodeSelection is true (it defaults to false).
+		// The grip's selection therefore collapsed to a cell inside the table, and
+		// ProseMirror's move-on-drop deleted THAT instead of the table - leaving the
+		// original behind, i.e. the table was DUPLICATED. See src/index.js.
+		function tableDragChecks() {
+			var ta = document.createElement( "textarea" );
+			ta.className = "richeditor";
+			ta.name       = "tabledrag";
+			ta.value      = "<h2>Alpha</h2><p>Body</p><p>Tail</p>";
+			document.querySelector( "main" ).appendChild( ta );
+			new PresideRichEditor( ta );
+
+			var inst = CKEDITOR.instances.tabledrag;
+			var ed   = inst._t;
+			var $c   = $( ta ).next( ".tiptap-editor-container" );
+			$c[ 0 ].scrollIntoView( { block: "center" } );
+
+			ed.chain().focus( "start" ).insertTable( { rows: 2, cols: 2, withHeaderRow: true } ).run();
+
+			// A NodeSelection on a table has to be POSSIBLE at all - that is the fix.
+			var tablePos = null;
+			ed.state.doc.forEach( function( node, offset ) { if ( tablePos === null && node.type.name === "table" ) { tablePos = offset; } } );
+			ed.view.dispatch( ed.state.tr.setSelection( window.PresideTiptap.NodeSelection.create( ed.state.doc, tablePos ) ) );
+			check( "T16 a NodeSelection on a table survives (allowTableNodeSelection)",
+				!!ed.state.selection.node && ed.state.selection.node.type.name === "table",
+				ed.state.selection.node ? ed.state.selection.node.type.name : "(normalised away)" );
+
+			// Wait out ProseMirror's history newGroupDelay (500ms) so the insert and
+			// the drag are separate undo steps - as a real user's pause would make
+			// them. Without this the two amalgamate and undo reverts both at once.
+			return new Promise( function( resolve ) {
+				setTimeout( function() {
+					var before   = inst.getData();
+					var countFn  = function( s ) { return ( s.match( /<table>/g ) || [] ).length; };
+					var tablesBefore = countFn( before );
+
+					var tbl = $c.find( ".tiptap-editor-mount table" )[ 0 ];
+					var r   = tbl.getBoundingClientRect();
+					$c[ 0 ].dispatchEvent( new MouseEvent( "mousemove", { clientY: r.top + 4, clientX: r.left + 40, bubbles: true } ) );
+
+					var handle = $c.find( ".tiptap-drag-handle" )[ 0 ];
+					var dt = new DataTransfer();
+					handle.dispatchEvent( new DragEvent( "dragstart", { bubbles: true, cancelable: true, dataTransfer: dt } ) );
+					check( "T16 dragging a table arms ProseMirror with the table itself",
+						!!ed.view.dragging && ed.view.dragging.slice.content.firstChild.type.name === "table" );
+
+					var tail = $c.find( ".tiptap-editor-mount .ProseMirror > p" ).last()[ 0 ];
+					var t2   = tail.getBoundingClientRect();
+					var at   = { clientX: Math.round( t2.left + 10 ), clientY: Math.round( t2.top + 1 ) };
+					ed.view.dom.dispatchEvent( new DragEvent( "dragover", $.extend( { bubbles: true, cancelable: true, dataTransfer: dt }, at ) ) );
+					ed.view.dom.dispatchEvent( new DragEvent( "drop"    , $.extend( { bubbles: true, cancelable: true, dataTransfer: dt }, at ) ) );
+					handle.dispatchEvent( new DragEvent( "dragend", { bubbles: true, dataTransfer: dt } ) );
+
+					var after = inst.getData();
+					check( "T16 the table is MOVED, not duplicated",
+						countFn( after ) === tablesBefore, countFn( after ) + " tables (expected " + tablesBefore + ")" );
+					check( "T16 ...and it really moved", after !== before && !/^<table>/.test( after.trim() ) );
+					ed.commands.undo();
+					check( "T16 undo restores the table's original position byte-identically",
+						inst.getData() === before, inst.getData().slice( 0, 60 ) );
+
+					// allowTableNodeSelection must not have cost us the table bubble.
+					var cells = [];
+					ed.state.doc.descendants( function( n, p ) { if ( n.type.name === "tableCell" ) { cells.push( p ); } } );
+					ed.chain().focus().setTextSelection( cells[ 0 ] + 1 ).run();
+					requestAnimationFrame( function() { requestAnimationFrame( function() {
+						check( "T16 the table bubble still opens with the caret in a cell",
+							$c.find( ".tiptap-table-bubble" ).hasClass( "is-open" ) );
+						try { inst.destroy(); } catch ( e ) {}
+						$( ta ).remove();
+						resolve();
+					} ); } );
+				}, 900 );
 			} );
 		}
 

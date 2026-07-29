@@ -86,7 +86,15 @@ function buildRichText( cfg ) {
 		  Subscript
 		, Superscript
 		, TextAlign.configure( { types: [ "heading", "paragraph", "presideDiv" ] } )
-		, TableKit   // registers Table + TableRow + TableHeader + TableCell
+		// registers Table + TableRow + TableHeader + TableCell.
+		//
+		// allowTableNodeSelection MUST be true for the block drag handle
+		// (src/dragHandle.js) to move a table. prosemirror-tables defaults it to
+		// false, which silently NORMALISES AWAY a NodeSelection on a table - so the
+		// grip's selection collapsed to a cell inside it, and ProseMirror's
+		// move-on-drop deleted that inner selection instead of the table, leaving
+		// the original behind: the table was DUPLICATED rather than moved.
+		, TableKit.configure( { table: { allowTableNodeSelection: true } } )
 		, PresideDiv
 	];
 	if ( cfg.placeholder ) {

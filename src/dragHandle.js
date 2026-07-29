@@ -199,6 +199,16 @@ export function createDragHandle( editor, container, mount, withInsert ) {
 		// exactly the block.
 		if ( !selectCurrent() ) { e.preventDefault(); return; }
 
+		// ...and CHECK IT STUCK. A plugin can normalise a NodeSelection away -
+		// prosemirror-tables does exactly that unless allowTableNodeSelection is on
+		// - and then ProseMirror's move-on-drop deletes whatever the selection
+		// became (a cell, say) instead of the block, silently DUPLICATING it. Since
+		// dispatching cannot be trusted to have taken effect, refuse to start the
+		// drag rather than risk duplicating content: a grip that does nothing is a
+		// far better failure than one that copies.
+		const sel = editor.view.state.selection;
+		if ( !sel.node || sel.from !== current.offset ) { e.preventDefault(); return; }
+
 		dragging = true;
 		handle.classList.add( "is-dragging" );
 
