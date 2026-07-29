@@ -332,8 +332,10 @@ import { t } from "./i18n.js";
 		// Block drag handle: hover a block to get a grip in the left gutter
 		// (chrome only - see src/dragHandle.js).
 		// Opt out per-site/per-field with defaultConfigs.dragHandle = false.
+		// The "+" only types a "/" for the author, so it is rendered only when the
+		// slash menu is actually there to react to it.
 		if ( dragHandleEnabled( cfg ) ) {
-			createDragHandle( tiptap, container, mount );
+			createDragHandle( tiptap, container, mount, slashMenuEnabled( cfg ) );
 		}
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.

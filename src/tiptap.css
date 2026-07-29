@@ -129,17 +129,24 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    .tiptap-has-draghandle class rather than baked into .tiptap-editor-mount, so a
    field opting out (defaultConfigs.dragHandle = false) keeps the original
    padding and loses no editable width. */
-.tiptap-has-draghandle .tiptap-editor-mount{padding-left:28px}
-.tiptap-drag-handle{
-	position:absolute;left:4px;width:20px;height:20px;padding:0;
-	display:none;align-items:center;justify-content:center;
-	border:0;border-radius:3px;background:none;cursor:grab;
+/* Gutter width tracks how many controls are actually rendered: "+" plus grip, or
+   the grip alone when the slash menu is off (the "+" only types a "/", so it
+   would be useless without it). */
+.tiptap-gutter-1 .tiptap-editor-mount{padding-left:28px}
+.tiptap-gutter-2 .tiptap-editor-mount{padding-left:48px}
+.tiptap-block-gutter{position:absolute;left:4px;display:none;align-items:center;gap:1px}
+.tiptap-block-gutter.is-visible{display:inline-flex}
+.tiptap-block-gutter button{
+	width:20px;height:20px;padding:0;
+	display:inline-flex;align-items:center;justify-content:center;
+	border:0;border-radius:3px;background:none;
 	color:var(--tt-muted);opacity:.55;transition:opacity .1s ease,background .1s ease
 }
-.tiptap-drag-handle.is-visible{display:inline-flex}
-.tiptap-drag-handle:hover{opacity:1;background:var(--tt-btn-hover-bg)}
+.tiptap-block-gutter button:hover{opacity:1;background:var(--tt-btn-hover-bg)}
+.tiptap-block-gutter button svg{width:16px;height:16px;display:block;pointer-events:none}
+.tiptap-block-insert{cursor:pointer}
+.tiptap-drag-handle{cursor:grab}
 .tiptap-drag-handle.is-dragging{cursor:grabbing;opacity:1}
-.tiptap-drag-handle svg{width:16px;height:16px;display:block;pointer-events:none}
 /* The drop indicator is prosemirror-dropcursor (via StarterKit) - colour it to
    match the admin palette rather than its default black. */
 .tiptap-editor-mount .ProseMirror-dropcursor,.prosemirror-dropcursor-block{background-color:var(--tt-accent)!important;border-color:var(--tt-accent)!important}

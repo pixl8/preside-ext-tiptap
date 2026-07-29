@@ -28,11 +28,37 @@ export function dragHandleEnabled( cfg ) {
  * @param editor     the Tiptap editor
  * @param container  .tiptap-editor-container (positioning parent + gutter class)
  * @param mount      .tiptap-editor-mount (the scroller)
+ * @param withInsert render the "+" (insert block below) alongside the grip. The
+ *                   "+" works by typing a "/" for the author, so it is only
+ *                   useful when the slash menu is on - the facade passes
+ *                   slashMenuEnabled( cfg ), never a bare true.
  */
-export function createDragHandle( editor, container, mount ) {
-	// The gutter only exists when the handle does, so opting out leaves the
-	// editable's padding exactly as it was.
+export function createDragHandle( editor, container, mount, withInsert ) {
+	// The gutter only exists when this chrome does, so opting out leaves the
+	// editable's padding exactly as it was. Its width depends on how many controls
+	// are actually rendered - see the gutter classes in the css.
 	container.classList.add( "tiptap-has-draghandle" );
+	container.classList.add( withInsert ? "tiptap-gutter-2" : "tiptap-gutter-1" );
+
+	// One wrapper for both controls so they move together and share the hover
+	// bookkeeping - hovering either must not count as leaving the block.
+	const rail = document.createElement( "span" );
+	rail.className = "tiptap-block-gutter";
+	container.appendChild( rail );
+
+	// "+" first, matching the reference editor's order (and Notion's).
+	let insertBtn = null;
+	if ( withInsert ) {
+		insertBtn = document.createElement( "button" );
+		insertBtn.type = "button";
+		insertBtn.className = "tiptap-block-insert";
+		insertBtn.title = t( "draghandle.insert" );
+		insertBtn.setAttribute( "aria-label", t( "draghandle.insert" ) );
+		insertBtn.innerHTML = ICONS.Plus;
+		insertBtn.addEventListener( "mousedown", e => e.preventDefault() );
+		insertBtn.addEventListener( "click", function( e ) { e.preventDefault(); insertBelow(); } );
+		rail.appendChild( insertBtn );
+	}
 
 	const handle = document.createElement( "button" );
 	handle.type = "button";
@@ -41,7 +67,40 @@ export function createDragHandle( editor, container, mount ) {
 	handle.title = t( "draghandle.tooltip" );
 	handle.setAttribute( "aria-label", t( "draghandle.tooltip" ) );
 	handle.innerHTML = ICONS.DragGrip;
-	container.appendChild( handle );
+	rail.appendChild( handle );
+
+	/**
+	 * "+" does not open the menu itself - it TYPES A "/" for the author and lets
+	 * the slash menu react, exactly as the reference editor does. One code path
+	 * for both affordances: no second copy of the item list, and no way for the
+	 * button and the keystroke to drift apart.
+	 *
+	 * An empty paragraph is reused rather than pushed down, so clicking "+" on a
+	 * blank line doesn't stack blank lines.
+	 */
+	function insertBelow() {
+		if ( !current ) { return; }
+		const node   = current.node;
+		const offset = current.offset;
+		const reuse  = node.type.name === "paragraph" && node.content.size === 0;
+		// offset is the position BEFORE the node (doc.forEach), so its text starts
+		// at offset + 1; a fresh paragraph goes in after the whole node.
+		const insertPos = offset + node.nodeSize;
+		const caretPos  = reuse ? offset + 2 : insertPos + 2;
+
+		editor.chain().command( function( { tr, state, dispatch } ) {
+			if ( !dispatch ) { return true; }
+			if ( reuse ) { tr.insertText( "/", offset + 1 ); }
+			else {
+				tr.insert( insertPos, state.schema.nodes.paragraph.create( null, [ state.schema.text( "/" ) ] ) );
+			}
+			return dispatch( tr );
+		} ).run();
+
+		// The suggestion plugin resolves its match from the selection, so the caret
+		// has to land after the "/" for the menu to open.
+		editor.commands.focus( caretPos );
+	}
 
 	let current = null;   // { node, offset, dom, rect }
 	let dragging = false;
@@ -73,7 +132,7 @@ export function createDragHandle( editor, container, mount ) {
 	function hide() {
 		if ( dragging ) { return; }   // never yank the grip out from under a drag
 		current = null;
-		handle.classList.remove( "is-visible" );
+		rail.classList.remove( "is-visible" );
 	}
 
 	function show( block ) {
@@ -87,7 +146,7 @@ export function createDragHandle( editor, container, mount ) {
 
 		// Align to the block's first line rather than its centre: a tall block (a
 		// list, a big image) with a centred grip reads as belonging to nothing.
-		const size = handle.offsetHeight || 20;
+		const size = rail.offsetHeight || 20;
 		let top = block.rect.top - cRect.top + 2;
 		// Keep it within the visible mount, so a half-scrolled block's grip does
 		// not float over the toolbar.
@@ -96,8 +155,8 @@ export function createDragHandle( editor, container, mount ) {
 		if ( top < minTop ) { top = minTop; }
 		if ( top > maxTop ) { top = maxTop; }
 
-		handle.style.top = Math.round( top ) + "px";
-		handle.classList.add( "is-visible" );
+		rail.style.top = Math.round( top ) + "px";
+		rail.classList.add( "is-visible" );
 	}
 
 	function onMove( e ) {
@@ -106,8 +165,8 @@ export function createDragHandle( editor, container, mount ) {
 		if ( block ) { show( block ); } else { hide(); }
 	}
 
-	// Hovering the handle itself must not count as leaving the block (the handle
-	// sits in the gutter, outside the editable), so listen on the container and
+	// Hovering the controls themselves must not count as leaving the block (they
+	// sit in the gutter, outside the editable), so listen on the container and
 	// only hide when the pointer leaves the whole thing.
 	container.addEventListener( "mousemove", onMove );
 	container.addEventListener( "mouseleave", hide );
@@ -168,5 +227,5 @@ export function createDragHandle( editor, container, mount ) {
 		mount.removeEventListener( "scroll", hide );
 	} );
 
-	return handle;
+	return rail;
 }

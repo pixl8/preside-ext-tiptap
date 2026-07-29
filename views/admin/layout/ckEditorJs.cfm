@@ -60,7 +60,7 @@
 		, "table.row.before", "table.row.after", "table.row.delete"
 		, "table.cells.merge", "table.cells.split"
 		, "table.headerrow", "table.headercolumn", "table.delete"
-		, "draghandle.tooltip"
+		, "draghandle.tooltip", "draghandle.insert"
 		, "slash.title", "slash.empty"
 		, "slash.group.format", "slash.group.block", "slash.group.preside", "slash.group.widget"
 		, "slash.h1", "slash.h1.hint", "slash.h2", "slash.h2.hint", "slash.h3", "slash.h3.hint"

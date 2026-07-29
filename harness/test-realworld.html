@@ -267,6 +267,8 @@
 					, themeToggle: !!container.querySelector( ".tiptap-theme-toggle" )
 					, tableTools : !!container.querySelector( ".tiptap-table-bubble" )
 					, dragHandle : !!container.querySelector( ".tiptap-drag-handle" )
+					, blockInsert: !!container.querySelector( ".tiptap-block-insert" )
+					, gutter     : ( container.className.match( /tiptap-gutter-\d/ ) || [ "" ] )[ 0 ]
 					, slashMenu  : !!( CKEDITOR.instances[ ta.name ]._t.extensionManager.extensions || [] )
 						.filter( function( e ) { return e.name === "presideSlashMenu"; } ).length
 				};
@@ -289,6 +291,10 @@
 			var slashOff = probe( '{"slashMenu":false}' );
 			check( "T10 a field can turn the slash menu off",
 				!slashOff.slashMenu && slashOff.dragHandle, JSON.stringify( slashOff ) );
+			// The "+" only types a "/", so with no slash menu it must not be offered -
+			// and the gutter narrows to the grip alone rather than leaving a gap.
+			check( "T10 slashMenu:false also drops the '+' and narrows the gutter",
+				!slashOff.blockInsert && slashOff.gutter === "tiptap-gutter-1", JSON.stringify( slashOff ) );
 
 			var siteDefaults = window.cfrequest.ckeditorDefaultConfigs;
 			siteDefaults.outline = siteDefaults.darkMode = siteDefaults.wordcount = false;
@@ -509,6 +515,13 @@
 			check( "T15 the drag handle renders and the gutter is applied",
 				!!handle && $c.hasClass( "tiptap-has-draghandle" ) );
 
+			// The gutter holds "+" AND the grip, and is sized for both. The "+" only
+			// types a "/", so it must not be rendered when the slash menu is off.
+			check( "T15 the gutter holds both the insert button and the grip",
+				$c.find( ".tiptap-block-gutter .tiptap-block-insert" ).length === 1
+				&& $c.find( ".tiptap-block-gutter .tiptap-drag-handle" ).length === 1
+				&& $c.hasClass( "tiptap-gutter-2" ) );
+
 			var bq  = $c.find( ".tiptap-editor-mount blockquote" )[ 0 ];
 			var bqr = bq.getBoundingClientRect();
 			function hoverBlock( el ) {
@@ -516,10 +529,13 @@
 				$c[ 0 ].dispatchEvent( new MouseEvent( "mousemove", { clientY: r.top + 4, clientX: r.left + 40, bubbles: true } ) );
 				return r;
 			}
+			// `is-visible` lives on the gutter wrapper, not the grip - both controls
+			// show and move together.
+			var gutter = $c.find( ".tiptap-block-gutter" )[ 0 ];
 			hoverBlock( bq );
 			check( "T15 hovering a block shows the grip, aligned to its first line",
-				handle.classList.contains( "is-visible" )
-				&& Math.abs( handle.getBoundingClientRect().top - bqr.top ) < 14 );
+				gutter.classList.contains( "is-visible" )
+				&& Math.abs( gutter.getBoundingClientRect().top - bqr.top ) < 14 );
 			check( "T15 the grip sits in the gutter, left of the text",
 				handle.getBoundingClientRect().right <= bqr.left );
 
@@ -555,6 +571,24 @@
 			check( "T15 dragend clears the drag state", ed.view.dragging === null );
 			ed.commands.undo();
 			check( "T15 undo restores the original order byte-identically", inst.getData() === before, inst.getData() );
+
+			// The "+" types a "/" for the author rather than duplicating the menu, so
+			// it must both add the block and leave the caret where the menu can open.
+			var blocksBefore = ed.state.doc.childCount;
+			hoverBlock( $c.find( ".tiptap-editor-mount h2" )[ 0 ] );
+			$c.find( ".tiptap-block-insert" )[ 0 ].click();
+			check( "T15 '+' inserts a block below and primes it with /",
+				ed.state.doc.childCount === blocksBefore + 1 && ed.state.selection.$from.parent.textContent === "/",
+				ed.state.doc.childCount + " blocks, caret block = '" + ed.state.selection.$from.parent.textContent + "'" );
+
+			// On an already-empty paragraph it must REUSE the block, not stack blanks.
+			ed.chain().focus( "end" ).insertContent( "<p></p>" ).run();
+			var blocksWithBlank = ed.state.doc.childCount;
+			var $blanks = $c.find( ".tiptap-editor-mount .ProseMirror > p" ).filter( function() { return this.textContent === ""; } );
+			hoverBlock( $blanks[ $blanks.length - 1 ] );
+			$c.find( ".tiptap-block-insert" )[ 0 ].click();
+			check( "T15 '+' on an empty paragraph reuses it rather than stacking blanks",
+				ed.state.doc.childCount === blocksWithBlank, ed.state.doc.childCount + " vs " + blocksWithBlank );
 
 			// ---- T14: the "/" menu (async - opens a frame after the char lands) --
 			// A real slash goes through the input handler; inserting the character via

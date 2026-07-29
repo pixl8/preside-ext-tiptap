@@ -104,6 +104,7 @@ export const DEFAULTS = {
 	, "table.headercolumn"       : "Header column"
 	, "table.delete"             : "Delete table"
 	, "draghandle.tooltip"       : "Drag to move, click to select"
+	, "draghandle.insert"        : "Insert block below"
 	, "slash.title"              : "Insert"
 	, "slash.empty"              : "Nothing matches"
 	, "slash.group.format"       : "Format"

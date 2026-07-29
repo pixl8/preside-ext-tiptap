@@ -488,10 +488,24 @@ template (mirroring core's `Widgets._getSortedAndTranslatedWidgets`).
 
 ## Block drag handle
 
-`src/dragHandle.js` - hovering a block shows a grip in the left gutter; dragging
-reorders the block, clicking selects it (which is also what makes the image tools
-/ table bubble appear, so the grip doubles as "select this"). Disable per
-site/field with `defaultConfigs.dragHandle = false`.
+`src/dragHandle.js` - hovering a block shows two controls in the left gutter: a
+**"+"** (insert a block below) and a **grip** (drag to reorder, click to select -
+which is also what makes the image tools / table bubble appear, so the grip
+doubles as "select this"). Disable per site/field with
+`defaultConfigs.dragHandle = false`.
+
+- **"+" does not open the menu itself - it types a "/" for the author** and lets
+  the slash menu react, exactly as the reference editor does. One code path for
+  both affordances: no second copy of the item list, and no way for the button and
+  the keystroke to drift apart. It therefore renders **only when the slash menu is
+  enabled** (the facade passes `slashMenuEnabled( cfg )`), and the gutter narrows
+  to the grip alone otherwise - `.tiptap-gutter-2` (48px) vs `.tiptap-gutter-1`
+  (28px), so a field never pays for a control it does not show.
+- Clicking "+" on an **already-empty paragraph reuses that block** rather than
+  pushing it down, so it cannot stack blank lines.
+- Both controls live in one `.tiptap-block-gutter` wrapper and share the hover
+  bookkeeping - `is-visible` is on the WRAPPER, not the grip. Hovering either must
+  not count as leaving the block.
 
 - **HAND-ROLLED DELIBERATELY. Do not "simplify" this to
   `@tiptap/extension-drag-handle`.** That package is MIT in v3, but it
