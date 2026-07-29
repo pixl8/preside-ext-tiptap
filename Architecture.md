@@ -309,7 +309,11 @@ heading highlights as you scroll past it.
   `pointer-events:auto` descendant.
 - **Scrolling** targets the mount directly when it is the scroller (a field
   `maxHeight`, or maximized) rather than `scrollIntoView()`, which would also
-  move the surrounding admin page.
+  move the surrounding admin page. When the field is showing all of its content,
+  clicking scrolls **nothing** — the caret and the highlight are the whole result;
+  the page is only moved (by `block:"nearest"`, the least that reveals it) when
+  the heading is actually outside the viewport, which a tall uncapped field can
+  manage.
 - The **"you landed here" highlight** is a ProseMirror **node decoration**, not a
   class on the rendered heading: the next DOM sync rewrites node attributes from
   the schema and would wipe it. Decorations are view-only, so no `update` fires

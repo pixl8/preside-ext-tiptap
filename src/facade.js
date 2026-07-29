@@ -244,8 +244,14 @@ import { t } from "./i18n.js";
 			container.addEventListener( evt, function( e ) { e.stopPropagation(); } );
 		} );
 
-		if ( cfg.minHeight ) { mount.style.minHeight = ( parseInt( cfg.minHeight, 10 ) || 0 ) + "px"; }
-		if ( cfg.maxHeight ) { mount.style.maxHeight = ( parseInt( cfg.maxHeight, 10 ) || 0 ) + "px"; mount.style.overflowY = "auto"; }
+		// min/maxHeight can legitimately arrive as the string "auto" - that is what
+		// ckEditorJs.cfm sends when settings.ckeditor.defaults leaves them unset -
+		// so only apply a numeric value. `parseInt( "auto" ) || 0` would set
+		// max-height:0px and collapse the editable entirely.
+		var minHeight = parseInt( cfg.minHeight, 10 );
+		var maxHeight = parseInt( cfg.maxHeight, 10 );
+		if ( minHeight > 0 ) { mount.style.minHeight = minHeight + "px"; }
+		if ( maxHeight > 0 ) { mount.style.maxHeight = maxHeight + "px"; mount.style.overflowY = "auto"; }
 		if ( cfg.width && cfg.width !== "auto" ) {
 			container.style.width = String( cfg.width ).match( /^\d+$/ ) ? cfg.width + "px" : cfg.width;
 		}

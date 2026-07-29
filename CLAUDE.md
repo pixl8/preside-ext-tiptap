@@ -310,9 +310,14 @@ i18n keys.
 - The wrapper is `pointer-events:none`; only the drawn rows and the open panel
   take clicks, so the right edge of the editable stays usable. Don't "simplify"
   that away.
-- Clicking scrolls the **mount** directly when the mount is the scroller (field
-  `maxHeight`, or maximized) — `scrollIntoView()` alone would also drag the admin
-  page around.
+- **Scrolling is scoped, and often skipped entirely.** Clicking scrolls the
+  **mount** when the mount is the scroller (field `maxHeight`, or maximized). When
+  the field shows all its content there is nothing to scroll to, so a click only
+  moves the caret + highlight — do NOT reinstate a `scrollIntoView()` fallback
+  there: with no scroller of its own the browser satisfies it by scrolling the
+  admin PAGE, yanking the form around under a heading that was already visible.
+  The page is only moved when the heading is genuinely outside the viewport (a
+  tall uncapped field), and then with `block:"nearest"`.
 - The landed-on-heading highlight is a **ProseMirror node decoration**
   (`tiptap-outline-target`), NOT a class on the heading element: ProseMirror's
   next DOM sync rewrites node attributes and wipes any class we set. That is why

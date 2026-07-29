@@ -288,6 +288,40 @@
 			check( "T10 a field can turn the outline off while the site leaves it on",
 				!fieldOff.outline && fieldOff.footer, JSON.stringify( fieldOff ) );
 
+			// ---- T11: navigating must not move the admin page ----------------
+			// When the field shows all of its content there is nothing to scroll to,
+			// so clicking an outline entry may only move the caret + highlight. The
+			// old scrollIntoView() fallback had no scroller of its own, so the
+			// browser satisfied it by scrolling the PAGE - yanking the form around
+			// under a heading that was already on screen.
+			var shortTa = document.createElement( "textarea" );
+			shortTa.className = "richeditor";
+			shortTa.name      = "shortfield";
+			shortTa.value     = "<h2>Alpha</h2><p>a</p><h2>Beta</h2><p>b</p>";
+			shortTa.setAttribute( "data-max-height", "auto" );   // no cap: grows to fit
+			document.querySelector( "main" ).appendChild( shortTa );
+			new PresideRichEditor( shortTa );
+
+			var shortContainer = shortTa.nextSibling;
+			var shortMount     = shortContainer.querySelector( ".tiptap-editor-mount" );
+
+			// data-max-height="auto" is what ckEditorJs.cfm sends when the setting is
+			// unset; `parseInt( "auto" ) || 0` used to make that max-height:0px.
+			check( "T11 maxHeight 'auto' leaves the editable uncapped", !shortMount.style.maxHeight && shortMount.clientHeight > 20,
+				"max-height=" + ( shortMount.style.maxHeight || "(none)" ) + ", height=" + shortMount.clientHeight );
+			check( "T11 a fully-visible field has nothing to scroll", shortMount.scrollHeight - shortMount.clientHeight <= 4 );
+
+			shortContainer.scrollIntoView( { block: "center" } );
+			var pageBefore = window.pageYOffset;
+			shortContainer.querySelectorAll( ".tiptap-outline-item" )[ 1 ].click();
+			check( "T11 clicking an entry does not scroll the page", window.pageYOffset === pageBefore,
+				pageBefore + " -> " + window.pageYOffset );
+			check( "T11 ...but the caret still lands in that heading", CKEDITOR.instances.shortfield._t.isActive( "heading" ) );
+			check( "T11 ...and the entry is highlighted", !!shortContainer.querySelector( ".tiptap-outline-item.is-active" ) );
+
+			try { CKEDITOR.instances.shortfield.destroy(); } catch ( e ) {}
+			$( shortTa ).remove();
+
 			probes.forEach( function( inst ) { try { inst.destroy(); } catch ( e ) {} } );
 			$( "textarea[name^=probe]" ).remove();
 		}

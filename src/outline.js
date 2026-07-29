@@ -227,9 +227,9 @@ export function createOutline( tiptap, mount ) {
 		const el = headingDom( tiptap, item.pos );
 		if ( !el ) { return; }
 
-		// A capped-height mount (data-max-height, or maximized) is the scroller;
-		// scroll it directly rather than letting scrollIntoView() also drag the
-		// surrounding admin page around.
+		// A capped-height mount (data-max-height, or maximized) is the scroller:
+		// scroll it directly rather than letting scrollIntoView() drag the
+		// surrounding admin page around with it.
 		if ( isMountScrollable() ) {
 			const delta = el.getBoundingClientRect().top - mount.getBoundingClientRect().top;
 			const top   = Math.max( 0, mount.scrollTop + delta - 8 );
@@ -238,9 +238,28 @@ export function createOutline( tiptap, mount ) {
 			} else {
 				mount.scrollTop = top;
 			}
-		} else if ( typeof el.scrollIntoView === "function" ) {
-			el.scrollIntoView( { behavior: "smooth", block: "start" } );
+			return;
 		}
+
+		// The whole document fits in the field, so there is nothing to scroll TO -
+		// the caret and the highlight are the entire result. Do NOT fall back to
+		// scrollIntoView() here: with no scroller of our own the browser satisfies
+		// it by scrolling the admin PAGE, which yanks the form around under a
+		// heading that was already on screen.
+		if ( isVisibleInViewport( el ) ) { return; }
+
+		// Only when the heading really is off-screen (a tall, uncapped field can be
+		// longer than the viewport) is moving the page justified - and then by the
+		// least amount that reveals it, not a jump to the top.
+		if ( typeof el.scrollIntoView === "function" ) {
+			el.scrollIntoView( { behavior: "smooth", block: "nearest" } );
+		}
+	}
+
+	function isVisibleInViewport( el ) {
+		const box    = el.getBoundingClientRect();
+		const height = window.innerHeight || document.documentElement.clientHeight || 0;
+		return box.top >= 0 && box.bottom <= height;
 	}
 
 	function isMountScrollable() {
