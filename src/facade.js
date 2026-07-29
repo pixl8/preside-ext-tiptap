@@ -26,6 +26,8 @@ import { toggleMaximize, exitMaximize, isMaximized } from "./maximize.js";
 import { createOutline, outlineEnabled } from "./outline.js";
 import { imageToolsEnabled } from "./imageTools.js";
 import { createTableTools, tableToolsEnabled } from "./tableTools.js";
+import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
+import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -327,6 +329,13 @@ import { t } from "./i18n.js";
 			createTableTools( tiptap, container, mount );
 		}
 
+		// Block drag handle: hover a block to get a grip in the left gutter
+		// (chrome only - see src/dragHandle.js).
+		// Opt out per-site/per-field with defaultConfigs.dragHandle = false.
+		if ( dragHandleEnabled( cfg ) ) {
+			createDragHandle( tiptap, container, mount );
+		}
+
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
 		applyContentStyles( cfg.stylesheets );
 
@@ -369,6 +378,14 @@ import { t } from "./i18n.js";
 		if ( ext.createPresideImage )      { exts.push( ext.createPresideImage( embedDeps ) ); }
 		if ( ext.createPresideAttachment ) { exts.push( ext.createPresideAttachment( embedDeps ) ); }
 		if ( ext.createPresideWidget )     { exts.push( ext.createPresideWidget( embedDeps ) ); }
+
+		// The "/" insert menu. Registered as an extension (it is a ProseMirror
+		// plugin, unlike the other chrome), so it has to be built here rather than
+		// appended to the container after mount.
+		// Opt out per-site/per-field with defaultConfigs.slashMenu = false.
+		if ( slashMenuEnabled( cfg ) && T.Suggestion && T.Extension ) {
+			exts.push( createSlashMenu( T, cfg ) );
+		}
 
 		// Phase 4: wider toolbar support (subscript/superscript/text-align/table/placeholder)
 		if ( ext.buildRichText ) {

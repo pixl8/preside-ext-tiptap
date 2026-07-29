@@ -49,6 +49,8 @@ preside-ext-tiptap/
     outline.js            document outline navigator (heading rail -> hover panel -> scroll to)
     imageTools.js         smart images: drag-resize + alignment bubble over an embedded image
     tableTools.js         table chrome: bubble toolbar (row/col/cell ops) over the caret's table
+    slashMenu.js          the "/" insert menu (blocks + Preside pickers + widgets by name)
+    dragHandle.js         Notion-style block grip: hover -> drag to reorder / click to select
     tiptap.css            css SOURCE (built minified+hashed into dist)
     icons.js              inline SVG toolbar icons (Tabler Icons, MIT)
     pasteFilter.js        disallowedContent / pasteFromWordDisallow paste filtering
@@ -78,6 +80,9 @@ npm run watch      # rebuild on change
 ```
 
 - `assets/dist/` is **committed** so the extension works with no build step at deploy.
+- Runtime deps are `@tiptap/*` only. `@tiptap/suggestion` backs the "/" menu;
+  `@tiptap/extension-drag-handle` is deliberately NOT used (see the drag handle
+  section for the measured +139kb Yjs cost).
 - `esbuild.mjs` builds two IIFE bundles + the css. `@tiptap/*` is `external` in the
   facade build so Tiptap is not bundled twice (the facade reads `window.PresideTiptap`).
 - Styles live in **`src/tiptap.css`** (an esbuild entrypoint) — edit there, never in dist.
@@ -421,6 +426,111 @@ Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
   `richEditor.cfm` closely enough to exercise all of this without a Preside boot,
   including serving the mock svg AT the requested size so the aspect ratio the
   editor reads is real.
+
+## The "/" insert menu
+
+`src/slashMenu.js` - type `/` in an empty block to filter and insert any
+block-level element, **including Preside's own**: the image / attachment / widget
+pickers, link, anchor, and **individual widgets by name** ("/news" → the news
+widget). Disable per site/field with `defaultConfigs.slashMenu = false`; strings
+are the `slash.*` keys.
+
+- Trigger detection is **`@tiptap/suggestion`** (MIT, framework-agnostic; the
+  popup is ours because Tiptap only ships React/Vue renderers). Costs **+24kb**
+  and pulls nothing but core/pm/floating-ui - contrast
+  `@tiptap/extension-drag-handle`, below.
+- **`/` only fires at the start of an empty-ish block, and never in a code
+  block.** Preside content is full of real slashes (dates, paths, "and/or") and
+  CKEditor had no such trigger, so a menu opening mid-sentence would be a
+  regression against the editor we replace, not a missing feature.
+- **Every item runs a command that already exists** (the toolbar's `COMMANDS`, or
+  the pickers the embed extensions register). This module adds a way to REACH
+  things, never a second implementation - and items whose command is absent from
+  the build/field are dropped rather than shown broken.
+- The suggestion range is deleted **before** the item runs, so a picker inserting
+  a block-level node sees a clean block.
+- **Search matches the translated label first, then keywords/hints** - the
+  English keywords are additive so "/pic" finds the image picker, but a localised
+  admin stays searchable in its own language.
+- The popup is on **`<body>`**, not the container: a capped-height or
+  overflow-hidden field would clip it (same reason the picker overlays live
+  there). That puts it outside the `--tt-*` variables' scope, so its light/dark
+  values are its own, via `prefers-color-scheme`.
+- **It renders before it positions.** Measuring an empty box put a full-length
+  menu off the bottom of the screen - `paint()` renders, *then* `move()` decides
+  whether to flip above the caret.
+
+### The widget list
+
+`views/admin/layout/ckEditorJs.cfm` emits `cfrequest.tiptapWidgets` from
+`widgetsService.getWidgets()` - **no new endpoint**, the same pattern as
+`tiptapI18n`, translated for the admin user and filtered to the active site
+template (mirroring core's `Widgets._getSortedAndTranslatedWidgets`).
+
+- `widgetCategories` is a **per-field** setting while this view renders **once per
+  page**, so each widget ships **with its `categories`** and `slashMenu.js`
+  filters per field, applying Preside's own rule (`_isWidgetInCategories`):
+  an empty list on *either* side means `"default"`.
+- The categories knowable server-side are `"default"` plus whatever the site
+  configures. A field naming some other category still gets the "Widget…" entry,
+  so **no widget is ever unreachable** - it just loses the by-name shortcut.
+- Selecting a widget opens the picker **pre-pointed at it**, via a new optional
+  `extra` argument threaded through `openPresideWidgetPicker` →
+  `pickerUrl` → `widget=<id>` (core's `Widgets.dialog()` renders that widget's
+  configForm whenever `rc.widget` is set). Called with no argument - i.e. the
+  toolbar button - **the URL is byte-identical to before**.
+- Deliberately **not** short-circuited into building a `{{widget:...}}` token
+  here, even for widgets with no config form: the token would then be ours rather
+  than Preside's, and byte fidelity with what the picker commits is the whole
+  point of tokens.
+- The whole block is wrapped in a `try`/`catch` - the menu is a convenience and
+  must never take the editor down with it.
+
+## Block drag handle
+
+`src/dragHandle.js` - hovering a block shows a grip in the left gutter; dragging
+reorders the block, clicking selects it (which is also what makes the image tools
+/ table bubble appear, so the grip doubles as "select this"). Disable per
+site/field with `defaultConfigs.dragHandle = false`.
+
+- **HAND-ROLLED DELIBERATELY. Do not "simplify" this to
+  `@tiptap/extension-drag-handle`.** That package is MIT in v3, but it
+  hard-imports `@tiptap/extension-collaboration` + `@tiptap/y-tiptap`, so the
+  build *fails* without them and installing them drags real Yjs runtime code into
+  the bundle: **measured at +139kb (+30% of the vendor bundle)** for an editor
+  that does zero collaboration. It also pins `@tiptap/pm` to an exact version.
+  Everything it offers is already in what we ship - `nodeDOM` for positioning,
+  `NodeSelection` for the drag, `prosemirror-dropcursor` (via StarterKit) for the
+  drop indicator.
+- **Chrome only** - the handle lives on `.tiptap-editor-container`, so
+  `getData()` is unaffected by its existence. A drag is of course a real edit, but
+  an ordinary ProseMirror move: tokens survive byte-for-byte and undo restores
+  exactly (both asserted in `test-realworld.html` T15).
+- The gutter comes from a **`.tiptap-has-draghandle` class**, not from
+  `.tiptap-editor-mount` itself, so a field opting out keeps the original padding
+  and loses no editable width.
+- **Block lookup iterates the doc's own top-level children** and compares DOM
+  boxes, rather than using `view.posAtCoords`. We want the top-level block (the
+  draggable unit); `posAtCoords` returns the innermost position, so a paragraph
+  in a list item or table cell would have to be climbed back up, and it behaves
+  differently for leaf nodes like our embeds.
+- The grip aligns to the block's **first line**, not its centre - on a tall block
+  (a long list, a big image) a centred grip reads as belonging to nothing. It is
+  also clamped into the visible mount, so a half-scrolled block's grip cannot
+  float over the toolbar.
+- Mouse tracking is on the **container**, not the editable: the grip sits in the
+  gutter *outside* the editable, so hovering the grip must not count as leaving
+  the block.
+- `hide()` **no-ops while dragging** - otherwise the grip is yanked out from under
+  the drag in progress.
+- Drag is the standard ProseMirror recipe: select the node, set
+  `view.dragging = { slice, move: true }`, and attach `text/html` +
+  `setDragImage` (some browsers cancel a drag with no data attached). ProseMirror's
+  own drop handling does the move.
+- **Testing note:** Playwright's `dragTo` uses mouse events and does **not** drive
+  native HTML5 drag-and-drop - it reports success while changing nothing. T15
+  dispatches the real sequence (`dragstart`/`dragover`/`drop`/`dragend`) with one
+  shared `DataTransfer`, which is what actually exercises the drop.
 
 ## Alignment dropdown
 

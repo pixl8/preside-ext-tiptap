@@ -29,6 +29,16 @@
 		  }
 		, widgetCategories        : ""
 		, linkPickerCategory      : ""
+		// tiptapWidgets - the "/" menu's by-name widget list, emitted server-side by
+		// ckEditorJs.cfm from widgetsService.getWidgets(). Mirrors that shape: already
+		// translated + site-template-filtered, carrying `categories` so the client can
+		// filter per field. "gallery" here is deliberately in a non-default category,
+		// to exercise that filtering.
+		, tiptapWidgets           : [
+			  { id: "featurednews", title: "Featured news", description: "A list of recent news articles", categories: [] }
+			, { id: "calltoaction", title: "Call to action", description: "A prominent button with a heading", categories: [ "default" ] }
+			, { id: "gallery"     , title: "Image gallery" , description: "A grid of images from a folder" , categories: [ "richcontent" ] }
+		  ]
 	}, window.cfrequest || {} );
 
 	// URL builders (reimplemented to point at the mock server; the produced shape

@@ -125,6 +125,57 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-dropdown-item.active{background:var(--tt-active-bg);color:var(--tt-active-fg)}
 .tiptap-dropdown-empty{color:var(--tt-muted);font-style:italic;cursor:default}
 
+/* Block drag handle (src/dragHandle.js). The gutter it sits in is added by the
+   .tiptap-has-draghandle class rather than baked into .tiptap-editor-mount, so a
+   field opting out (defaultConfigs.dragHandle = false) keeps the original
+   padding and loses no editable width. */
+.tiptap-has-draghandle .tiptap-editor-mount{padding-left:28px}
+.tiptap-drag-handle{
+	position:absolute;left:4px;width:20px;height:20px;padding:0;
+	display:none;align-items:center;justify-content:center;
+	border:0;border-radius:3px;background:none;cursor:grab;
+	color:var(--tt-muted);opacity:.55;transition:opacity .1s ease,background .1s ease
+}
+.tiptap-drag-handle.is-visible{display:inline-flex}
+.tiptap-drag-handle:hover{opacity:1;background:var(--tt-btn-hover-bg)}
+.tiptap-drag-handle.is-dragging{cursor:grabbing;opacity:1}
+.tiptap-drag-handle svg{width:16px;height:16px;display:block;pointer-events:none}
+/* The drop indicator is prosemirror-dropcursor (via StarterKit) - colour it to
+   match the admin palette rather than its default black. */
+.tiptap-editor-mount .ProseMirror-dropcursor,.prosemirror-dropcursor-block{background-color:var(--tt-accent)!important;border-color:var(--tt-accent)!important}
+
+/* The "/" insert menu (src/slashMenu.js). Appended to <body>, NOT the container:
+   a capped-height or overflow-hidden field would otherwise clip it. That means
+   the --tt-* variables (declared on .tiptap-editor-container) are out of scope
+   here, so this block carries its own light/dark values via prefers-color-scheme
+   - the same reason the picker overlays are styled standalone. */
+.tiptap-slash-menu{
+	position:fixed;z-index:2100;display:none;
+	min-width:270px;max-width:340px;max-height:320px;overflow-y:auto;
+	background:#fff;color:#222;border:1px solid #ccc;border-radius:5px;
+	box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px;
+	font-size:13px;line-height:1.3
+}
+.tiptap-slash-menu.is-open{display:block}
+.tiptap-slash-group{padding:6px 8px 3px;font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:#777}
+.tiptap-slash-item{display:flex;align-items:flex-start;gap:8px;padding:5px 8px;border-radius:3px;cursor:pointer}
+.tiptap-slash-item.is-active{background:#f0f7fc}
+.tiptap-slash-icon{flex:0 0 16px;margin-top:1px;color:#555}
+.tiptap-slash-icon svg{width:16px;height:16px;display:block}
+.tiptap-slash-text{display:flex;flex-direction:column;min-width:0}
+.tiptap-slash-label{color:#222}
+.tiptap-slash-item.is-active .tiptap-slash-label{color:#1b6aaa}
+.tiptap-slash-hint{font-size:11px;color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tiptap-slash-empty{padding:8px;color:#777;font-style:italic}
+@media (prefers-color-scheme: dark){
+	.tiptap-slash-menu{background:#2b2d33;color:#e6e6e6;border-color:#4a4d55;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+	.tiptap-slash-item.is-active{background:#33414d}
+	.tiptap-slash-label{color:#e6e6e6}
+	.tiptap-slash-item.is-active .tiptap-slash-label{color:#9ccbe8}
+	.tiptap-slash-icon{color:#b0b0b0}
+	.tiptap-slash-group,.tiptap-slash-hint,.tiptap-slash-empty{color:#9a9a9a}
+}
+
 /* Alignment dropdown (src/toolbar.js renderAlign) — one trigger showing the
    current alignment, opening a compact single ROW of icons rather than the
    stacked list the format/styles menus use. */

@@ -83,8 +83,12 @@ function makeEmbedNode( opts, deps ) {
 			commands[ opts.insertCmd ] = ( raw ) => ( { chain } ) =>
 				chain().focus().insertContent( { type: name, attrs: { raw: raw } } ).run();
 
-			commands[ opts.openCmd ] = () => ( { editor } ) => {
-				openEmbedPicker( editor, opts, options, buildAdminLink ); // insert (no editRaw)
+			// `extra` lets a caller open the picker pre-pointed at something - the
+			// slash menu uses it for `{ widget: "<id>" }` so "/news" lands on that
+			// widget's own config form instead of the widget browser. Called with no
+			// argument (the toolbar buttons) the URL is byte-identical to before.
+			commands[ opts.openCmd ] = ( extra ) => ( { editor } ) => {
+				openEmbedPicker( editor, opts, options, buildAdminLink, null, extra ); // insert (no editRaw)
 				return true;
 			};
 
@@ -182,12 +186,12 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 	};
 }
 
-function openEmbedPicker( editor, opts, options, buildAdminLink, editRaw ) {
+function openEmbedPicker( editor, opts, options, buildAdminLink, editRaw, extra ) {
 	const editing = !!editRaw;
 	openPickerModal( {
 		  title       : t( opts.titleKey )
 		, editor      : editor
-		, url         : opts.pickerUrl( buildAdminLink, options )
+		, url         : opts.pickerUrl( buildAdminLink, options, extra )
 		, prefillData : ( editing && opts.prefill ) ? opts.prefill( editRaw ) : null
 		, storeUrl    : buildAdminLink( "ajaxhelper.temporarilyStoreData" )
 		, onCommit    : function( raw ) {
@@ -250,7 +254,18 @@ export function createPresideWidget( deps ) {
 			const m = raw && raw.match( WIDGET_RE );
 			return { url: buildAjaxLink( "widgets.renderWidgetPlaceholder" ), data: { widgetId: m ? m[ 1 ] : "", data: m ? m[ 2 ] : "" } };
 		  }
-		, pickerUrl   : ( buildAdminLink, options ) => buildAdminLink( "widgets", "dialog", { widgetCategories: options.widgetCategories || "", linkPickerCategory: options.linkPickerCategory || "" } )
+		// `extra.widget` (from the slash menu) makes core's Widgets.dialog() render
+		// that widget's configForm instead of the browser - its own documented
+		// behaviour for rc.widget. Omitted entirely when absent, so the toolbar
+		// button's URL is unchanged.
+		, pickerUrl   : function( buildAdminLink, options, extra ) {
+			const params = {
+				  widgetCategories  : options.widgetCategories   || ""
+				, linkPickerCategory: options.linkPickerCategory || ""
+			};
+			if ( extra && extra.widget ) { params.widget = extra.widget; }
+			return buildAdminLink( "widgets", "dialog", params );
+		  }
 		, prefill     : ( raw ) => { const m = String( raw || "" ).match( WIDGET_RE ); return { widget: m ? m[ 1 ] : "", configJson: m ? m[ 2 ] : "" }; }
 	}, deps || {} );
 }

@@ -10,8 +10,9 @@
  * phases.
  */
 import { Editor, Extension, Node, Mark, mergeAttributes } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Suggestion } from "@tiptap/suggestion";
 import StarterKit from "@tiptap/starter-kit";
 import { Subscript } from "@tiptap/extension-subscript";
 import { Superscript } from "@tiptap/extension-superscript";
@@ -108,6 +109,13 @@ window.PresideTiptap = {
 	, PluginKey
 	, Decoration
 	, DecorationSet
+	// Whole-block selection, for the drag handle (src/dragHandle.js): dragging a
+	// block means selecting the node, not a text range.
+	, NodeSelection
+	// The "/" menu's trigger detection (src/slashMenu.js). @tiptap/suggestion is
+	// framework-agnostic - only the popup renderer is ours - and pulls nothing but
+	// core/pm/floating-ui, unlike @tiptap/extension-drag-handle (see CLAUDE.md).
+	, Suggestion
 	, StarterKit
 	, extensions : {
 		  createPresideLink        // Phase 2

@@ -60,6 +60,16 @@
 		, "table.row.before", "table.row.after", "table.row.delete"
 		, "table.cells.merge", "table.cells.split"
 		, "table.headerrow", "table.headercolumn", "table.delete"
+		, "draghandle.tooltip"
+		, "slash.title", "slash.empty"
+		, "slash.group.format", "slash.group.block", "slash.group.preside", "slash.group.widget"
+		, "slash.h1", "slash.h1.hint", "slash.h2", "slash.h2.hint", "slash.h3", "slash.h3.hint"
+		, "slash.paragraph", "slash.paragraph.hint", "slash.bulletlist", "slash.bulletlist.hint"
+		, "slash.orderedlist", "slash.orderedlist.hint", "slash.blockquote", "slash.blockquote.hint"
+		, "slash.codeblock", "slash.codeblock.hint", "slash.hr", "slash.hr.hint"
+		, "slash.table", "slash.table.hint", "slash.image", "slash.image.hint"
+		, "slash.attachment", "slash.attachment.hint", "slash.widget", "slash.widget.hint"
+		, "slash.link", "slash.link.hint", "slash.anchor", "slash.anchor.hint"
 		, "outline.title", "outline.empty", "outline.untitled"
 		, "footer.words", "footer.chars", "footer.readingtime"
 	];
@@ -68,8 +78,61 @@
 		tiptapI18n[ tiptapI18nKey ] = translateResource( uri="tiptap:#tiptapI18nKey#", defaultValue="" );
 	}
 
+	// Widget list for the "/" insert menu (src/slashMenu.js), so "/news" can offer
+	// the news widget by name rather than only "Widget…". Emitted here rather than
+	// fetched over ajax because we already render server-side once per page and the
+	// data is small - no new endpoint, same pattern as tiptapI18n above.
+	//
+	// widgetCategories is a PER-FIELD setting while this view renders once per page,
+	// so we emit each widget WITH its categories and let the client filter per field
+	// (slashMenu.js widgetItems). The categories we can know about here are the
+	// "default" one - which is also what a field with no explicit categories
+	// resolves to (WidgetsService._isWidgetInCategories) - plus anything the site
+	// configures. A field naming some other category still gets the "Widget…" entry,
+	// so no widget is ever unreachable; it just loses the by-name shortcut.
+	tiptapWidgets = [];
+	try {
+		widgetsService  = getModel( "widgetsService" );
+		slashCategories = [ "default" ];
+		for ( slashCategory in listToArray( ckeditorSettings.defaults.defaultConfigs.widgetCategories ?: "" ) ) {
+			if ( !slashCategories.findNoCase( trim( slashCategory ) ) ) {
+				slashCategories.append( trim( slashCategory ) );
+			}
+		}
+
+		slashWidgets       = widgetsService.getWidgets( categories=slashCategories );
+		activeSiteTemplate = isFeatureEnabled( "sites" ) ? getModel( "siteService" ).getActiveSiteTemplate() : "";
+
+		for ( slashWidgetId in slashWidgets ) {
+			slashWidget = slashWidgets[ slashWidgetId ];
+
+			// Mirrors core's Widgets._getSortedAndTranslatedWidgets: skip widgets not
+			// available to the active site template, and translate for this admin user.
+			if ( isFeatureEnabled( "sites" ) && slashWidget.siteTemplates != "*" && !listFindNoCase( slashWidget.siteTemplates ?: "", activeSiteTemplate ) ) {
+				continue;
+			}
+
+			tiptapWidgets.append( {
+				  id          = slashWidgetId
+				, title       = translateResource( uri=slashWidget.title      , defaultValue=slashWidgetId )
+				, description = translateResource( uri=slashWidget.description, defaultValue="" )
+				, categories  = slashWidget.categories ?: []
+			} );
+		}
+
+		tiptapWidgets.sort( function( a, b ){
+			return a.title == b.title ? 0 : ( a.title > b.title ? 1 : -1 );
+		} );
+	} catch ( any e ) {
+		// The slash menu is a convenience; a site with an unusual widget setup must
+		// not take the whole editor down with it. Falling back to an empty list just
+		// means "/" offers the picker entry without the by-name shortcuts.
+		tiptapWidgets = [];
+	}
+
 	event.includeData( {
 		  tiptapI18n                    = tiptapI18n
+		, tiptapWidgets                 = tiptapWidgets
 		, ckeditorConfig                = configFile
 		, ckeditorDefaultToolbar        = ckeditorSettings.defaults.toolbar               ?: ""
 		, ckeditorDefaultWidth          = ckeditorSettings.defaults.width                 ?: "auto"
