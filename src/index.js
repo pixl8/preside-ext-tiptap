@@ -94,7 +94,19 @@ function buildRichText( cfg ) {
 		// grip's selection collapsed to a cell inside it, and ProseMirror's
 		// move-on-drop deleted that inner selection instead of the table, leaving
 		// the original behind: the table was DUPLICATED rather than moved.
-		, TableKit.configure( { table: { allowTableNodeSelection: true } } )
+		//
+		// resizable: drag a column border to set its width. The widths PERSIST -
+		// see the table section of normalize.js for exactly what is kept and why.
+		, TableKit.configure( { table: {
+			  allowTableNodeSelection: true
+			, resizable             : true
+			, lastColumnResizable   : true
+			// MUST match the `min-width` on td/th in src/tiptap.css. The plugin's
+			// own default (25) is smaller, which let a column be dragged narrower
+			// than the editor will render it - storing a width the editor showed as
+			// 44px but the SITE would render at 25px.
+			, cellMinWidth           : 44
+		  } } )
 		, PresideDiv
 	];
 	if ( cfg.placeholder ) {

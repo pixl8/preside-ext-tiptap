@@ -727,10 +727,78 @@
 							$c.find( ".tiptap-table-bubble" ).hasClass( "is-open" ) );
 						try { inst.destroy(); } catch ( e ) {}
 						$( ta ).remove();
-						resolve();
+						resolve( columnWidthChecks() );
 					} ); } );
 				}, 900 );
 			} );
+		}
+
+		// ---- T17: column widths persist ---------------------------------------
+		// Resizing writes Tiptap's `colwidth` onto the cells, which the EDITOR reads
+		// back - but no browser understands it, so normalize.js also keeps a
+		// <colgroup>, which is the only thing that makes the width render on the
+		// site. A table nobody resized must still serialise without one, so an
+		// existing CKEditor corpus does not churn just by being opened and saved.
+		//
+		// NOTE: the actual drag cannot be driven by synthetic mouse events (same
+		// limitation as HTML5 dnd in T15) - prosemirror-tables only arms its handle
+		// for real pointer input. These set colwidth the way a completed drag does
+		// and assert the SERIALISATION, which is the part with a contract.
+		function columnWidthChecks() {
+			var ta = document.createElement( "textarea" );
+			ta.className = "richeditor";
+			ta.name       = "colwidth";
+			ta.value      = "<p>x</p>";
+			document.querySelector( "main" ).appendChild( ta );
+			new PresideRichEditor( ta );
+
+			var inst = CKEDITOR.instances.colwidth;
+			var ed   = inst._t;
+			ed.chain().focus( "start" ).insertTable( { rows: 2, cols: 3, withHeaderRow: true } ).run();
+
+			var untouched = inst.getData();
+			check( "T17 an unresized table stores no <colgroup> (no churn for existing content)",
+				!/<colgroup/.test( untouched ) && !/<table[^>]*style=/.test( untouched ),
+				( untouched.match( /<table[\s\S]*?<\/table>/ ) || [ "" ] )[ 0 ] );
+
+			// Resize the first column, exactly as a finished drag leaves it.
+			var cells = [];
+			ed.state.doc.descendants( function( n, p ) {
+				if ( n.type.name === "tableHeader" || n.type.name === "tableCell" ) { cells.push( { p: p, n: n } ); }
+			} );
+			var tr = ed.state.tr;
+			tr.setNodeMarkup( cells[ 0 ].p, undefined, $.extend( {}, cells[ 0 ].n.attrs, { colwidth: [ 180 ] } ) );
+			ed.view.dispatch( tr );
+
+			var resized = inst.getData();
+			check( "T17 a resized column persists as <colgroup><col style=\"width:...\">",
+				/<colgroup><col style="width:180px">/.test( resized ),
+				( resized.match( /<colgroup>[\s\S]*?<\/colgroup>/ ) || [ "(none)" ] )[ 0 ] );
+			check( "T17 the resize-handle min-width noise is not persisted", !/min-width/.test( resized ) );
+			check( "T17 Tiptap's editing min-width on <table> is still stripped", !/<table[^>]*style=/.test( resized ) );
+
+			// Round-trip: the editor must recover the width, and re-saving must not drift.
+			inst.setData( resized );
+			var widths = [];
+			ed.state.doc.descendants( function( n ) {
+				if ( n.type.name === "tableHeader" || n.type.name === "tableCell" ) { widths.push( n.attrs.colwidth ); }
+			} );
+			check( "T17 reloading recovers the width in the editor",
+				widths.some( function( w ) { return w && w[ 0 ] === 180; } ), JSON.stringify( widths.slice( 0, 3 ) ) );
+			check( "T17 re-saving is idempotent (no drift on repeated saves)",
+				inst.getData() === resized, inst.getData().slice( 0, 90 ) );
+
+			// The plugin's floor must match the css floor, or a column could be
+			// dragged narrower than the editor will ever render it.
+			var tableExt = ed.extensionManager.extensions.filter( function( e ) { return e.name === "table"; } )[ 0 ];
+			var cellCss  = getComputedStyle( $( ta ).next( ".tiptap-editor-container" ).find( "td" )[ 0 ] );
+			check( "T17 cellMinWidth matches the css min-width (what you drag is what you store)",
+				tableExt.options.cellMinWidth + "px" === cellCss.minWidth && cellCss.boxSizing === "border-box",
+				tableExt.options.cellMinWidth + "px vs css " + cellCss.minWidth + " / " + cellCss.boxSizing );
+
+			try { inst.destroy(); } catch ( e ) {}
+			$( ta ).remove();
+			return Promise.resolve();
 		}
 
 		// Resolves once the deferred table-bubble assertions have run.

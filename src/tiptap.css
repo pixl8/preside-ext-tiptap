@@ -223,10 +223,21 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
 .tiptap-source{width:100%;min-height:220px;border:0;outline:none;font-family:monospace;font-size:12px;padding:8px;box-sizing:border-box;background:var(--tt-bg);color:var(--tt-fg)}
 .tiptap-editor-mount table{border-collapse:collapse;margin:8px 0}
-.tiptap-editor-mount td,.tiptap-editor-mount th{border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
+/* box-sizing:border-box so `min-width` means the WHOLE cell, matching what a
+   stored column width means. With the default content-box the 44px floor became
+   ~61px once padding and borders were added, so a dragged column stored a number
+   that did not match what the editor had just rendered. */
+.tiptap-editor-mount td,.tiptap-editor-mount th{box-sizing:border-box;border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
 .tiptap-editor-mount th{background:var(--tt-th-bg);font-weight:bold}
 .tiptap-editor-mount pre{background:#2b2b2b;color:#e6e6e6;padding:10px 12px;border-radius:4px;overflow:auto;font-family:monospace}
-.tiptap-editor-mount .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;background:var(--tt-selected)}
+/* Column resizing (prosemirror-tables). The handle is the blue bar on the cell
+   border; `resize-cursor` is the class the plugin puts on the EDITABLE while the
+   pointer is over a draggable border - without a cursor rule there is no hint
+   that columns can be dragged at all, which is the whole discoverability cue. */
+.tiptap-editor-mount .column-resize-handle{position:absolute;right:-2px;top:0;bottom:0;width:4px;background:var(--tt-selected);pointer-events:none;z-index:2}
+.tiptap-editor-mount .ProseMirror.resize-cursor{cursor:col-resize}
+/* While resizing, stop the drag turning into a text selection across cells. */
+.tiptap-editor-mount .ProseMirror.resize-cursor ::selection{background:transparent}
 .preside-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center}
 .preside-picker-dialog{background:#fff;border-radius:4px;width:96vw;max-width:96vw;height:88vh;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 6px 30px rgba(0,0,0,.3)}
 .preside-picker-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #e5e5e5;font-weight:bold}

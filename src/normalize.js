@@ -7,8 +7,9 @@
  * renders identically):
  *   - unwrap a single attribute-less <p> inside <li>/<td>/<th>/<blockquote>
  *     (StarterKit wraps block content in <p>; CKEditor stores it bare)
- *   - slim Tiptap table markup (drop <colgroup>, min-width style, default
- *     colspan/rowspan="1")
+ *   - slim Tiptap table markup (drop the table's min-width style and default
+ *     colspan/rowspan="1"; keep a <colgroup> ONLY when a column has an explicit
+ *     width, since that is what makes a resized column render on the site)
  *   - drop a trailing empty <p></p> that setContent can append
  *
  * Must stay idempotent: normalize(normalize(x)) === normalize(x). A <p> carrying a
@@ -31,10 +32,38 @@ export function normalizeOutput( html, opts ) {
 	} );
 
 	// Slim tables.
+	//
+	// The table's own `style` is always dropped: Tiptap sets a min-width sized for
+	// the resize handles, which is an editing concern and would fight the site's
+	// own table CSS.
+	//
+	// <colgroup> is the DOCUMENTED EXCEPTION to "slim it away". The cells carry
+	// Tiptap's `colwidth` attribute, which is what the EDITOR reads back - but no
+	// browser understands it, so the colgroup is the only thing that makes a
+	// resized column actually render at that width on the site. Dropping it (as
+	// this did before column resizing existed) would let an author drag a column,
+	// see it stick in the editor, and silently lose it everywhere else.
+	//
+	// A table nobody has resized still serialises WITHOUT a colgroup - byte
+	// identical to before - so an existing CKEditor-authored corpus does not churn
+	// just by being opened and saved.
 	root.querySelectorAll( "table" ).forEach( function( t ) {
 		t.removeAttribute( "style" );
+
 		const cg = t.querySelector( ":scope > colgroup" );
-		if ( cg ) { cg.remove(); }
+		if ( !cg ) { return; }
+
+		let sized = false;
+		cg.querySelectorAll( ":scope > col" ).forEach( function( col ) {
+			// Keep an explicit width; drop the min-width that only exists so the
+			// resize handles have something to grab. Rewriting the whole style
+			// attribute (rather than editing it) keeps this idempotent.
+			const w = col.style.width;
+			if ( w ) { col.setAttribute( "style", "width:" + w ); sized = true; }
+			else { col.removeAttribute( "style" ); }
+		} );
+
+		if ( !sized ) { cg.remove(); }
 	} );
 	root.querySelectorAll( "td, th" ).forEach( function( c ) {
 		if ( c.getAttribute( "colspan" ) === "1" ) { c.removeAttribute( "colspan" ); }

@@ -640,17 +640,46 @@ left the user with no controls at all. They now have two pieces, both modelled o
 Disable both per site/field with `defaultConfigs.tableTools = false`. Strings are
 the `table.*` i18n keys.
 
-**Two things NOT copied from the reference, both content-fidelity issues here:**
+**Not copied from the reference:** its `HTMLAttributes.style`
+(`border:1px solid #000; border-collapse:collapse; width:100%`) bakes
+presentation into every stored `<table>`. Ours stays CSS-only via
+`--tt-table-border`, so site content stylesheets keep control.
 
-- Its `HTMLAttributes.style` (`border:1px solid #000; border-collapse:collapse;
-  width:100%`) bakes presentation into every stored `<table>`. Ours stays CSS-only
-  via `--tt-table-border`, so site content stylesheets keep control.
-- Its `resizable: true`. **Column resizing is deliberately still off**:
-  `normalize.js` strips `<colgroup>` and the table `style` attribute from
-  `getData()` (CKEditor byte-fidelity), so dragging a column would appear to work
-  and then silently lose every width on save. Turning it on is a real decision,
-  not a flag flip — it needs a documented exception in the normaliser and changes
-  the stored table markup.
+### Column resizing (widths persist)
+
+`resizable: true` — drag a column border to set its width, and the width is
+**stored**. This is the one part of the table work that changes stored markup, so
+the rules are exact:
+
+- **Two different consumers need two different things.** Tiptap writes `colwidth`
+  onto the cells and that is what the EDITOR reads back — but no browser
+  understands it, so on its own a dragged width renders nowhere but the editor.
+  `<colgroup>` is what a browser reads, so `normalize.js` keeps one. Both are
+  persisted, for the editor and the site respectively.
+- **`<colgroup>` is kept ONLY when a column has an explicit width.** A table
+  nobody resized still serialises without one, **byte-identically to before**, so
+  opening and saving an existing CKEditor-authored corpus produces no churn. This
+  is asserted (T17) and visible in the fidelity suite's table fixture.
+- The `<col>` elements are rewritten to carry `width` alone; the `min-width` that
+  only exists so the resize handles have something to grab is dropped, as is
+  Tiptap's editing `min-width` on the `<table>` itself (it would fight the site's
+  own table CSS). Rewriting the whole style attribute rather than editing it is
+  what keeps the normaliser idempotent.
+- **`cellMinWidth` (in `src/index.js`) MUST match the `min-width` on `td`/`th` in
+  `src/tiptap.css`**, and those cells are `box-sizing:border-box`. The plugin's
+  own default (25) is below the CSS floor, so a column could be dragged narrower
+  than the editor would ever render it — storing a number the editor showed as
+  something else. With content-box the 44px floor also became ~61px once padding
+  and borders were added. Both are fixed so *what you drag is what you store*.
+- `.column-resize-handle` and the `resize-cursor` class both need styling in
+  `src/tiptap.css`; the cursor is the only hint that columns can be dragged at
+  all, so without it the feature is effectively undiscoverable.
+- **Testing note:** the drag itself cannot be driven by synthetic mouse events —
+  prosemirror-tables only arms its handle for real pointer input, so a
+  `dispatchEvent` drag silently does nothing (same class of trap as HTML5 dnd in
+  T15). T17 sets `colwidth` the way a finished drag leaves it and asserts the
+  serialisation contract; the drag itself was verified with a real Playwright
+  mouse.
 
 ## Light / dark mode
 
