@@ -129,6 +129,29 @@ export function enter( opts ) {
 		}
 		return false;
 	}
+
+	// Core's instanceReady handler scrolls the region to ~20px from the viewport
+	// top ($editor.offset().top - 20) - fine for the Classic modal (fixed at
+	// top:100px), but inline that parks the first lines UNDER the fixed admin
+	// toolbar. Our handler registers after core's, so it runs after the scroll
+	// and gives the toolbar's height back. Registered on the facade instance
+	// (set synchronously) and rAF-deferred so the browser has applied core's
+	// scrollTop before we measure.
+	var container = state.container;
+	var inst      = jq()( ta ).data( "ckeditorinstance" );
+	if ( inst && inst.on ) {
+		inst.on( "instanceReady", function() {
+			window.requestAnimationFrame( function() {
+				if ( !container.isConnected ) { return; }
+				var bar = document.querySelector( ".preside-admin-toolbar" );
+				var barBottom = 0;
+				try { barBottom = bar ? Math.max( 0, bar.getBoundingClientRect().bottom ) : 0; } catch ( e ) {}
+				var top  = container.getBoundingClientRect().top;
+				var want = barBottom + 16;
+				if ( top < want ) { window.scrollBy( 0, top - want ); }
+			} );
+		} );
+	}
 	return true;
 }
 

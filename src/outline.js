@@ -188,10 +188,21 @@ function createFlash( tiptap ) {
 /**
  * Build the outline for an editor. Returns the element to append to the
  * container (already wired to the editor).
+ *
+ * `opts.fixed` - Modern inline mode: the editable is the site page and the PAGE
+ * is the scroller, so a rail centred on (and sized to) the editable would sit
+ * mid-document, mostly off-screen. Fixed mode pins the rail to the right edge
+ * of the VIEWPORT instead, with capacity measured from the viewport height -
+ * the click-to-scroll and active-heading tracking already handle the
+ * window-as-scroller case (tall uncapped admin fields exercise it too). Still
+ * a container child (the --tt-* variables keep cascading to it), just
+ * position:fixed.
  */
-export function createOutline( tiptap, mount ) {
+export function createOutline( tiptap, mount, opts ) {
+	const fixed = !!( opts && opts.fixed );
+
 	const wrap = document.createElement( "div" );
-	wrap.className = "tiptap-outline";
+	wrap.className = "tiptap-outline" + ( fixed ? " is-fixed" : "" );
 
 	const rail = document.createElement( "div" );
 	rail.className = "tiptap-outline-rail";
@@ -276,7 +287,9 @@ export function createOutline( tiptap, mount ) {
 	// row), and it has to hold the same set as the rail - so it is what caps the
 	// plan. Both then fit the editor with nothing scrolling or clipped.
 	function capacity() {
-		const box = ( mount && mount.clientHeight ) || ( wrap.parentNode && wrap.parentNode.clientHeight ) || 0;
+		const box = fixed
+			? Math.max( 0, ( window.innerHeight || 0 ) - 140 ) // clear of the admin toolbar + margins
+			: ( ( mount && mount.clientHeight ) || ( wrap.parentNode && wrap.parentNode.clientHeight ) || 0 );
 		if ( !box ) { return items.length || 1; }
 		return Math.max( 1, Math.min(
 			  Math.floor( ( box - RAIL_MARGIN ) / ROW_HEIGHT )
@@ -290,6 +303,13 @@ export function createOutline( tiptap, mount ) {
 	// panel's px cap is a belt: the plan already fits it, but a long single entry
 	// or a different font metric should scroll inside the editor, never past it.
 	function place() {
+		if ( fixed ) {
+			// The stylesheet's top:50% + translateY(-50%) centres it in the
+			// viewport; only the panel's cap needs a measured value.
+			wrap.style.top = "";
+			panel.style.maxHeight = Math.max( 120, ( window.innerHeight || 600 ) - 160 ) + "px";
+			return;
+		}
 		if ( !mount || !mount.clientHeight ) { return; }
 		wrap.style.top = ( mount.offsetTop + ( mount.clientHeight / 2 ) ) + "px";
 		panel.style.maxHeight = Math.max( 120, mount.clientHeight - 8 ) + "px";
@@ -474,6 +494,13 @@ export function createOutline( tiptap, mount ) {
 		const ro = new window.ResizeObserver( function() { layout(); } );
 		ro.observe( mount );
 		tiptap.on( "destroy", function() { ro.disconnect(); } );
+	}
+	// Fixed mode's capacity comes from the viewport, which the mount observer
+	// cannot see change.
+	if ( fixed ) {
+		const onResize = function() { layout(); };
+		window.addEventListener( "resize", onResize );
+		tiptap.on( "destroy", function() { window.removeEventListener( "resize", onResize ); } );
 	}
 
 	return wrap;

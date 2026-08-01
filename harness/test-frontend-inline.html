@@ -226,8 +226,11 @@
 			check( "T4 ...directly after the region's start comment",
 				inlineC && inlineC.previousSibling === startComment() );
 			check( "T4 original rendered nodes detached", !document.querySelector( "#pageContent .rendered-content" ) );
-			check( "T4 chrome-less: no toolbar/footer/outline",
-				inlineC && !inlineC.querySelector( ".tiptap-toolbar" ) && !inlineC.querySelector( ".tiptap-footer" ) && !inlineC.querySelector( ".tiptap-outline" ) );
+			check( "T4 chrome-less: no toolbar/footer",
+				inlineC && !inlineC.querySelector( ".tiptap-toolbar" ) && !inlineC.querySelector( ".tiptap-footer" ) );
+			check( "T4 outline present, pinned to the viewport (is-fixed)",
+				!!inlineC.querySelector( ".tiptap-outline.is-fixed" )
+				&& getComputedStyle( inlineC.querySelector( ".tiptap-outline" ) ).position === "fixed" );
 			// position:fixed elements have offsetParent === null - test client rects.
 			var buttons = document.querySelector( ".content-editor-editor-container.edit-active .content-editor-editor-buttons" );
 			check( "T4 core's save/publish/cancel bar is visible", !!buttons && buttons.getClientRects().length > 0
@@ -239,6 +242,16 @@
 			check( "T4 editor registered under core's expected name", !!CKEDITOR.instances.content );
 			check( "T4 no height cap on the inline mount",
 				inlineC && !inlineC.querySelector( ".tiptap-editor-mount" ).style.maxHeight );
+
+			// core's instanceReady scroll parks the region ~20px from the viewport
+			// top - UNDER the fixed admin toolbar; our post-scroll fixup must give
+			// the toolbar's height back
+			var barBottom4 = document.querySelector( ".preside-admin-toolbar" ).getBoundingClientRect().bottom;
+			var clearOfBar = await until( function() {
+				return document.querySelector( ".tiptap-inline" ).getBoundingClientRect().top >= barBottom4;
+			} );
+			check( "T4 content scrolled clear of the fixed admin toolbar", clearOfBar,
+				document.querySelector( ".tiptap-inline" ).getBoundingClientRect().top + " vs bar bottom " + barBottom4 );
 
 			// ---- T5: save round-trip + Modern re-enters ---------------------------
 			CKEDITOR.instances.content._t.commands.insertContentAt( 0, "<p>ADDED BY TEST</p>" );
@@ -381,6 +394,22 @@
 			var woke = await until( function() { return !bubbleEl().classList.contains( "is-idle" ); } );
 			check( "T7 typing wakes it again", woke );
 			ed.chain().focus().undo().run();
+
+			// ---- T7d: the fixed outline navigator -------------------------------------
+			var outline7 = document.querySelector( ".tiptap-inline .tiptap-outline.is-fixed" );
+			check( "T7d outline hidden while the doc has no headings", outline7.classList.contains( "is-empty" ) );
+			ed.chain().focus( "end" ).insertContent( "<h2>Alpha</h2><p>a</p><h2>Beta</h2><p>b</p>" ).run();
+			var outlineUp = await until( function() {
+				return !outline7.classList.contains( "is-empty" )
+					&& outline7.querySelectorAll( ".tiptap-outline-row" ).length === 2;
+			} );
+			check( "T7d headings populate the fixed rail", outlineUp,
+				outline7.querySelectorAll( ".tiptap-outline-row" ).length + " rows" );
+			check( "T7d rail sits at the viewport's right edge",
+				Math.abs( outline7.getBoundingClientRect().right - ( window.innerWidth - 12 ) ) <= 2,
+				outline7.getBoundingClientRect().right + " vs " + window.innerWidth );
+			ed.chain().focus().undo().run();
+			await until( function() { return outline7.classList.contains( "is-empty" ); } );
 
 			// ---- T7b: the fixed drag rail (body-portalled, clip-proof) ---------------
 			var rail = document.querySelector( ".tiptap-block-gutter.is-fixed" );

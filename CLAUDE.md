@@ -802,9 +802,15 @@ refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
   save/publish re-enters Modern** on the new content.
 - **The container is kept, chrome-less** (`.tiptap-inline`): it still carries the
   `--tt-*` variables, `position:relative`, and the key-isolation boundary that
-  the table bubble / drag handle / maximize all need. No toolbar/footer/outline,
-  no height caps, no `applyContentStyles()` (the editable IS the site page and
-  inherits its CSS). The drag-handle gutter is given back as negative
+  the table bubble / drag handle / maximize all need. No toolbar/footer, no
+  height caps, no `applyContentStyles()` (the editable IS the site page and
+  inherits its CSS). The **outline navigator stays**, in its `fixed` variant
+  (`outline.js` `opts.fixed`): pinned to the viewport's right edge (`.is-fixed`,
+  `--tt-z-base + 40` rung) with capacity measured from the viewport instead of
+  the editable — the page is the scroller inline, so an editable-centred rail
+  would sit mid-document mostly off-screen. Still a container CHILD (the
+  `--tt-*` vars keep cascading); the click-scroll / active-tracking paths
+  already handled the window-as-scroller case. The drag-handle gutter is given back as negative
   `margin-left` so the content column stays exactly where the rendered page had
   it.
 - **Modern availability = exactly one `.content-editor.richeditor`** on the

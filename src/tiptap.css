@@ -285,6 +285,10 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    in px by src/outline.js to centre on the EDITABLE rather than the container -
    they differ whenever the toolbar wraps to two rows. */
 .tiptap-outline{position:absolute;right:8px;top:50%;transform:translateY(-50%);z-index:6;pointer-events:none;width:26px}
+/* Modern inline mode: the page is the scroller, so the rail pins to the
+   viewport's right edge (outline.js `fixed`). Still a container child - the
+   --tt-* variables keep cascading - just fixed, on the z ladder. */
+.tiptap-outline.is-fixed{position:fixed;right:12px;z-index:calc(var(--tt-z-base,1040) + 40)}
 .tiptap-outline.is-empty{display:none}
 /* Row COUNT is what src/outline.js caps to the editable's height (railPlan:
    fewer heading levels, then every Nth). */

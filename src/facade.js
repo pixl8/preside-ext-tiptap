@@ -356,11 +356,11 @@ import { t } from "./i18n.js";
 
 		// Document outline navigator: a hover-expanding rail of heading markers on
 		// the right edge of the container (chrome only - see src/outline.js).
+		// Inline (Modern) it pins to the right edge of the VIEWPORT instead - the
+		// page is the scroller there, so the rail must not scroll away with it.
 		// Opt out per-site/per-field with defaultConfigs.outline = false.
-		// Not inline: its geometry assumes the mount is the scroller, and the page
-		// already has the site's own navigation.
-		if ( !isInline && outlineEnabled( cfg ) ) {
-			container.appendChild( createOutline( tiptap, mount ) );
+		if ( outlineEnabled( cfg ) ) {
+			container.appendChild( createOutline( tiptap, mount, { fixed: isInline } ) );
 		}
 
 		// Table bubble toolbar: row/column/cell controls over the table the caret
