@@ -70,6 +70,70 @@ function formatOpts( cfg ) {
 	return opts.length ? opts : formatOpts( { defaultConfigs: { format_tags: DEFAULT_FORMAT_TAGS } } );
 }
 
+// Render a list of CKEditor button names into `groupEl`, sharing the exact
+// per-name behaviour of the main toolbar (Justify* collapse into one dropdown,
+// Format/Styles/Table/Source/Theme special cases, plain buttons with is-active
+// updaters). Extracted so the selection bubble (Modern inline mode) builds its
+// filtered button set from the SAME renderers — one implementation, two hosts.
+// `opts.skip` drops names entirely (the bubble excludes insert/global commands).
+// Returns { themeRendered } (whether a Theme/DarkMode toggle was rendered).
+export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
+	opts = opts || {};
+	const skip = opts.skip || [];
+	let themeRendered = false;
+
+	// The four Justify* buttons collapse into ONE dropdown (renderAlign) to save
+	// a lot of toolbar width. Scoped to the group, and only when the group names
+	// more than one of them: a toolbar naming a single alignment gets a plain
+	// button, because a one-item menu is worse than the button it replaced.
+	const alignNames    = names.filter ? names.filter( function( n ) { return ALIGN_NAMES.indexOf( n ) !== -1 && skip.indexOf( n ) === -1; } ) : [];
+	const collapseAlign = alignNames.length > 1;
+
+	names.forEach( function( name ) {
+		if ( skip.indexOf( name ) !== -1 ) { return; }
+		// Render the dropdown where the first alignment button sat and drop the
+		// rest. The menu offers EXACTLY the ones this toolbar named - never all
+		// four - so a site that deliberately withheld e.g. Justify keeps it out.
+		if ( collapseAlign && ALIGN_NAMES.indexOf( name ) !== -1 ) {
+			if ( name === alignNames[ 0 ] ) { groupEl.appendChild( renderAlign( editor, updaters, alignNames ) ); }
+			return;
+		}
+		if ( name === "-" ) {
+			const sep = document.createElement( "span" );
+			sep.className = "tiptap-toolbar-sep";
+			groupEl.appendChild( sep );
+			return;
+		}
+		if ( name === "Format" ) { groupEl.appendChild( renderFormat( editor, updaters, cfg ) ); return; }
+		if ( name === "Styles" ) { groupEl.appendChild( renderStyles( editor, updaters, cfg ) ); return; }
+		if ( name === "Table"  ) { groupEl.appendChild( renderTable( editor, updaters ) ); return; }
+		if ( name === "Source" ) { groupEl.appendChild( renderSource( editor ) ); return; }
+		if ( name === "Theme" || name === "DarkMode" ) {
+			if ( themeEnabled( cfg ) ) { groupEl.appendChild( renderThemeToggle() ); themeRendered = true; }
+			return;
+		}
+
+		const cmd = COMMANDS[ name ];
+		if ( !cmd ) { return; } // unknown / not-implemented button — skip
+
+		const btn   = document.createElement( "button" );
+		const title = t( "toolbar." + name.toLowerCase() );
+		btn.type = "button";
+		btn.className = "tiptap-btn";
+		btn.title = title;
+		btn.setAttribute( "aria-label", title );
+		if ( ICONS[ name ] ) { btn.innerHTML = ICONS[ name ]; }
+		else { btn.textContent = cmd.label || name; }
+		btn.setAttribute( "data-cmd", name );
+		btn.addEventListener( "click", function( ev ) { ev.preventDefault(); cmd.run( editor ); } );
+		groupEl.appendChild( btn );
+
+		if ( cmd.active ) { updaters.push( function() { btn.classList.toggle( "is-active", !!cmd.active( editor ) ); } ); }
+	} );
+
+	return { themeRendered: themeRendered };
+}
+
 export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 	el.innerHTML = "";
 
@@ -87,53 +151,8 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 		const groupEl = document.createElement( "span" );
 		groupEl.className = "tiptap-toolbar-group";
 
-		// The four Justify* buttons collapse into ONE dropdown (renderAlign) to save
-		// a lot of toolbar width. Scoped to the group, and only when the group names
-		// more than one of them: a toolbar naming a single alignment gets a plain
-		// button, because a one-item menu is worse than the button it replaced.
-		const alignNames    = group.filter ? group.filter( function( n ) { return ALIGN_NAMES.indexOf( n ) !== -1; } ) : [];
-		const collapseAlign = alignNames.length > 1;
-
-		group.forEach( function( name ) {
-			// Render the dropdown where the first alignment button sat and drop the
-			// rest. The menu offers EXACTLY the ones this toolbar named - never all
-			// four - so a site that deliberately withheld e.g. Justify keeps it out.
-			if ( collapseAlign && ALIGN_NAMES.indexOf( name ) !== -1 ) {
-				if ( name === alignNames[ 0 ] ) { groupEl.appendChild( renderAlign( editor, updaters, alignNames ) ); }
-				return;
-			}
-			if ( name === "-" ) {
-				const sep = document.createElement( "span" );
-				sep.className = "tiptap-toolbar-sep";
-				groupEl.appendChild( sep );
-				return;
-			}
-			if ( name === "Format" ) { groupEl.appendChild( renderFormat( editor, updaters, cfg ) ); return; }
-			if ( name === "Styles" ) { groupEl.appendChild( renderStyles( editor, updaters, cfg ) ); return; }
-			if ( name === "Table"  ) { groupEl.appendChild( renderTable( editor, updaters ) ); return; }
-			if ( name === "Source" ) { groupEl.appendChild( renderSource( editor ) ); return; }
-			if ( name === "Theme" || name === "DarkMode" ) {
-				if ( themeEnabled( cfg ) ) { groupEl.appendChild( renderThemeToggle() ); themeRendered = true; }
-				return;
-			}
-
-			const cmd = COMMANDS[ name ];
-			if ( !cmd ) { return; } // unknown / not-implemented button — skip
-
-			const btn   = document.createElement( "button" );
-			const title = t( "toolbar." + name.toLowerCase() );
-			btn.type = "button";
-			btn.className = "tiptap-btn";
-			btn.title = title;
-			btn.setAttribute( "aria-label", title );
-			if ( ICONS[ name ] ) { btn.innerHTML = ICONS[ name ]; }
-			else { btn.textContent = cmd.label || name; }
-			btn.setAttribute( "data-cmd", name );
-			btn.addEventListener( "click", function( ev ) { ev.preventDefault(); cmd.run( editor ); } );
-			groupEl.appendChild( btn );
-
-			if ( cmd.active ) { updaters.push( function() { btn.classList.toggle( "is-active", !!cmd.active( editor ) ); } ); }
-		} );
+		const res = renderNames( groupEl, group, editor, cfg, updaters );
+		if ( res.themeRendered ) { themeRendered = true; }
 
 		if ( groupEl.childNodes.length ) { el.appendChild( groupEl ); }
 	} );
@@ -522,7 +541,7 @@ const STYLE_BLOCK_TYPES = {
 };
 const DEFAULT_VALID_SELECTORS = "^(h[1-6]|p|span|pre|li|ul|ol|dl|dt|dd|small|i|b|em|strong|table)\\.\\w+";
 
-function styleItems( cfg ) {
+export function styleItems( cfg ) {
 	const dc    = ( cfg && cfg.defaultConfigs ) || {};
 	const items = [];
 	const seen  = {};
@@ -670,7 +689,7 @@ function renderSource( editor ) {
 	return btn;
 }
 
-function normaliseToolbar( parsed ) {
+export function normaliseToolbar( parsed ) {
 	if ( Array.isArray( parsed ) ) {
 		return parsed.map( function( g ) {
 			if ( g === "/" ) { return "/"; }

@@ -147,6 +147,12 @@ export const DEFAULTS = {
 	, "footer.words"             : "{count} words"
 	, "footer.chars"             : "{count} chars"
 	, "footer.readingtime"       : "~{count} min read"
+	, "editmode.trigger"         : "Quick edit"
+	, "editmode.off"             : "Off"
+	, "editmode.classic"         : "Classic"
+	, "editmode.modern"          : "Modern"
+	, "editmode.modern.unavailable": "Available when the page has exactly one rich content area"
+	, "bubble.title"             : "Text formatting"
 };
 
 function overrides() {

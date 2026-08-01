@@ -72,6 +72,9 @@
 		, "slash.link", "slash.link.hint", "slash.anchor", "slash.anchor.hint"
 		, "outline.title", "outline.empty", "outline.untitled"
 		, "footer.words", "footer.chars", "footer.readingtime"
+		, "editmode.trigger", "editmode.off", "editmode.classic", "editmode.modern"
+		, "editmode.modern.unavailable"
+		, "bubble.title"
 	];
 	tiptapI18n = {};
 	for ( tiptapI18nKey in tiptapI18nKeys ) {

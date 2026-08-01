@@ -572,14 +572,37 @@
 			ed.commands.undo();
 			check( "T15 undo restores the original order byte-identically", inst.getData() === before, inst.getData() );
 
-			// The "+" types a "/" for the author rather than duplicating the menu, so
-			// it must both add the block and leave the caret where the menu can open.
+			// The "+" opens the slash menu DIRECTLY at a fresh empty block - same
+			// popup/items as typing "/", but no "/" character in the document.
+			function slashMenuOpen() {
+				var m = document.querySelector( ".tiptap-slash-menu" );
+				return !!m && m.classList.contains( "is-open" );
+			}
+			function closeManualMenu() {
+				document.dispatchEvent( new KeyboardEvent( "keydown", { key: "Escape", bubbles: true } ) );
+			}
 			var blocksBefore = ed.state.doc.childCount;
 			hoverBlock( $c.find( ".tiptap-editor-mount h2" )[ 0 ] );
 			$c.find( ".tiptap-block-insert" )[ 0 ].click();
-			check( "T15 '+' inserts a block below and primes it with /",
-				ed.state.doc.childCount === blocksBefore + 1 && ed.state.selection.$from.parent.textContent === "/",
-				ed.state.doc.childCount + " blocks, caret block = '" + ed.state.selection.$from.parent.textContent + "'" );
+			check( "T15 '+' inserts an EMPTY block below and opens the menu (no '/' typed)",
+				ed.state.doc.childCount === blocksBefore + 1
+				&& ed.state.selection.$from.parent.textContent === ""
+				&& slashMenuOpen(),
+				ed.state.doc.childCount + " blocks, caret block = '" + ed.state.selection.$from.parent.textContent + "', menu " + slashMenuOpen() );
+
+			// typed characters filter the manual menu without landing in the doc
+			document.dispatchEvent( new KeyboardEvent( "keydown", { key: "q", bubbles: true } ) );
+			document.dispatchEvent( new KeyboardEvent( "keydown", { key: "u", bubbles: true } ) );
+			document.dispatchEvent( new KeyboardEvent( "keydown", { key: "o", bubbles: true } ) );
+			var manualLabels = Array.prototype.map.call(
+				document.querySelectorAll( ".tiptap-slash-menu .tiptap-slash-label" ),
+				function( e ) { return e.textContent; } );
+			check( "T15 typing filters the '+' menu, nothing lands in the doc",
+				JSON.stringify( manualLabels ) === JSON.stringify( [ "Quote" ] )
+				&& ed.state.selection.$from.parent.textContent === "",
+				JSON.stringify( manualLabels ) + " / block='" + ed.state.selection.$from.parent.textContent + "'" );
+			closeManualMenu();
+			check( "T15 Escape closes the '+' menu", !slashMenuOpen() );
 
 			// On an already-empty paragraph it must REUSE the block, not stack blanks.
 			ed.chain().focus( "end" ).insertContent( "<p></p>" ).run();
@@ -588,7 +611,9 @@
 			hoverBlock( $blanks[ $blanks.length - 1 ] );
 			$c.find( ".tiptap-block-insert" )[ 0 ].click();
 			check( "T15 '+' on an empty paragraph reuses it rather than stacking blanks",
-				ed.state.doc.childCount === blocksWithBlank, ed.state.doc.childCount + " vs " + blocksWithBlank );
+				ed.state.doc.childCount === blocksWithBlank && slashMenuOpen(),
+				ed.state.doc.childCount + " vs " + blocksWithBlank );
+			closeManualMenu();
 
 			// ---- T14: the "/" menu (async - opens a frame after the char lands) --
 			// A real slash goes through the input handler; inserting the character via
@@ -798,6 +823,38 @@
 
 			try { inst.destroy(); } catch ( e ) {}
 			$( ta ).remove();
+			return leakChecks();
+		}
+
+		// ---- T18: create/destroy leak audit ------------------------------------
+		// The slash menu's popup lives on <body> (so a capped field cannot clip
+		// it), which puts it outside the container the facade removes on destroy -
+		// it must be cleaned up by the extension's own onDestroy. This bit hard
+		// once Modern inline mode started destroying and recreating the editor on
+		// every save: each cycle leaked one popup div.
+		function leakChecks() {
+			var before = document.querySelectorAll( ".tiptap-slash-menu" ).length;
+			for ( var i = 0; i < 6; i++ ) {
+				var ta = document.createElement( "textarea" );
+				ta.className = "richeditor";
+				ta.name      = "leak";
+				ta.value     = "<p>leak probe</p>";
+				document.querySelector( "main" ).appendChild( ta );
+				new PresideRichEditor( ta );
+
+				var inst = CKEDITOR.instances.leak;
+				// Force the body-portalled popup into existence (it is created
+				// lazily on first open) so the audit exercises the real leak path.
+				inst._t.storage.presideSlashMenu.popup.open();
+				try { inst.destroy(); } catch ( e ) {}
+				$( ta ).remove();
+			}
+			// Compared against `before`, not zero: editors from earlier cases are
+			// still alive on this page and own popups legitimately. Growth across
+			// full create/destroy cycles is what a leak looks like.
+			var after = document.querySelectorAll( ".tiptap-slash-menu" ).length;
+			check( "T18 no orphaned slash-menu popups after 6 create/destroy cycles",
+				after === before, after + " popups (started with " + before + ")" );
 			return Promise.resolve();
 		}
 

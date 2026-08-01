@@ -281,6 +281,27 @@ const server = http.createServer( async ( req, res ) => {
 		const body = await readBody( req );
 		return send( res, 200, "text/html; charset=utf-8", mockAjax( params.get( "action" ) || "", body ) );
 	}
+	// Mock: frontend-editing save/publish flow (test-frontend-inline.html).
+	// Mirrors admin.FrontendEditing.saveAction / getPublishPrompt / publishAction
+	// closely enough to exercise core's saveContent()/publishChanges() contract:
+	// save echoes the posted content back as the freshly-rendered region.
+	if ( p === "/mock/frontend/save" ) {
+		const body = await readBody( req );
+		return send( res, 200, "application/json", JSON.stringify( {
+			  success : true
+			, message : "Content saved (mock)"
+			, rendered: body.get( "content" ) || ""
+		} ) );
+	}
+	if ( p === "/mock/frontend/publishPrompt" ) {
+		await readBody( req );
+		return send( res, 200, "application/json", JSON.stringify( { publishable: true, nondraft: false, prompt: "Publish these changes? (mock)" } ) );
+	}
+	if ( p === "/mock/frontend/publish" ) {
+		await readBody( req );
+		return send( res, 200, "application/json", JSON.stringify( { success: true, message: "Published (mock)" } ) );
+	}
+
 	// Mock: admin endpoints (picker iframes + flashram store)
 	if ( p.startsWith( "/mock/admin/" ) ) {
 		if ( p.includes( "temporarilyStoreData" ) ) { return send( res, 200, "application/json", "{}" ); }

@@ -140,9 +140,78 @@ export function createSlashMenu( T, cfg ) {
 	return T.Extension.create( {
 		  name: "presideSlashMenu"
 
+		// The popup element lives on <body>, outside the editor container, so the
+		// facade's container removal cannot collect it - it must be destroyed here
+		// or every create/destroy cycle leaks one (Modern inline mode destroys and
+		// recreates the editor on every save).
+		, onDestroy() {
+			if ( this.storage.popup ) { this.storage.popup.destroy(); }
+		}
+
+		, addStorage() { return { popup: null, openManual: null }; }
+
 		, addProseMirrorPlugins() {
 			const editor = this.editor;
-			const popup  = createPopup();
+			const popup  = createPopup( editor );
+			this.storage.popup = popup;
+
+			// Programmatic open - the "+" gutter button's path (dragHandle.js). The
+			// SAME popup and item list as the typed "/", but with no "/" written
+			// into the document: the query lives here, typed characters are
+			// swallowed by a capture-phase key handler and filter the list exactly
+			// as they would after a real "/". Items run at the current caret.
+			this.storage.openManual = function() {
+				let query = "", active = 0, list = [];
+
+				function currentRect() {
+					try { return editor.view.coordsAtPos( editor.state.selection.from ); } catch ( e ) { return null; }
+				}
+				function paint() {
+					popup.render( list, active, pick );
+					popup.move( currentRect );
+				}
+				function refilter() {
+					list = filterItems( itemsFor( cfg ), query );
+					if ( active >= list.length ) { active = 0; }
+					paint();
+				}
+				function pick( i ) {
+					const it = list[ i ];
+					close();
+					if ( it ) { it.run( editor ); }
+				}
+				function close() {
+					document.removeEventListener( "keydown", onKey, true );
+					document.removeEventListener( "mousedown", onDown, true );
+					popup.close();
+				}
+				function onDown( e ) { if ( !popup.contains( e.target ) ) { close(); } }
+				function onKey( e ) {
+					if ( e.key === "Escape" )    { e.preventDefault(); e.stopPropagation(); close(); return; }
+					if ( e.key === "ArrowDown" || e.key === "ArrowUp" ) {
+						e.preventDefault(); e.stopPropagation();
+						if ( list.length ) { active = ( active + ( e.key === "ArrowDown" ? 1 : list.length - 1 ) ) % list.length; paint(); }
+						return;
+					}
+					if ( e.key === "Enter" || e.key === "Tab" ) { e.preventDefault(); e.stopPropagation(); pick( active ); return; }
+					if ( e.key === "Backspace" ) {
+						if ( !query.length ) { close(); return; } // nothing to unfilter - let the key act on the doc
+						e.preventDefault(); e.stopPropagation();
+						query = query.slice( 0, -1 ); refilter(); return;
+					}
+					if ( e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey ) {
+						e.preventDefault(); e.stopPropagation();
+						query += e.key; refilter(); return;
+					}
+					// Any other key (arrows left/right, Home...) - hand the editor back.
+					close();
+				}
+
+				document.addEventListener( "keydown", onKey, true );
+				document.addEventListener( "mousedown", onDown, true );
+				popup.open();
+				refilter();
+			};
 
 			return [ T.Suggestion( {
 				  editor
@@ -217,7 +286,7 @@ export function createSlashMenu( T, cfg ) {
 // Appended to <body>, positioned from the caret rect suggestion hands us. On
 // <body> rather than inside the container so a capped-height or overflow-hidden
 // field cannot clip it - the same reason the picker overlays live there.
-function createPopup() {
+function createPopup( editor ) {
 	let el = null;
 
 	function ensure() {
@@ -230,10 +299,20 @@ function createPopup() {
 		return el;
 	}
 
+	// The menu follows the EDITOR's theme, not the OS: a dark-OS user with the
+	// default (light) editor was getting a dark menu over light chrome — and
+	// inline (Modern) the editable is the site page itself, which is light. The
+	// container's tiptap-dark class is the single source of truth, checked at
+	// open so a theme toggle mid-session is picked up.
+	function syncTheme() {
+		const container = editor && editor.view && editor.view.dom.closest( ".tiptap-editor-container" );
+		ensure().classList.toggle( "tiptap-dark", !!( container && container.classList.contains( "tiptap-dark" ) ) );
+	}
+
 	return {
 		  // Only makes it visible - positioning happens in move(), after render(),
 		  // because it needs the rendered height.
-		  open: function() { ensure().classList.add( "is-open" ); }
+		  open: function() { syncTheme(); ensure().classList.add( "is-open" ); }
 
 		, move: function( getRect ) {
 			if ( !el ) { return; }
@@ -314,5 +393,9 @@ function createPopup() {
 		}
 
 		, close: function() { if ( el ) { el.classList.remove( "is-open" ); el.innerHTML = ""; } }
+
+		, contains: function( target ) { return !!( el && el.contains( target ) ); }
+
+		, destroy: function() { if ( el ) { el.remove(); el = null; } }
 	};
 }

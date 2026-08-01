@@ -455,7 +455,9 @@ are the `slash.*` keys.
 - The popup is on **`<body>`**, not the container: a capped-height or
   overflow-hidden field would clip it (same reason the picker overlays live
   there). That puts it outside the `--tt-*` variables' scope, so its light/dark
-  values are its own, via `prefers-color-scheme`.
+  values are its own — synced from the **editor's** `tiptap-dark` class at open
+  (NOT `prefers-color-scheme`: a dark OS must not put a dark menu over a light
+  editor, or over the site page in Modern inline mode).
 - **It renders before it positions.** Measuring an empty box put a full-length
   menu off the bottom of the screen - `paint()` renders, *then* `move()` decides
   whether to flip above the caret.
@@ -494,13 +496,18 @@ which is also what makes the image tools / table bubble appear, so the grip
 doubles as "select this"). Disable per site/field with
 `defaultConfigs.dragHandle = false`.
 
-- **"+" does not open the menu itself - it types a "/" for the author** and lets
-  the slash menu react, exactly as the reference editor does. One code path for
-  both affordances: no second copy of the item list, and no way for the button and
-  the keystroke to drift apart. It therefore renders **only when the slash menu is
-  enabled** (the facade passes `slashMenuEnabled( cfg )`), and the gutter narrows
-  to the grip alone otherwise - `.tiptap-gutter-2` (48px) vs `.tiptap-gutter-1`
-  (28px), so a field never pays for a control it does not show.
+- **"+" opens the slash menu DIRECTLY at a fresh empty block, with no "/"
+  character written into the document** (`slashMenu.js` `storage.openManual`):
+  the same popup, item list and filtering as the typed "/", so the two
+  affordances cannot drift — the manual session keeps the query itself and a
+  capture-phase key handler swallows typed characters to filter (Esc closes,
+  Enter/Tab picks, Backspace unfilters-then-closes). It used to type a literal
+  "/" and let the suggestion plugin react; a button that writes its shortcut's
+  trigger character into the author's content read as a bug (T15 asserts the
+  block stays empty). "+" still renders **only when the slash menu is enabled**
+  (the facade passes `slashMenuEnabled( cfg )`), and the gutter narrows to the
+  grip alone otherwise - `.tiptap-gutter-2` (48px) vs `.tiptap-gutter-1` (28px),
+  so a field never pays for a control it does not show.
 - Clicking "+" on an **already-empty paragraph reuses that block** rather than
   pushing it down, so it cannot stack blank lines.
 - Both controls live in one `.tiptap-block-gutter` wrapper and share the hover
@@ -755,6 +762,112 @@ fixes that, in two steps, and both are **frontend-only**.
 - `harness/test-frontend-maximize.html` carries a `z-index:5000` site header, so
   it reproduces the original bug and exercises step 1; bumping that header to
   `2147483647` in the console exercises step 2.
+
+## Frontend edit-mode dropdown (Off / Classic / Modern) + Modern inline editing
+
+Core's admin frontend toolbar has a binary "Quick edit" checkbox switch. The
+extension replaces it — **JS-only, zero core edits** — with a 3-option dropdown
+styled like the adjacent Draft-view dropdown: **Off**, **Classic** (core's
+overlays → fixed modal editor, unchanged), and **Modern** — inline, gutentap-style
+editing of the page's single rich region. Four modules:
+`src/editModeSwitch.js` (the dropdown), `src/inlineMode.js` (enter/exit + the
+mount swap), `src/selectionBubble.js` (the only toolbar Modern has), plus small
+refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
+(`liftChromeZ()` exported).
+
+- **Core's checkbox stays in the DOM (hidden) and stays the source of truth for
+  "is editing on"** — Off/Classic drive it programmatically, so core's
+  `_presideEditMode` cookie, delegated handler and "e" hotkey keep working
+  untouched. Our `_presideEditModeStyle` cookie (`classic|modern`) is the only
+  new state. The dropdown needs **no JS binding of its own**: core's patched
+  bootstrap delegates `[data-toggle$=dropdown]` on `document`.
+- **Init on DOMContentLoaded** (`facade.js` `initChrome`) — core's
+  `frontendEditors.js` is a parse-time IIFE, so by then its handlers are wired
+  and its cookie restored; we compose on top, never race it.
+- **Modern reuses core's flow end-to-end** (the load-bearing design):
+  `inlineMode.enter()` marks the textarea `data-tiptap-inline=<containerId>` and
+  triggers core's own overlay click → `toggleEditMode(true)` →
+  `new PresideRichEditor(ta)`. The facade sees the marker at construction time,
+  detaches the rendered nodes between the region's
+  `<!-- container: _x -->…<!-- !container: _x -->` comments (detached, NOT
+  display:none — core's 1s geometry interval must measure the live editor) and
+  mounts `.tiptap-editor-container.tiptap-inline` in their place. Save / Publish
+  / Cancel / Esc / ctrl+Enter / version-restore are core's untouched closures.
+- **Save-vs-cancel is DERIVED from connectivity, never flagged**:
+  `instance._cleanups` run at the top of `destroy()`. Cancel path → our container
+  is still connected between the comments → remove it, re-insert the stored
+  originals (byte-identical restore; asserted). Save path → core's
+  `setContent(data.rendered)` already replaced the region and detached us → keep
+  the fresh render. Policy (user decisions): **cancel/Esc falls back to Off;
+  save/publish re-enters Modern** on the new content.
+- **The container is kept, chrome-less** (`.tiptap-inline`): it still carries the
+  `--tt-*` variables, `position:relative`, and the key-isolation boundary that
+  the table bubble / drag handle / maximize all need. No toolbar/footer/outline,
+  no height caps, no `applyContentStyles()` (the editable IS the site page and
+  inherits its CSS). The drag-handle gutter is given back as negative
+  `margin-left` so the content column stays exactly where the rendered page had
+  it.
+- **Modern availability = exactly one `.content-editor.richeditor`** on the
+  page; otherwise the option is disabled with a tooltip and the style cookie is
+  left untouched (the next qualifying page resumes Modern). While Modern is
+  active the OTHER regions' overlays are hidden (`visibility:hidden`, not
+  `display:none` — core scrolls to `$editor.offset()` on open, and a 0,0 overlay
+  would yank the page to the top).
+- **`src/selectionBubble.js`** appears for any FOCUSED text context: a
+  selection, a clicked caret, or the caret being typed at — the block having
+  focus IS the context, and it only drops on blur or a non-text selection
+  (NodeSelections belong to imageTools, cell selections to the table bubble).
+  A `mouseup` listener covers the click that moves no caret (no
+  selectionUpdate fires for it), and the button set is **rebuilt only when the
+  caret changes block** (`contextKey()`), not per keystroke — otherwise it just
+  refreshes is-active states and repositions. Positioning: 24px clear of the
+  text (GAP; flips below under the admin toolbar), **left-aligned to the
+  caret's BLOCK** — never centred on / following the caret, so typing moves it
+  only vertically. **Idle fade**: ~2.5s with no click/keystroke adds `is-idle`
+  (opacity 0, pointer-events none — still is-open); any activity or hovering
+  the bubble fades it back. It renders the field's
+  configured toolbar via the SAME `renderNames()` the main toolbar uses, minus
+  the never-in-bubble set (Maximize/Source/Undo/Redo/Theme/HR/Table/pickers),
+  filtered per block by its own `BUBBLE_APPLIES` map (Outdent/Indent only in
+  lists, Unlink only in links, **Format always** — `can().setParagraph()` is
+  false in a paragraph, which would hide it exactly where it is most wanted).
+  Body-portalled on the `--tt-z-base + 1060` rung, **always light** (the site
+  page is the editing surface — deliberately no `prefers-color-scheme` block);
+  a capture-phase `mousedown` preventDefault keeps the editor selection through
+  any interaction.
+- **The drag rail is body-portalled in inline mode** (`dragHandle.js`
+  `{ fixed: true }`): the container sits in the SITE's page flow, where a gutter
+  carved out of the theme's layout (or hung off it with negative margin) is one
+  `overflow:hidden` ancestor away from being clipped into invisibility — the
+  original "why is the + / grip missing?" bug. Fixed mode reserves NO gutter
+  (the content column keeps the rendered page's exact geometry), positions the
+  rail in viewport coords just left of the mount — **except on a full-width
+  layout** (mount left < 60px: nowhere to float, the rail sat at negative x,
+  the bug's second life), where it falls back to reserving an interior gutter
+  (`tiptap-gutter-*` re-asserted for `.tiptap-inline` in the css, since the
+  inline padding reset would otherwise win) — hides on window scroll, and
+  carves out container→rail mouse travel so the grip is not yanked away en
+  route. It carries its own light styling (outside the `--tt-*` scope) and is
+  removed on destroy (leak-audited).
+- The dropdown trigger's icon is **our own inline SVG** (`ICONS.EditMode`,
+  Tabler "article") — not font-awesome's pencil, which already means "Full
+  edit" one control to the right.
+- **`liftChromeZ()`** (frontendFit step 1, now exported) runs on Modern entry:
+  the inline editor is in page flow (nothing to push down) but the bubble /
+  slash menu / picker overlays still have to out-bid a sticky site header.
+- **Churn-safety is load-bearing**: Modern destroys and recreates the editor on
+  every save. `instanceReady` is guarded with `tiptap.isDestroyed` (consumers
+  call `getData()` in that handler), the slash-menu popup is removed in the
+  extension's `onDestroy` (it used to leak one `<body>` div per cycle — T18),
+  and the bubble/table/drag clamps use the **mount∩viewport** intersection (the
+  raw mount rect is page-height inline, which parked chrome off screen).
+- Tests: `harness/test-frontend-inline.html` (self-running, 56 assertions,
+  backed by `harness/mockFrontendEditors.js` — a faithful trimmed transcription
+  of core's contract — and `/mock/frontend/*` endpoints in `server.mjs`);
+  `test-realworld.html` T18 covers the slash-menu leak. **jQuery's
+  `.trigger("click")` skips native handlers on `<a>`** — the dropdown items need
+  native `.click()` in tests.
+- i18n keys: `editmode.*`, `bubble.title` (the three usual places).
 
 ## Local dev server
 

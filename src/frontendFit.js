@@ -44,7 +44,8 @@ var Z_FLOOR   = 1040;
 var Z_CEILING = 2000000000;
 
 var OURS = ".content-editor,.content-editor-editor-container,.frontend-editor-modal-sheen"
-         + ",.tiptap-editor-container,.preside-picker-overlay,.preside-anchor-overlay,.tiptap-slash-menu";
+         + ",.tiptap-editor-container,.preside-picker-overlay,.preside-anchor-overlay,.tiptap-slash-menu"
+         + ",.tiptap-selection-bubble";
 
 /**
  * The highest z-index among the page's own fixed/sticky chrome - the things that
@@ -107,6 +108,25 @@ function coveredTo( host ) {
 }
 
 /**
+ * Step 1 on its own - lift the whole `--tt-z-base` ladder above the site's own
+ * fixed chrome. Exported for Modern inline mode, whose editor is in normal page
+ * flow (nothing to push down) but whose body-portalled chrome - selection
+ * bubble, slash menu, picker overlays - still needs to out-bid a sticky site
+ * header. Measured once per call: the page's chrome does not change while
+ * editing is active, and the sweep is the expensive half of this module.
+ * Returns a teardown; last-writer-wins is fine because modal and inline are
+ * never active at once and each enter recomputes.
+ */
+export function liftChromeZ() {
+	var root = document.documentElement;
+	var base = Math.max( Z_FLOOR, Math.min( siteChromeZ() + 1, Z_CEILING ) );
+	root.style.setProperty( "--tt-z-base", String( base ) );
+	return function() {
+		root.style.removeProperty( "--tt-z-base" );
+	};
+}
+
+/**
  * Called with OUR container; no-ops (returning null) unless it is inside a core
  * frontend editor wrapper, so admin-side editors pay nothing for this.
  * Returns a teardown to run on destroy - frontend editors are created and
@@ -116,13 +136,8 @@ export function fitFrontendEditor( container ) {
 	var host = container.closest && container.closest( ".content-editor-editor-container" );
 	if ( !host ) { return null; }
 
-	var root = document.documentElement;
-
-	// Step 1 - lift the whole ladder above the site's own fixed chrome. Measured
-	// once: the page's chrome does not change while a modal editor is open, and the
-	// sweep is the expensive half of this module.
-	var base = Math.max( Z_FLOOR, Math.min( siteChromeZ() + 1, Z_CEILING ) );
-	root.style.setProperty( "--tt-z-base", String( base ) );
+	// Step 1 - lift the whole ladder above the site's own fixed chrome.
+	var dropZ = liftChromeZ();
 
 	function apply() {
 		// A fixed element has no offsetParent even when visible, so "is it laid out"
@@ -167,6 +182,6 @@ export function fitFrontendEditor( container ) {
 		if ( frame ) { window.cancelAnimationFrame( frame ); }
 		host.style.top = "";
 		host.style.removeProperty( "--tt-frontend-offset" );
-		root.style.removeProperty( "--tt-z-base" );
+		dropZ();
 	};
 }

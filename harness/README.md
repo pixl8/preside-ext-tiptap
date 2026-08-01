@@ -79,6 +79,17 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
   instance is on `window.testEditor`; maximized, the container must be
   `document.body`'s child at the full viewport size and paint over the toolbar
   (see `src/maximize.js` for why the portal is needed).
+- **`/test-frontend-inline.html`** — self-running tests for the frontend
+  edit-mode dropdown (Off/Classic/Modern) and Modern inline editing. Backed by
+  `mockFrontendEditors.js` (a faithful trimmed transcription of core's
+  `frontendEditors.js` — the contract Modern mode composes with) and the
+  `/mock/frontend/save|publishPrompt|publish` endpoints in `server.mjs`.
+  Covers: the dropdown replacing the quick-edit switch, Modern availability
+  (exactly one rich region), cookie/hotkey behaviour, inline mount between the
+  region comments, save/publish round-trips with Modern re-entry, byte-identical
+  cancel restore, per-block selection-bubble filtering, maximize from inline,
+  and a 10-cycle enter/exit leak audit. Results on `window.__results` /
+  `window.__done`.
 
 ## Driving with Playwright
 

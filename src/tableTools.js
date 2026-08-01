@@ -130,29 +130,40 @@ export function createTableTools( editor, container, mount ) {
 		const tRect = table.getBoundingClientRect();
 		const mRect = mount.getBoundingClientRect();
 
-		// Hide when the table has scrolled out of the (capped-height) mount -
-		// otherwise the bubble floats over unrelated content.
-		if ( tRect.bottom < mRect.top - 4 || tRect.top > mRect.bottom + 4 ) { return false; }
+		// Clamp against the VISIBLE part of the mount - its intersection with the
+		// viewport. In the admin the capped-height mount is normally fully on
+		// screen, so this is the mount rect unchanged; inline (Modern mode) the
+		// mount is page-height and the raw rect would park the bubble somewhere
+		// far off screen.
+		const vTop    = Math.max( mRect.top, 0 );
+		const vBottom = Math.min( mRect.bottom, window.innerHeight );
+		const vLeft   = Math.max( mRect.left, 0 );
+		const vRight  = Math.min( mRect.right, window.innerWidth );
+
+		// Hide when the table has scrolled out of that visible band - otherwise
+		// the bubble floats over unrelated content.
+		if ( tRect.bottom < vTop - 4 || tRect.top > vBottom + 4 ) { return false; }
 
 		const bw = bubble.offsetWidth;
 		const bh = bubble.offsetHeight;
 
 		// Above the table by preference (see the header note on why not below).
 		let top = tRect.top - cRect.top - bh - 6;
-		if ( tRect.top - mRect.top < bh + 8 ) { top = tRect.bottom - cRect.top + 6; }
+		if ( tRect.top - vTop < bh + 8 ) { top = tRect.bottom - cRect.top + 6; }
 
-		// Keep it inside the mount vertically, so it never overlaps the toolbar.
-		const minTop = mRect.top - cRect.top + 2;
-		const maxTop = mRect.bottom - cRect.top - bh - 2;
+		// Keep it inside the visible band vertically, so it never overlaps the
+		// toolbar (admin) or leaves the screen (inline).
+		const minTop = vTop - cRect.top + 2;
+		const maxTop = vBottom - cRect.top - bh - 2;
 		if ( top < minTop ) { top = minTop; }
 		if ( top > maxTop ) { top = maxTop; }
 
-		// Left-anchored to the table, then clamped into the mount - centring it
-		// clips the end buttons off a narrow or right-hand table (the same lesson
-		// as imageTools' placeBubble).
+		// Left-anchored to the table, then clamped into the visible band -
+		// centring it clips the end buttons off a narrow or right-hand table (the
+		// same lesson as imageTools' placeBubble).
 		let left = tRect.left - cRect.left;
-		const maxLeft = mRect.right - cRect.left - bw - 4;
-		const minLeft = mRect.left - cRect.left + 4;
+		const maxLeft = vRight - cRect.left - bw - 4;
+		const minLeft = vLeft - cRect.left + 4;
 		if ( left > maxLeft ) { left = maxLeft; }
 		if ( left < minLeft ) { left = minLeft; }
 

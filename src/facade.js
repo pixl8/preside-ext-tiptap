@@ -29,6 +29,9 @@ import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
 import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
 import { fitFrontendEditor } from "./frontendFit.js";
+import { resolveInlineMount } from "./inlineMode.js";
+import { initEditModeSwitch } from "./editModeSwitch.js";
+import { createSelectionBubble } from "./selectionBubble.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -230,20 +233,37 @@ import { t } from "./i18n.js";
 		// DOM: hide the textarea (kept for native form submit), mount editor after it.
 		var container = document.createElement( "div" );
 		container.className = "tiptap-editor-container";
+
+		// Modern inline mode (frontend only): inlineMode.js marked the textarea
+		// before triggering core's edit flow. The editor mounts chrome-less INSIDE
+		// the page, exactly where the rendered content was (between the region's
+		// comment delimiters) - no toolbar/footer/outline, no height caps, and the
+		// selection bubble instead of a fixed toolbar. resolveInlineMount() returns
+		// null on any mismatch, in which case this is an ordinary mount - fail safe.
+		var inlineId    = ta.getAttribute( "data-tiptap-inline" ) || "";
+		var inlineMount = inlineId ? resolveInlineMount( inlineId, container ) : null;
+		var isInline    = !!inlineMount;
+		if ( isInline ) { container.className += " tiptap-inline"; }
+
 		var toolbarEl = document.createElement( "div" );
 		toolbarEl.className = "tiptap-toolbar";
 		var mount = document.createElement( "div" );
 		mount.className = "tiptap-editor-mount";
-		container.appendChild( toolbarEl );
+		if ( !isInline ) { container.appendChild( toolbarEl ); }
 		container.appendChild( mount );
 
 		// Honour the user's stored light/dark preference from the first paint (the
 		// toolbar's toggle then flips it for every editor on the page - see theme.js).
-		applyTheme( container );
+		// Inline editors stay light: the editable IS the site page.
+		if ( !isInline ) { applyTheme( container ); }
 
 		ta.style.display = "none";
 		ta.setAttribute( "data-tiptap-mounted", "1" );
-		ta.parentNode.insertBefore( container, ta.nextSibling );
+		if ( isInline ) {
+			inlineMount.anchor.parentNode.insertBefore( container, inlineMount.anchor.nextSibling );
+		} else {
+			ta.parentNode.insertBefore( container, ta.nextSibling );
+		}
 
 		// CKEditor's editable lived in an iframe, so keystrokes never reached the
 		// admin document. Tiptap edits inline, and Preside's admin hotkeys
@@ -262,10 +282,14 @@ import { t } from "./i18n.js";
 		// max-height:0px and collapse the editable entirely.
 		var minHeight = parseInt( cfg.minHeight, 10 );
 		var maxHeight = parseInt( cfg.maxHeight, 10 );
-		if ( minHeight > 0 ) { mount.style.minHeight = minHeight + "px"; }
-		if ( maxHeight > 0 ) { mount.style.maxHeight = maxHeight + "px"; mount.style.overflowY = "auto"; }
-		if ( cfg.width && cfg.width !== "auto" ) {
-			container.style.width = String( cfg.width ).match( /^\d+$/ ) ? cfg.width + "px" : cfg.width;
+		// Inline: the PAGE is the scroller and the content owns its own size -
+		// height caps and a fixed width belong to the boxed editor only.
+		if ( !isInline ) {
+			if ( minHeight > 0 ) { mount.style.minHeight = minHeight + "px"; }
+			if ( maxHeight > 0 ) { mount.style.maxHeight = maxHeight + "px"; mount.style.overflowY = "auto"; }
+			if ( cfg.width && cfg.width !== "auto" ) {
+				container.style.width = String( cfg.width ).match( /^\d+$/ ) ? cfg.width + "px" : cfg.width;
+			}
 		}
 
 		// disallowedContent / pasteFromWordDisallow filtering (core applies these
@@ -305,28 +329,37 @@ import { t } from "./i18n.js";
 		if ( typeof parsedToolbar === "string" && Array.isArray( cfg.defaultConfigs[ "toolbar_" + parsedToolbar ] ) ) {
 			parsedToolbar = cfg.defaultConfigs[ "toolbar_" + parsedToolbar ];
 		}
-		// Built BEFORE the footer: it reports whether a toolbar config placed the
-		// light/dark toggle explicitly, which decides where the toggle ends up.
-		var toolbarInfo = buildToolbar( toolbarEl, tiptap, parsedToolbar, cfg );
+		var bubbleCleanup = null;
+		if ( isInline ) {
+			// No persistent toolbar: the selection bubble offers the same buttons
+			// (same renderers - see selectionBubble.js), filtered per block.
+			bubbleCleanup = createSelectionBubble( tiptap, container, parsedToolbar, cfg );
+		} else {
+			// Built BEFORE the footer: it reports whether a toolbar config placed the
+			// light/dark toggle explicitly, which decides where the toggle ends up.
+			var toolbarInfo = buildToolbar( toolbarEl, tiptap, parsedToolbar, cfg );
 
-		// Footer status bar: word / char counts + estimated reading time, with the
-		// light/dark toggle right-aligned on the same row.
-		// Opt out per-site/per-field with defaultConfigs.wordcount = false.
-		var wantsTheme = toolbarInfo.themeEnabled && !toolbarInfo.themeRendered;
-		if ( cfg.defaultConfigs.wordcount !== false ) {
-			container.appendChild( buildFooter( tiptap, wantsTheme ) );
-		} else if ( wantsTheme ) {
-			// No footer to host it - fall back to the far right of the toolbar.
-			var right = document.createElement( "span" );
-			right.className = "tiptap-toolbar-group tiptap-toolbar-right";
-			right.appendChild( renderThemeToggle() );
-			toolbarEl.appendChild( right );
+			// Footer status bar: word / char counts + estimated reading time, with the
+			// light/dark toggle right-aligned on the same row.
+			// Opt out per-site/per-field with defaultConfigs.wordcount = false.
+			var wantsTheme = toolbarInfo.themeEnabled && !toolbarInfo.themeRendered;
+			if ( cfg.defaultConfigs.wordcount !== false ) {
+				container.appendChild( buildFooter( tiptap, wantsTheme ) );
+			} else if ( wantsTheme ) {
+				// No footer to host it - fall back to the far right of the toolbar.
+				var right = document.createElement( "span" );
+				right.className = "tiptap-toolbar-group tiptap-toolbar-right";
+				right.appendChild( renderThemeToggle() );
+				toolbarEl.appendChild( right );
+			}
 		}
 
 		// Document outline navigator: a hover-expanding rail of heading markers on
 		// the right edge of the container (chrome only - see src/outline.js).
 		// Opt out per-site/per-field with defaultConfigs.outline = false.
-		if ( outlineEnabled( cfg ) ) {
+		// Not inline: its geometry assumes the mount is the scroller, and the page
+		// already has the site's own navigation.
+		if ( !isInline && outlineEnabled( cfg ) ) {
 			container.appendChild( createOutline( tiptap, mount ) );
 		}
 
@@ -342,24 +375,39 @@ import { t } from "./i18n.js";
 		// Opt out per-site/per-field with defaultConfigs.dragHandle = false.
 		// The "+" only types a "/" for the author, so it is rendered only when the
 		// slash menu is actually there to react to it.
+		// Inline (Modern) editors get the FIXED variant: the container sits in the
+		// site's page flow, where a gutter carved out of the theme's layout is one
+		// overflow:hidden ancestor away from being clipped into invisibility.
 		if ( dragHandleEnabled( cfg ) ) {
-			createDragHandle( tiptap, container, mount, slashMenuEnabled( cfg ) );
+			createDragHandle( tiptap, container, mount, slashMenuEnabled( cfg ), { fixed: isInline } );
 		}
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
-		applyContentStyles( cfg.stylesheets );
+		// Not inline: the editable sits in the real page and inherits the site's
+		// CSS directly - injecting the admin-configured content CSS again would
+		// double-apply or fight it.
+		if ( !isInline ) { applyContentStyles( cfg.stylesheets ); }
 
-		// Frontend (in-page) editors only: keep the fixed editor clear of the site's
-		// own fixed/sticky header (see src/frontendFit.js). No-ops elsewhere.
-		instance._cleanups = [ fitFrontendEditor( container ) ].filter( Boolean );
+		// Teardown registry, run FIRST in destroy() - everything here wrote outside
+		// the container (CSS vars on <html>, body-portalled elements, the inline
+		// mount's original page nodes), so it must not outlive the editor.
+		// fitFrontendEditor no-ops (null) outside core's modal wrapper.
+		instance._cleanups = [
+			  fitFrontendEditor( container )
+			, isInline ? inlineMount.cleanup : null
+			, bubbleCleanup
+		].filter( Boolean );
 
 		if ( name ) { CK.instances[ name ] = instance; }
 		$ta.data( "ckeditorinstance", instance );
 
 		this.editor = instance;
 
-		// instanceReady fires async so callers (e.g. frontendEditors) can attach first.
-		setTimeout( function() { instance.fire( "instanceReady" ); }, 0 );
+		// instanceReady fires async so callers (e.g. frontendEditors) can attach
+		// first. Guarded: a frontend editor can legitimately be destroyed within
+		// the same tick it was created (Modern mode's save -> re-enter churn), and
+		// consumers' instanceReady handlers call getData() on a live editor.
+		setTimeout( function() { if ( !tiptap.isDestroyed ) { instance.fire( "instanceReady" ); } }, 0 );
 	};
 
 	PresideRichEditor.prototype.buildExtensions = function( cfg ) {
@@ -532,9 +580,19 @@ import { t } from "./i18n.js";
 	// (DOM-ready) resolve it without getCustomConfig's blocking-XHR fallback.
 	prefetchCustomConfig( cfreq().ckeditorConfig );
 
-	if ( document.readyState === "loading" ) {
-		document.addEventListener( "DOMContentLoaded", function() { bootstrapRichEditors( document ); } );
-	} else {
+	// The frontend edit-mode dropdown (Off/Classic/Modern) composes on top of
+	// core's parse-time frontendEditors.js wiring, so it must wait for
+	// DOMContentLoaded even when this bundle executes late. No-ops in the admin.
+	function initChrome() {
 		bootstrapRichEditors( document );
+		try { initEditModeSwitch(); } catch ( e ) {
+			if ( window.console ) { window.console.error( "[tiptap] edit-mode switch failed", e ); }
+		}
+	}
+
+	if ( document.readyState === "loading" ) {
+		document.addEventListener( "DOMContentLoaded", initChrome );
+	} else {
+		initChrome();
 	}
 } )();

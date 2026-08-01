@@ -170,8 +170,10 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* The "/" insert menu (src/slashMenu.js). Appended to <body>, NOT the container:
    a capped-height or overflow-hidden field would otherwise clip it. That means
    the --tt-* variables (declared on .tiptap-editor-container) are out of scope
-   here, so this block carries its own light/dark values via prefers-color-scheme
-   - the same reason the picker overlays are styled standalone. */
+   here, so this block carries its own values. Dark comes from the EDITOR's
+   theme (popup syncs the container's tiptap-dark class at open), NOT from
+   prefers-color-scheme: the OS being dark must not put a dark menu over a
+   light editor - or over the site page in Modern inline mode. */
 .tiptap-slash-menu{
 	position:fixed;z-index:calc(var(--tt-z-base,1040) + 1060);display:none;
 	min-width:270px;max-width:340px;max-height:320px;overflow-y:auto;
@@ -190,14 +192,12 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-slash-item.is-active .tiptap-slash-label{color:#1b6aaa}
 .tiptap-slash-hint{font-size:11px;color:#777;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tiptap-slash-empty{padding:8px;color:#777;font-style:italic}
-@media (prefers-color-scheme: dark){
-	.tiptap-slash-menu{background:#2b2d33;color:#e6e6e6;border-color:#4a4d55;box-shadow:0 6px 24px rgba(0,0,0,.5)}
-	.tiptap-slash-item.is-active{background:#33414d}
-	.tiptap-slash-label{color:#e6e6e6}
-	.tiptap-slash-item.is-active .tiptap-slash-label{color:#9ccbe8}
-	.tiptap-slash-icon{color:#b0b0b0}
-	.tiptap-slash-group,.tiptap-slash-hint,.tiptap-slash-empty{color:#9a9a9a}
-}
+.tiptap-slash-menu.tiptap-dark{background:#2b2d33;color:#e6e6e6;border-color:#4a4d55;box-shadow:0 6px 24px rgba(0,0,0,.5)}
+.tiptap-slash-menu.tiptap-dark .tiptap-slash-item.is-active{background:#33414d}
+.tiptap-slash-menu.tiptap-dark .tiptap-slash-label{color:#e6e6e6}
+.tiptap-slash-menu.tiptap-dark .tiptap-slash-item.is-active .tiptap-slash-label{color:#9ccbe8}
+.tiptap-slash-menu.tiptap-dark .tiptap-slash-icon{color:#b0b0b0}
+.tiptap-slash-menu.tiptap-dark .tiptap-slash-group,.tiptap-slash-menu.tiptap-dark .tiptap-slash-hint,.tiptap-slash-menu.tiptap-dark .tiptap-slash-empty{color:#9a9a9a}
 
 /* Alignment dropdown (src/toolbar.js renderAlign) — one trigger showing the
    current alignment, opening a compact single ROW of icons rather than the
@@ -404,3 +404,106 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Recolour the widget-placeholder glyph for the dark surface (the stroke colour is
    baked into the data-URI, so the whole background shorthand is restated). */
 .tiptap-editor-container.tiptap-dark .tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b0b0b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat}
+
+/* ================================================================================
+   MODERN INLINE MODE (frontend only - src/inlineMode.js / src/editModeSwitch.js)
+   The editor mounts chrome-less INSIDE the page, exactly where the rendered
+   content was; core's modal container is collapsed to nothing but its fixed
+   save/publish/cancel bar. All still driven by core's own frontendEditors.js.
+   ================================================================================ */
+
+/* The inline container: no box of its own - the page IS the editing surface.
+   It keeps the class (and with it the --tt-* variables, position:relative, the
+   key-isolation boundary) because the table bubble / drag handle / maximize all
+   position and colour against it. */
+.tiptap-editor-container.tiptap-inline{border:0;border-radius:0;background:transparent;box-shadow:none}
+.tiptap-inline > .tiptap-editor-mount{padding:0}
+.tiptap-inline .tiptap-editor-mount .ProseMirror{min-height:2em}
+/* Full-width layouts leave no page margin for the fixed rail to float in, so
+   dragHandle.js falls back to reserving an interior gutter - re-asserted here
+   because the inline padding reset above would otherwise win the cascade. */
+.tiptap-inline.tiptap-gutter-1 > .tiptap-editor-mount{padding-left:28px}
+.tiptap-inline.tiptap-gutter-2 > .tiptap-editor-mount{padding-left:48px}
+/* No gutter classes inline: the drag rail is a position:fixed <body> child
+   (dragHandle.js fixed mode) floating in the page margin, so the content
+   column keeps exactly the geometry the rendered page had - and no theme
+   overflow:hidden can clip the grip away. It sits outside the container's
+   --tt-* scope, hence its own (light - the site page is the editing surface)
+   values here. */
+.tiptap-block-gutter.is-fixed{
+	--tt-btn-hover-bg:#e9e9e9;
+	position:fixed;left:0;z-index:calc(var(--tt-z-base,1040) + 1050);
+	background:#fff;border:1px solid #ddd;border-radius:4px;
+	box-shadow:0 2px 8px rgba(0,0,0,.12);padding:1px;
+	color:#555
+}
+
+/* While Modern editing is active: hide every region overlay/label (only the one
+   rich field is editable, and it is edited in place) and the modal sheen; keep
+   core's fixed-bottom buttons bar - and ONLY it - from the modal container.
+   Only ever HIDE core chrome under this class, never restyle it globally. */
+/* visibility (not display): core positions these absolutely over the region and
+   scrolls to $editor.offset() on edit-open - hidden-but-positioned keeps that
+   geometry (and the 1s reposition interval) meaningful, while a display:none
+   region would measure 0,0 and yank the page to the top on every Modern entry. */
+body.frontend-editing-modern .content-editor{visibility:hidden!important;pointer-events:none!important}
+body.frontend-editing-modern .frontend-editor-modal-sheen{display:none!important}
+body.frontend-editing-modern .content-editor-editor-container.edit-active{
+	position:static!important;top:auto!important;
+	width:auto!important;max-width:none!important;min-width:0!important;
+	height:0;padding:0;margin:0;border:0;background:transparent;box-shadow:none;overflow:visible
+}
+body.frontend-editing-modern .content-editor-editor-container.edit-active .content-editor-form > :not(.content-editor-editor-buttons){display:none!important}
+
+/* The edit-mode dropdown lives in core's admin toolbar and reuses its dropdown
+   CSS wholesale; only a fallback for browsers/admin builds where li.disabled
+   has no styling of its own. */
+#preside-admin-toolbar .tiptap-editmode-switch .dropdown-menu li.disabled a{opacity:.5;cursor:not-allowed}
+
+/* Selection bubble (src/selectionBubble.js). Body-portalled like the slash menu
+   and for the same reasons - so, like it, it is outside the container's --tt-*
+   scope and carries its own variable values (light + prefers-color-scheme dark).
+   Declaring the vars rather than literal colours lets the toolbar-button /
+   dropdown rules above apply unchanged inside it. */
+.tiptap-selection-bubble{
+	--tt-bg:#fff;
+	--tt-fg:#222;
+	--tt-muted:#777;
+	--tt-border:#ccc;
+	--tt-border-soft:#ddd;
+	--tt-chrome-bg:#f7f7f7;
+	--tt-btn-fg:#333;
+	--tt-btn-hover-bg:#e9e9e9;
+	--tt-active-bg:#f0f7fc;
+	--tt-active-border:#93cbf9;
+	--tt-active-fg:#1b6aaa;
+	--tt-accent:#4c8fbd;
+	--tt-accent-soft:#f0f7fc;
+	--tt-menu-bg:#fff;
+	--tt-menu-shadow:rgba(0,0,0,.16);
+	position:fixed;top:0;left:0;display:none;align-items:center;gap:1px;
+	padding:3px 4px;white-space:nowrap;
+	background:var(--tt-menu-bg);color:var(--tt-fg);
+	border:1px solid var(--tt-border);border-radius:5px;
+	box-shadow:0 4px 16px var(--tt-menu-shadow);
+	z-index:calc(var(--tt-z-base,1040) + 1060)
+}
+.tiptap-selection-bubble.is-open{display:flex}
+/* Idle fade (selectionBubble.js): ~2.5s without a click/keystroke fades it out
+   of the author's face; any activity (or hovering it) fades it back. Still
+   is-open - only opacity, so removing is-idle transitions cleanly - and
+   pointer-events off so the invisible pill cannot swallow clicks. */
+.tiptap-selection-bubble{opacity:1;transition:opacity .3s ease}
+.tiptap-selection-bubble.is-idle{opacity:0;pointer-events:none}
+.tiptap-selection-bubble .tiptap-toolbar-group{margin-right:0}
+.tiptap-selection-bubble .tiptap-btn{height:24px;min-width:24px}
+/* Deliberately LIGHT always (no prefers-color-scheme block): the bubble only
+   exists in Modern inline mode, where the editing surface is the site page -
+   the default editor chrome is light and a dark OS must not darken it. */
+
+/* The edit-mode dropdown trigger's SVG icon (ICONS.EditMode) - sized to sit
+   like the font-awesome icons beside it in core's admin toolbar. nowrap keeps
+   icon/label/caret on one line whatever the theme's toolbar CSS does. */
+.tiptap-editmode-switch .dropdown-toggle{white-space:nowrap}
+.tiptap-editmode-icon{display:inline-block;vertical-align:middle;margin-right:4px;line-height:0}
+.tiptap-editmode-icon svg{width:17px;height:17px;fill:none;stroke:currentColor}
