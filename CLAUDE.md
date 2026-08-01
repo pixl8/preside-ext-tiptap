@@ -710,6 +710,52 @@ control entirely per site/field with `defaultConfigs.darkMode = false`.
 - Strings are the `toolbar.theme.dark` / `toolbar.theme.light` i18n keys (the
   tooltip describes what a click will do; the icon shows the current mode).
 
+## Frontend (in-page) editors: clearing the site's own chrome
+
+Core opens a frontend editor as `position:fixed; top:100px; z-index:100` with a
+`z-index:99` sheen (`system/assets/css/admin/frontend/frontendEditor.less`) —
+numbers that predate sticky site headers. A theme header above that band paints
+**over** the editor, and being anchored to the top of the viewport it lands
+exactly on the toolbar: the toolbar is simply not there. `src/frontendFit.js`
+fixes that, in two steps, and both are **frontend-only**.
+
+1. **Win the stack.** The site's own fixed/sticky chrome is measured
+   (`siteChromeZ()`) and `--tt-z-base` is set above the highest of it.
+   **Every z-index this extension owns is expressed against that one variable**
+   in `src/tiptap.css`, so the whole ladder lifts together and keeps its order:
+   sheen (`base-1`) < frontend container (`base`) < maximized (`base+10`) <
+   picker overlay (`base+960`) < anchor overlay / slash menu (`base+1060`).
+   **Never write a literal z-index for those** — a fixed rung is one that stops
+   moving with the rest, which is exactly how a maximized editor ended up under
+   a site header while the un-maximized one was fine.
+   - The var's **default is 1040**, chosen so the rungs compute to the previous
+     literals (1039/1040/1050/2000/2100). In the admin the var is never set, so
+     admin stacking is byte-identical to before — asserted on `/tiptap.html`.
+   - Painting over the header is the right answer, not a compromise: the editor
+     is modal and the sheen already dims the page behind it.
+2. **Push down whatever still covers us** — an element with a z we refused to
+   out-bid (the sweep ignores anything ≥ 2e9, to leave the ladder headroom), or
+   one that only appears later. The test is `document.elementsFromPoint()` at the
+   editor's own top edge, **not** more z-index arithmetic: it asks the question
+   that matters ("is something drawn on top of us *here*?") in real paint order,
+   so nested stacking contexts, opacity and transform layers resolve for free.
+   The push is published as `--tt-frontend-offset` and the editable's max-height
+   gives back exactly that much, so core's fixed save bar stays clear.
+
+- The `getComputedStyle` sweep is affordable because it runs **once per editor
+  open** (the page's chrome does not change while a modal editor is open), not
+  per frame. The geometric pass re-runs rAF-throttled on resize/scroll.
+- Our own elements are excluded from the sweep or it ratchets against itself
+  every time an editor opens. `.content-editor-editor-container` and the sheen
+  are listed in their own right because `frontendEditors.js` re-parents both to
+  `<body>`, so neither is inside `.content-editor` by then.
+- Everything is undone by a teardown registered on `instance._cleanups` (run by
+  `destroy()`) — frontend editors are created and destroyed on **every** edit-mode
+  toggle, so leaving the var or the inline `top` behind would leak.
+- `harness/test-frontend-maximize.html` carries a `z-index:5000` site header, so
+  it reproduces the original bug and exercises step 1; bumping that header to
+  `2147483647` in the console exercises step 2.
+
 ## Local dev server
 
 Server command, admin URL, credentials and DB details are in **`devlocal.md`**.

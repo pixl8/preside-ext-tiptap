@@ -28,6 +28,7 @@ import { imageToolsEnabled } from "./imageTools.js";
 import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
 import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
+import { fitFrontendEditor } from "./frontendFit.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -187,6 +188,13 @@ import { t } from "./i18n.js";
 			}
 		} catch ( e ) {}
 		this._domListeners = null;
+		// Chrome that registered document/window listeners or wrote onto DOM outside
+		// our container (frontendFit) hands back a teardown - run them before the
+		// container goes, so nothing outlives the editor.
+		if ( this._cleanups ) {
+			this._cleanups.forEach( function( fn ) { try { fn(); } catch ( e ) {} } );
+			this._cleanups = null;
+		}
 		try { this._t.destroy(); } catch ( e ) {}
 		// Destroying while maximized would leave <html> scroll-locked and the
 		// restore placeholder orphaned in the page.
@@ -340,6 +348,10 @@ import { t } from "./i18n.js";
 
 		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
 		applyContentStyles( cfg.stylesheets );
+
+		// Frontend (in-page) editors only: keep the fixed editor clear of the site's
+		// own fixed/sticky header (see src/frontendFit.js). No-ops elsewhere.
+		instance._cleanups = [ fitFrontendEditor( container ) ].filter( Boolean );
 
 		if ( name ) { CK.instances[ name ] = instance; }
 		$ta.data( "ckeditorinstance", instance );

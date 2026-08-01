@@ -14,10 +14,15 @@
 		.frontend-editor-modal-sheen{position:fixed;top:0;left:0;width:100%;height:100%;background:#000;opacity:.5;z-index:99}
 		.content-editor-editor-container{position:fixed;top:100px;left:0;right:0;margin:0 auto;z-index:100;padding-bottom:100px;min-width:500px;max-width:810px}
 		.content-editor-editor-buttons{position:fixed;bottom:0;left:0;width:100%;background:#2c3d4e;text-align:right;padding:5px}
+		/* ...and the SITE's own fixed header, which core's chrome predates: it out-stacks
+		   even the 1040 band tiptap.css lifts the editor into, so it is src/frontendFit.js
+		   that has to push the editor clear of it (expect top ≈ 120 + 8). */
+		.site-header{position:fixed;top:0;left:0;width:100%;height:120px;background:#fff;border-bottom:1px solid #ccc;z-index:5000;line-height:120px;text-align:center;font-weight:bold}
 	</style>
 </head>
 <body>
 	<div class="preside-admin-toolbar">admin toolbar (z-index 103)</div>
+	<div class="site-header">site header (fixed, z-index 5000)</div>
 	<div class="frontend-editor-modal-sheen"></div>
 	<div class="presidecms content-editor-editor-container">
 		<form class="content-editor-form">

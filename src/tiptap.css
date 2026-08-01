@@ -69,7 +69,7 @@
    it lives inside a fixed, max-width, z-index:100 wrapper. z-index sits above the
    frontend admin toolbar (103) but below the picker/anchor overlays (2000/2100).
    `width` is !important because the field's data-width is an inline style. */
-.tiptap-editor-container.is-maximized{position:fixed;inset:0;width:auto!important;height:auto!important;max-width:none;z-index:1050;border:0;border-radius:0;display:flex;flex-direction:column;background:var(--tt-bg)}
+.tiptap-editor-container.is-maximized{position:fixed;inset:0;width:auto!important;height:auto!important;max-width:none;z-index:calc(var(--tt-z-base,1040) + 10);border:0;border-radius:0;display:flex;flex-direction:column;background:var(--tt-bg)}
 .tiptap-editor-container.is-maximized .tiptap-editor-mount{flex:1;min-height:0;max-height:none!important;overflow-y:auto}
 html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Frontend (in-page) editors render inside core's `.content-editor-editor-container`
@@ -80,11 +80,27 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    is applied as an inline style, hence !important. */
 .content-editor-editor-container{max-width:75vw!important}
 .content-editor-editor-container .tiptap-editor-container{width:100%!important;max-width:100%}
+/* ...and lift it out of core's z-index band. frontendEditor.less gives the editor
+   z-index:100 and its sheen 99 - numbers that predate sticky site headers. Any
+   theme header above that paints OVER the editor, and being anchored to the top of
+   the viewport it lands exactly on the toolbar (core's top is 100px).
+
+   EVERY z-index we own is expressed against `--tt-z-base` so the whole ladder can
+   be lifted as one - src/frontendFit.js measures the site's own fixed/sticky chrome
+   and raises the base above it. The base's DEFAULT (1040) reproduces the previous
+   fixed numbers exactly, so nothing changes in the admin, where the var is never
+   set. The rungs, in order: sheen (base-1) < frontend container (base) < maximized
+   (base+10) < picker overlay (base+960) < anchor overlay / slash menu (base+1060).
+   Keep them relative: a literal here is a rung that stops moving with the rest. */
+.content-editor-editor-container{z-index:var(--tt-z-base,1040)!important}
+.frontend-editor-modal-sheen{z-index:calc(var(--tt-z-base,1040) - 1)!important}
 /* ...and the same for height: the field's data-max-height (400) is inline on the
    mount, so grow the editable to whatever the fixed wrapper leaves - core's
    top:100px + padding-bottom:100px (the fixed save bar) plus ~90px of our own
-   toolbar+footer chrome - with a 240px floor for short viewports. */
-.content-editor-editor-container .tiptap-editor-mount{max-height:max(240px,calc(100vh - 290px))!important}
+   toolbar+footer chrome - with a 240px floor for short viewports. `--tt-frontend-offset`
+   is however far frontendFit.js had to push the editor down to clear a fixed header;
+   the editable gives back exactly that much so the fixed save bar stays clear. */
+.content-editor-editor-container .tiptap-editor-mount{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .tiptap-editor-mount .ProseMirror a{color:var(--tt-accent);text-decoration:underline}
 .tiptap-editor-mount .img-placeholder,.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{display:inline-block;vertical-align:middle}
 /* Widget placeholder glyph: inline data-URI SVG (Tabler "puzzle", MIT) — no icon files. */
@@ -108,7 +124,7 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-editor-mount .error{color:#c00;border:1px solid #f4b4b4;padding:1px 4px;border-radius:3px}
 .tiptap-editor-mount .ProseMirror-selectednode{outline:2px solid var(--tt-selected);outline-offset:1px}
 .tiptap-editor-mount .preside-anchor{display:inline-block;color:var(--tt-active-fg);border:1px dotted var(--tt-active-fg);border-radius:3px;padding:0 3px;font-size:.8em;line-height:1.4;background:var(--tt-accent-soft);cursor:pointer;vertical-align:middle;margin:0 1px}
-.preside-anchor-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:2100;display:flex;align-items:center;justify-content:center}
+.preside-anchor-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:calc(var(--tt-z-base,1040) + 1060);display:flex;align-items:center;justify-content:center}
 .preside-anchor-dialog{background:#fff;border-radius:4px;padding:16px 18px;width:340px;box-shadow:0 6px 24px rgba(0,0,0,.3)}
 .preside-anchor-head{font-weight:bold;margin-bottom:10px}
 .preside-anchor-input{width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:3px;box-sizing:border-box;font-size:14px}
@@ -157,7 +173,7 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    here, so this block carries its own light/dark values via prefers-color-scheme
    - the same reason the picker overlays are styled standalone. */
 .tiptap-slash-menu{
-	position:fixed;z-index:2100;display:none;
+	position:fixed;z-index:calc(var(--tt-z-base,1040) + 1060);display:none;
 	min-width:270px;max-width:340px;max-height:320px;overflow-y:auto;
 	background:#fff;color:#222;border:1px solid #ccc;border-radius:5px;
 	box-shadow:0 6px 24px rgba(0,0,0,.18);padding:4px;
@@ -238,7 +254,7 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-editor-mount .ProseMirror.resize-cursor{cursor:col-resize}
 /* While resizing, stop the drag turning into a text selection across cells. */
 .tiptap-editor-mount .ProseMirror.resize-cursor ::selection{background:transparent}
-.preside-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;display:flex;align-items:center;justify-content:center}
+.preside-picker-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:calc(var(--tt-z-base,1040) + 960);display:flex;align-items:center;justify-content:center}
 .preside-picker-dialog{background:#fff;border-radius:4px;width:96vw;max-width:96vw;height:88vh;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 6px 30px rgba(0,0,0,.3)}
 .preside-picker-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border-bottom:1px solid #e5e5e5;font-weight:bold}
 .preside-picker-close{border:0;background:none;font-size:22px;line-height:1;cursor:pointer;color:#888}
