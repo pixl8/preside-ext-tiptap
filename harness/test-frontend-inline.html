@@ -21,6 +21,12 @@
 		body.frontend-editors-editing .frontend-editor-modal-sheen{display:block}
 		.content-editor{position:absolute;left:-99999px;opacity:0}
 		body.show-frontend-editors .content-editor{position:absolute;left:auto;opacity:.4;background:#4c8fbd;cursor:pointer}
+		/* Core's frontendEditor.less flips .content-editor to position:RELATIVE (in
+		   flow, at the end of <body> where core appended it) while an editor is
+		   active - combined with the explicit region-height the sizing interval
+		   sets, this is what made Modern mode show a region-sized band of
+		   invisible whitespace under the page (tiptap.css re-absolutes it). */
+		body.frontend-editors-editing .content-editor{position:relative}
 		.content-editor-editor-container{display:none;position:fixed;top:100px;left:0;right:0;margin:0 auto;z-index:100;min-width:500px;max-width:810px;background:#eee;padding:10px}
 		.content-editor-editor-container.edit-active{display:block}
 		.content-editor-editor-buttons{position:fixed;bottom:0;left:0;width:100%;background:#2c3d4e;text-align:right;padding:5px;box-sizing:border-box}
@@ -278,6 +284,15 @@
 			check( "T4 editor registered under core's expected name", !!CKEDITOR.instances.content );
 			check( "T4 no height cap on the inline mount",
 				inlineC && !inlineC.querySelector( ".tiptap-editor-mount" ).style.maxHeight );
+			// The hidden .content-editor div sits at the end of <body>. Core's
+			// editing state makes it position:relative (IN FLOW) and its sizing
+			// interval sets an explicit region-height on it; visibility:hidden keeps
+			// layout space, so unless tiptap.css re-absolutes it, Modern shows a
+			// region-sized band of invisible whitespace under the page.
+			var hiddenRegion = document.getElementById( "_inline01" );
+			check( "T4 hidden region div is out of flow (no whitespace band under the page)",
+				hiddenRegion && getComputedStyle( hiddenRegion ).position === "absolute"
+				&& getComputedStyle( hiddenRegion ).visibility === "hidden" );
 
 			// core's instanceReady scroll parks the region ~20px from the viewport
 			// top - UNDER the fixed admin toolbar; our post-scroll fixup must give
@@ -305,6 +320,13 @@
 					&& !checkbox.checked;
 			} );
 			check( "T5 save lands on Off (visible confirmation, no re-enter)", landedOffAfterSave );
+			// Core's sizing interval writes an inline region-height onto the (now
+			// position:static, in-flow) .content-editor div and never clears it -
+			// the whitespace band under the page that persisted after leaving
+			// Modern. editModeSwitch clears it on every off-landing.
+			check( "T5 stale inline region sizes cleared on landing Off",
+				!document.getElementById( "_inline01" ).style.height
+				&& !document.getElementById( "_inline01" ).style.width );
 			check( "T5 the saved edit stays visible on the page", /ADDED BY TEST/.test( regionHTML() ) );
 			check( "T5 trigger shows Off after save", /Off/.test( switchLi().querySelector( ".dropdown-toggle" ).textContent ) );
 

@@ -76,6 +76,25 @@ function enterModern() {
 	return enterInline( { onExit: onInlineExit } );
 }
 
+/**
+ * Core's sizing interval writes inline width/height (the region's FULL height)
+ * onto each .content-editor div - and never clears them. With edit mode off
+ * those divs are position:STATIC (core's base state) at the end of <body>, so
+ * the stale height rendered as a region-sized band of whitespace under the
+ * page until a reload - huge after a Modern session, where the region is the
+ * whole content. Cleared whenever edit mode lands on off; core re-measures
+ * from scratch the moment it turns back on (setEditMode(true) runs
+ * setEditorSizesAndPosition immediately).
+ */
+function clearRegionSizes() {
+	document.querySelectorAll( ".content-editor" ).forEach( function( el ) {
+		el.style.width  = "";
+		el.style.height = "";
+		el.style.top    = "";
+		el.style.left   = "";
+	} );
+}
+
 // `after` rides on the inline session (inlineMode.saveDraft({ after })) - NOT
 // module state here: onExit callbacks dispatch via setTimeout, so a stale one
 // from a previous session can fire between "prompt accepted" and "save
@@ -253,6 +272,10 @@ export function initEditModeSwitch() {
 	// restore, other scripts. Document-level so it runs AFTER core's own
 	// delegated handler has done its setEditMode() work.
 	jq()( document ).on( "change", "#edit-mode-options", function() {
+		// On EVERY off-landing - dropdown, "e" hotkey, cancel-button exit (which
+		// arrives suppressed via setCheckbox) - core has already run its
+		// setEditMode(false) by now (document-level fires after its delegate).
+		if ( !this.checked ) { clearRegionSizes(); }
 		if ( suppressed ) { render(); return; }
 		if ( this.checked ) {
 			if ( getStyle() === "modern" && pageQualifies() && !inlineActive() ) { enterModern(); }

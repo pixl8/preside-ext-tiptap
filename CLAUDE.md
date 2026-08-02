@@ -547,7 +547,23 @@ doubles as "select this"). Disable per site/field with
 - Drag is the standard ProseMirror recipe: select the node, set
   `view.dragging = { slice, move: true }`, and attach `text/html` +
   `setDragImage` (some browsers cancel a drag with no data attached). ProseMirror's
-  own drop handling does the move.
+  own drop handling does the move. The ghost is anchored to where the pointer
+  actually is relative to the block (x clamped at 0 — negative `setDragImage`
+  offsets are unreliable), so the block doesn't visually jump left on pick-up.
+- **The gutter is a live drop zone.** The grip sits OUTSIDE the editable, so a
+  vertical-only drag keeps the pointer where ProseMirror never sees the
+  `dragover` — no drop line, no drop, and users had to drift right into the
+  text. While our drag is live, `dragover`/`drop` in the band left of the
+  editable (document capture listeners, gated on `dragging`) are re-dispatched
+  to the editable with the x clamped just inside it. `dragend` is also relayed
+  to the editable so the dropcursor clears on a cancelled (Esc'd) drag —
+  natively it only fires at the drag source.
+- **Edge auto-scroll during drag**: the same `dragover` pass nudges the scroller
+  (the mount when it scrolls; the window too when the editor overflows the
+  viewport — inline mode's scroller IS the page) proportionally within 40px of
+  the visible edge, so a block can be dragged to an off-screen spot in one
+  gesture. No rAF loop — `dragover` keeps firing while the pointer is
+  stationary, which is what makes hover-at-the-edge scrolling work.
 - **`allowTableNodeSelection: true` is REQUIRED on the Table extension** (set in
   `src/index.js`) and is not optional polish. `prosemirror-tables` defaults it to
   `false`, which silently **normalises away** a NodeSelection on a table - the
@@ -859,7 +875,18 @@ refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
   left untouched (the next qualifying page resumes Modern). While Modern is
   active the OTHER regions' overlays are hidden (`visibility:hidden`, not
   `display:none` — core scrolls to `$editor.offset()` on open, and a 0,0 overlay
-  would yank the page to the top).
+  would yank the page to the top) **and re-absoluted**: core's
+  `frontend-editors-editing` state flips `.content-editor` to
+  `position:relative` (in flow, at the end of `<body>` where core appended it)
+  while its 1s sizing interval sets an explicit region-height on it —
+  `visibility:hidden` keeps layout space, so without `position:absolute`
+  (core's own non-editing value) Modern showed a region-sized band of invisible
+  whitespace under the page. The same stale inline sizes also outlived the
+  session (core never clears them, and with edit mode OFF `.content-editor` is
+  position:STATIC — in flow), so `editModeSwitch.js` clears them on every
+  off-landing (`clearRegionSizes()`, run from the document-level checkbox
+  change handler, which fires after core's own delegate on every path —
+  dropdown, "e" hotkey, cancel-button exit).
 - **`src/selectionBubble.js`** appears for any FOCUSED text context: a
   selection, a clicked caret, or the caret being typed at — the block having
   focus IS the context, and it only drops on blur or a non-text selection

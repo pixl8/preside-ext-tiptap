@@ -450,7 +450,15 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    scrolls to $editor.offset() on edit-open - hidden-but-positioned keeps that
    geometry (and the 1s reposition interval) meaningful, while a display:none
    region would measure 0,0 and yank the page to the top on every Modern entry. */
-body.frontend-editing-modern .content-editor{visibility:hidden!important;pointer-events:none!important}
+/* position:absolute is load-bearing too: core's frontend-editors-editing state
+   flips .content-editor to position:RELATIVE - in flow, at the end of <body>
+   where core appended it - and its 1s interval sets an explicit height equal to
+   the whole region. visibility:hidden keeps layout space, so that combination
+   was a region-sized band of invisible whitespace under the page for the whole
+   Modern session. Absolute (core's own non-editing value; the interval sets
+   top/left px against <body>) takes it out of flow while keeping $editor.offset()
+   meaningful. */
+body.frontend-editing-modern .content-editor{position:absolute!important;visibility:hidden!important;pointer-events:none!important}
 body.frontend-editing-modern .frontend-editor-modal-sheen{display:none!important}
 body.frontend-editing-modern .content-editor-editor-container.edit-active{
 	position:static!important;top:auto!important;

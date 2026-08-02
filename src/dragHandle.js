@@ -286,8 +286,16 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 			e.dataTransfer.effectAllowed = "move";
 			// Some browsers cancel a drag with no data attached.
 			try { e.dataTransfer.setData( "text/html", current.dom.outerHTML ); } catch ( err ) {}
-			// Drag the block itself as the ghost, so it is obvious what is moving.
-			try { e.dataTransfer.setDragImage( current.dom, 12, 12 ); } catch ( err ) {}
+			// Drag the block itself as the ghost, anchored to where the pointer
+			// actually is relative to the block, so it does not visually jump
+			// towards the grip on pick-up. The grip sits LEFT of the block, so the
+			// x offset is clamped at 0 (negative setDragImage offsets are
+			// unreliable across browsers) - the ghost's left edge rides the cursor.
+			try {
+				const gx = Math.max( 0, e.clientX - current.rect.left );
+				const gy = Math.max( 0, Math.min( e.clientY - current.rect.top, current.rect.height ) );
+				e.dataTransfer.setDragImage( current.dom, gx, gy );
+			} catch ( err ) {}
 		}
 	} );
 
@@ -295,13 +303,109 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		dragging = false;
 		handle.classList.remove( "is-dragging" );
 		editor.view.dragging = null;
+		// dragend only fires at the drag SOURCE (the grip), which is outside the
+		// editable - relay it so the dropcursor plugin clears its line on a
+		// cancelled (Esc'd) drag, not just on a completed drop.
+		try { editor.view.dom.dispatchEvent( new DragEvent( "dragend", { bubbles: true } ) ); } catch ( err ) {}
 		hide();
 	} );
+
+	/**
+	 * The grip lives in the gutter, OUTSIDE the ProseMirror editable - so a drag
+	 * started there and moved straight up/down keeps the pointer over the gutter
+	 * (or the rail's own buttons), where ProseMirror never sees the dragover: no
+	 * drop indicator, no drop. Users had to drift right into the text for the
+	 * line to appear. So while OUR drag is live, dragover/drop landing in a band
+	 * just left of the editable are re-dispatched to the editable with the x
+	 * clamped inside it - a vertical-only drag then behaves exactly like one
+	 * over the text. Synthetic drag events are fine here: ProseMirror (and the
+	 * dropcursor plugin) handle them regardless of isTrusted, which is also what
+	 * T15 relies on.
+	 *
+	 * The same dragover pass drives EDGE AUTO-SCROLL: near the top/bottom of the
+	 * visible band the scroller (the mount when it scrolls, the window
+	 * otherwise/additionally - inline mode's scroller IS the page) is nudged
+	 * proportionally, so a block can be dragged to an off-screen spot in one
+	 * gesture instead of drop-scroll-drag again. dragover keeps firing while the
+	 * pointer is stationary, which is what makes hover-at-the-edge scrolling
+	 * work without any rAF loop of our own.
+	 */
+	const SCROLL_ZONE = 40;   // px from the visible edge that starts scrolling
+	const SCROLL_MAX  = 28;   // px per dragover event at the very edge
+
+	function scrollSpeed( dist ) {
+		return Math.ceil( ( SCROLL_ZONE - Math.max( 0, dist ) ) / SCROLL_ZONE * SCROLL_MAX );
+	}
+
+	function autoScroll( x, y ) {
+		const mRect = mount.getBoundingClientRect();
+		// Ignore positions nowhere near the editor column - dragging sideways over
+		// unrelated page chrome must not scroll anything.
+		if ( x < mRect.left - 80 || x > mRect.right + 40 ) { return; }
+
+		if ( mount.scrollHeight > mount.clientHeight + 1 ) {
+			const vTop    = Math.max( mRect.top, 0 );
+			const vBottom = Math.min( mRect.bottom, window.innerHeight );
+			if ( y < vTop + SCROLL_ZONE )         { mount.scrollTop -= scrollSpeed( y - vTop ); }
+			else if ( y > vBottom - SCROLL_ZONE ) { mount.scrollTop += scrollSpeed( vBottom - y ); }
+		}
+		// The window scrolls too when the editor overflows the viewport (inline
+		// mode, or a tall uncapped admin field).
+		if ( y < SCROLL_ZONE )                            { window.scrollBy( 0, -scrollSpeed( y ) ); }
+		else if ( y > window.innerHeight - SCROLL_ZONE )  { window.scrollBy( 0, scrollSpeed( window.innerHeight - y ) ); }
+	}
+
+	function forwardToEditable( e ) {
+		const pmDom = editor.view.dom;
+		if ( pmDom.contains( e.target ) ) { return; }   // ProseMirror already sees it
+
+		const mRect = mount.getBoundingClientRect();
+		const vTop    = Math.max( mRect.top, 0 );
+		const vBottom = Math.min( mRect.bottom, window.innerHeight );
+		// The forwarding band: the gutter / rail column left of the content
+		// (fixed-mode rails float up to ~50px outside the mount), within the
+		// visible part of the mount.
+		if ( e.clientY < vTop || e.clientY > vBottom ) { return; }
+		if ( e.clientX < mRect.left - 80 || e.clientX > mRect.right ) { return; }
+
+		const pmRect = pmDom.getBoundingClientRect();
+		const x = Math.max( e.clientX, pmRect.left + 2 );
+		let clone;
+		try {
+			clone = new DragEvent( e.type, {
+				bubbles      : true,
+				cancelable   : true,
+				clientX      : x,
+				clientY      : e.clientY,
+				dataTransfer : e.dataTransfer
+			} );
+		} catch ( err ) { return; }
+		pmDom.dispatchEvent( clone );
+		// preventDefault on the ORIGINAL dragover is what marks the gutter a valid
+		// drop target; on drop it stops any native handling of the raw event.
+		e.preventDefault();
+		if ( e.type === "drop" ) { e.stopPropagation(); }
+	}
+
+	function onDocDragOver( e ) {
+		if ( !dragging ) { return; }
+		autoScroll( e.clientX, e.clientY );
+		forwardToEditable( e );
+	}
+	function onDocDrop( e ) {
+		if ( !dragging ) { return; }
+		forwardToEditable( e );
+	}
+
+	document.addEventListener( "dragover", onDocDragOver, true );
+	document.addEventListener( "drop", onDocDrop, true );
 
 	editor.on( "destroy", function() {
 		container.removeEventListener( "mousemove", onMove );
 		container.removeEventListener( "mouseleave", onLeave );
 		mount.removeEventListener( "scroll", hide );
+		document.removeEventListener( "dragover", onDocDragOver, true );
+		document.removeEventListener( "drop", onDocDrop, true );
 		if ( fixed ) {
 			window.removeEventListener( "scroll", onWinScroll, { capture: true } );
 			// Body-portalled - the facade's container removal cannot collect it.
