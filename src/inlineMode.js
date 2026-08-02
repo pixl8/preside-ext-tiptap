@@ -33,8 +33,8 @@
  *      place, keep it.
  *
  * Mode policy (editModeSwitch.js drives it via the onExit callback):
- * cancel/Esc falls back to Off; save/publish re-enters Modern on the new
- * content ("Modern means the page is editable"; a save is just a checkpoint).
+ * cancel/Esc AND save/publish all land on Off - for a save, the page
+ * re-rendering with the saved content is the visible "it saved" confirmation.
  *
  * This module never imports the facade (no cycle): the facade imports
  * resolveInlineMount and everything else happens through core's DOM events.
@@ -57,6 +57,37 @@ export function pageQualifies() {
 }
 
 export function isActive() { return !!state; }
+
+/**
+ * Unsaved edits? Compared against the facade instance's own initialdata (set at
+ * construction from the raw stored value, same normalisation as getData) - core's
+ * isDirty() is hard-coded `true` and unusable for this.
+ */
+export function isDirty() {
+	if ( !state ) { return false; }
+	try {
+		var inst = jq()( state.ta ).data( "ckeditorinstance" );
+		return !!inst && inst.getData() !== inst.initialdata;
+	} catch ( e ) { return false; }
+}
+
+/**
+ * Save the draft through core's own button - the exact flow the author would
+ * have clicked. The exit continues via the teardown's "save" path.
+ *
+ * `opts.after` rides on THIS session and is handed back to onExit( reason,
+ * after ) - deliberately not module state in the caller: a deferred onExit
+ * callback from a PREVIOUS session (they dispatch via setTimeout) must not be
+ * able to consume or clobber it.
+ */
+export function saveDraft( opts ) {
+	if ( !state ) { return false; }
+	var btn = state.host.querySelector( ".editor-btn-save" );
+	if ( !btn ) { return false; }
+	state.afterSave = ( opts && opts.after ) || null;
+	jq()( btn ).trigger( "click" );
+	return true;
+}
 
 /**
  * Enter Modern mode. `opts.onExit( reason )` is called (async) after teardown
@@ -248,6 +279,6 @@ function teardown() {
 		// Async: destroy() is still unwinding (core's tearDownCkEditor is midway
 		// through its own bookkeeping); re-entering or flipping the checkbox
 		// synchronously from inside it would interleave two flows.
-		setTimeout( function() { s.onExit( reason ); }, 0 );
+		setTimeout( function() { s.onExit( reason, s.afterSave || null ); }, 0 );
 	}
 }

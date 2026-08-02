@@ -33,7 +33,7 @@
  */
 import { t } from "./i18n.js";
 import { ICONS } from "./icons.js";
-import { pageQualifies, isActive as inlineActive, enter as enterInline, exit as exitInline } from "./inlineMode.js";
+import { pageQualifies, isActive as inlineActive, enter as enterInline, exit as exitInline, isDirty as inlineDirty, saveDraft as saveInlineDraft } from "./inlineMode.js";
 
 var STYLE_COOKIE = "_presideEditModeStyle";
 
@@ -76,23 +76,58 @@ function enterModern() {
 	return enterInline( { onExit: onInlineExit } );
 }
 
-function onInlineExit( reason ) {
-	if ( reason === "cancel" ) {
-		// User decision: Cancel/Esc discards the edits AND leaves edit mode.
+// `after` rides on the inline session (inlineMode.saveDraft({ after })) - NOT
+// module state here: onExit callbacks dispatch via setTimeout, so a stale one
+// from a previous session can fire between "prompt accepted" and "save
+// completed" and must not be able to consume the pending switch.
+function onInlineExit( reason, after ) {
+	if ( reason === "save" && after ) {
+		// The unsaved-changes prompt saved the draft on the way out - finish the
+		// switch the user actually asked for.
+		setMode( after );
+		return;
+	}
+	if ( reason === "cancel" || reason === "save" ) {
+		// Both exits land on Off. Cancel/Esc: discards the edits AND leaves edit
+		// mode (user decision). Save/Publish: the page re-rendering with the
+		// saved content IS the "it saved" confirmation - re-entering Modern
+		// looked identical to before the save, which read as "nothing happened"
+		// (UX decision, revised from the original re-enter-after-save).
 		setCheckbox( false );
-	} else if ( reason === "save" ) {
-		// Modern means "the page is editable" - a save is just a checkpoint, so
-		// re-enter on the freshly rendered content (core's setContent re-emitted
-		// the region; the .content-editor div and its comments are still there).
-		if ( ui && ui.checkbox.checked && getStyle() === "modern" && pageQualifies() ) {
-			enterModern();
-		}
 	}
 	// "switch": the mode change that requested the exit finishes the job.
 	render();
 }
 
+// Leaving Modern with unsaved edits silently discarded them (the cancel path
+// restores the pre-edit content) - a mode switch reads as "stop editing", not
+// "throw my work away", so ask. OK saves the draft (the region re-renders with
+// the edits, which stay visible after the switch); cancelling the prompt
+// discards them, exactly like the Cancel button.
+function confirmUnsaved( cb ) {
+	var msg = t( "editmode.unsaved.confirm" );
+	if ( window.presideBootbox && window.presideBootbox.confirm ) {
+		window.presideBootbox.confirm( msg, function( ok ) { cb( !!ok ); } );
+	} else {
+		cb( window.confirm( msg ) );
+	}
+}
+
 function setMode( mode ) {
+	if ( ( mode === "off" || mode === "classic" ) && inlineActive() && inlineDirty() ) {
+		confirmUnsaved( function( save ) {
+			if ( save ) {
+				if ( !saveInlineDraft( { after: mode } ) ) { applyMode( mode ); }
+			} else {
+				applyMode( mode );
+			}
+		} );
+		return;
+	}
+	applyMode( mode );
+}
+
+function applyMode( mode ) {
 	if ( mode === "modern" ) {
 		if ( !pageQualifies() ) { return; }
 		setStyle( "modern" );
@@ -222,6 +257,13 @@ export function initEditModeSwitch() {
 		if ( this.checked ) {
 			if ( getStyle() === "modern" && pageQualifies() && !inlineActive() ) { enterModern(); }
 		} else if ( inlineActive() ) {
+			if ( inlineDirty() ) {
+				// The hotkey path must get the same unsaved-changes prompt as the
+				// dropdown: undo core's toggle, then run the guarded switch.
+				setCheckbox( true );
+				setMode( "off" );
+				return;
+			}
 			exitInline();
 		}
 		render();

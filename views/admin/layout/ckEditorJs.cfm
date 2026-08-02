@@ -73,7 +73,7 @@
 		, "outline.title", "outline.empty", "outline.untitled"
 		, "footer.words", "footer.chars", "footer.readingtime"
 		, "editmode.trigger", "editmode.off", "editmode.classic", "editmode.modern"
-		, "editmode.modern.unavailable"
+		, "editmode.modern.unavailable", "editmode.unsaved.confirm"
 		, "bubble.title"
 	];
 	tiptapI18n = {};

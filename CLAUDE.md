@@ -763,6 +763,32 @@ fixes that, in two steps, and both are **frontend-only**.
   it reproduces the original bug and exercises step 1; bumping that header to
   `2147483647` in the console exercises step 2.
 
+## jQuery insert-order fix (src/jqueryOrderFix.js)
+
+Some Preside builds ship a jQuery ("2.2.5-jqnext") whose **`after()` and
+`prepend()` insert multi-node HTML strings in REVERSE order** (fixed-reference
+`insertBefore` loop instead of a fragment; `before()`/`append()` are fine).
+Core frontendEditors.js re-renders an edited region with
+`$( startComment ).after( data.rendered )` after **every save**, so on an
+affected build the whole region came back in reverse block order — in Classic
+and Modern alike. The editor itself always looked right (it renders from the
+textarea), so the scrambling only showed once editing closed — the original
+symptom was "my content disappears when I switch Quick edit off".
+
+- **Feature-detected per method at facade parse time** (a real 2-node probe
+  insert) — a healthy build is left completely untouched, and the shim
+  self-disables the day the build is fixed upstream.
+- When broken, the wrapper **pre-reverses string content that parses to 2+
+  top-level nodes and delegates to the ORIGINAL method** — its reversing loop
+  re-reverses into the correct order, and jQuery's own internals (script
+  evaluation, multi-target cloning) still run. Deliberately NOT a
+  reimplementation: node/jQuery-object/function content passes through
+  untouched.
+- `harness/test-frontend-inline.html` **emulates the broken build** (a shim
+  before the facade loads), so T0 plus every save-path case exercises the
+  healed path; the DB content was never affected (only the client DOM), so a
+  reload always showed the truth.
+
 ## Frontend edit-mode dropdown (Off / Classic / Modern) + Modern inline editing
 
 Core's admin frontend toolbar has a binary "Quick edit" checkbox switch. The
@@ -798,8 +824,23 @@ refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
   is still connected between the comments → remove it, re-insert the stored
   originals (byte-identical restore; asserted). Save path → core's
   `setContent(data.rendered)` already replaced the region and detached us → keep
-  the fresh render. Policy (user decisions): **cancel/Esc falls back to Off;
-  save/publish re-enters Modern** on the new content.
+  the fresh render. Policy (user decisions): **every exit lands on Off** —
+  cancel/Esc discards and leaves edit mode; save/publish also drop to Off
+  because the page re-rendering with the saved content IS the visible "it
+  saved" confirmation (revised from an earlier re-enter-after-save behaviour,
+  which looked identical to before the save and read as "nothing happened").
+- **Switching Off/Classic with unsaved edits prompts** (`editmode.unsaved.confirm`,
+  presideBootbox with a window.confirm fallback): OK saves the draft through
+  core's own button — the region re-renders, so the edits stay visible after
+  the switch — Cancel discards them, exactly like the Cancel button. Dirtiness
+  is `getData() !== initialdata` on the facade instance (core's `isDirty()` is
+  hard-coded true and unusable). The "e" hotkey path re-checks the checkbox and
+  routes through the same guard. **The after-save target mode rides ON the
+  inline session** (`saveDraft({ after })` → `onExit( reason, after )`) —
+  deliberately NOT switch-module state: onExit callbacks dispatch via
+  setTimeout, so a stale one from a previous session can fire between "prompt
+  accepted" and "save completed" and would consume it (the bug was Modern
+  re-entering instead of landing on Off; T6b).
 - **The container is kept, chrome-less** (`.tiptap-inline`): it still carries the
   `--tt-*` variables, `position:relative`, and the key-isolation boundary that
   the table bubble / drag handle / maximize all need. No toolbar/footer, no

@@ -152,6 +152,7 @@ export const DEFAULTS = {
 	, "editmode.classic"         : "Classic"
 	, "editmode.modern"          : "Modern"
 	, "editmode.modern.unavailable": "Available when the page has exactly one rich content area"
+	, "editmode.unsaved.confirm" : "You have unsaved changes. Save them as a draft before leaving edit mode? (Cancel discards them)"
 	, "bubble.title"             : "Text formatting"
 };
 

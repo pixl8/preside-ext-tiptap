@@ -32,6 +32,7 @@ import { fitFrontendEditor } from "./frontendFit.js";
 import { resolveInlineMount } from "./inlineMode.js";
 import { initEditModeSwitch } from "./editModeSwitch.js";
 import { createSelectionBubble } from "./selectionBubble.js";
+import { fixJqueryInsertOrder } from "./jqueryOrderFix.js";
 import { t } from "./i18n.js";
 
 ( function() {
@@ -39,6 +40,13 @@ import { t } from "./i18n.js";
 
 	var $ = window.presideJQuery || window.jQuery;
 	var T = window.PresideTiptap;
+
+	// Some Preside builds ship a jQuery whose after()/prepend() insert
+	// multi-node content REVERSED - which scrambles every frontend save
+	// (core's setContent). Feature-detected; a no-op on healthy builds.
+	// Done at parse time: this bundle loads after presidecore (jQuery) and
+	// before frontendEditors.js, so the fix is in place before any save.
+	try { fixJqueryInsertOrder(); } catch ( e ) {}
 
 	// ---- Minimal CKEDITOR global shim -------------------------------------
 	// Non-editor consumers still reference window.CKEDITOR. We provide only what

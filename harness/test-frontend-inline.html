@@ -69,6 +69,32 @@
 
 	<script src="/vendor/jquery.js"></script>
 	<script src="/mocks.js"></script>
+	<script>
+	/* Emulate the broken "2.2.5-jqnext" jQuery build some Preside versions
+	   ship: after() inserts multi-node content REVERSED (fixed-reference
+	   insertBefore loop instead of a fragment). Installed BEFORE the facade so
+	   its feature-detected fix (src/jqueryOrderFix.js) must kick in - every
+	   save-path test below then exercises the healed path, since the core
+	   mock's setContent goes through $( comment ).after( rendered ). */
+	( function( $ ) {
+		var orig = $.fn.after;
+		$.fn.after = function( content ) {
+			if ( arguments.length === 1 ) {
+				return this.each( function() {
+					var parent = this.parentNode;
+					if ( !parent ) { return; }
+					var ref   = this.nextSibling; // FIXED ref - this is the bug
+					var nodes = content && content.jquery ? content.toArray()
+						: content && content.nodeType ? [ content ]
+						: Array.isArray( content ) ? content.slice()
+						: $.parseHTML( String( content ), document, true ) || [];
+					for ( var i = 0; i < nodes.length; i++ ) { parent.insertBefore( nodes[ i ], ref ); }
+				} );
+			}
+			return orig.apply( this, arguments );
+		};
+	} )( window.presideJQuery );
+	</script>
 	<script src="/dist/tiptap.bundle.min.js"></script>
 	<script src="/dist/facade.min.js"></script>
 	<script>
@@ -171,6 +197,16 @@
 			// runs after jQuery's ready (jQuery registered first) - wait for it.
 			await until( function() { return !!switchLi(); } );
 
+			// ---- T0: the jQuery insert-order fix (this page emulates the broken
+			// "jqnext" build above; the facade's feature-detected shim must heal it,
+			// or every save re-render comes back in reverse block order) ------------
+			var probeHost = document.createElement( "div" );
+			var probeC    = document.createComment( "probe" );
+			probeHost.appendChild( probeC );
+			$( probeC ).after( "<i>1</i><i>2</i><i>3</i>" );
+			check( "T0 broken-jQuery after() healed (multi-node order preserved)",
+				probeHost.textContent === "123", probeHost.textContent );
+
 			// ---- T1: the dropdown replaces the switch --------------------------
 			check( "T1 dropdown rendered in the admin toolbar", !!switchLi() );
 			check( "T1 original quick-edit switch hidden, not removed",
@@ -253,24 +289,29 @@
 			check( "T4 content scrolled clear of the fixed admin toolbar", clearOfBar,
 				document.querySelector( ".tiptap-inline" ).getBoundingClientRect().top + " vs bar bottom " + barBottom4 );
 
-			// ---- T5: save round-trip + Modern re-enters ---------------------------
+			// ---- T5: save round-trip lands on Off with the saved content visible ----
+			// (UX decision: re-entering Modern after a save looked identical to
+			// before the save, which read as "nothing happened" - the re-rendered
+			// page IS the confirmation.)
 			CKEDITOR.instances.content._t.commands.insertContentAt( 0, "<p>ADDED BY TEST</p>" );
 			$( ".content-editor-editor-container .editor-btn-save" ).trigger( "click" );
 			var saved = await until( function() {
 				return /ADDED BY TEST/.test( regionHTML() ) && !document.querySelector( "#pageContent .tiptap-inline aside" );
 			} );
 			check( "T5 save POSTs and the rendered content replaces the region", saved, regionHTML().slice( 0, 120 ) );
-			var reentered = await until( function() {
-				return document.body.classList.contains( "frontend-editing-modern" )
-					&& !!document.querySelector( ".tiptap-editor-container.tiptap-inline" )
-					&& !!CKEDITOR.instances.content;
+			var landedOffAfterSave = await until( function() {
+				return !document.body.classList.contains( "frontend-editing-modern" )
+					&& !document.querySelector( ".tiptap-editor-container.tiptap-inline" )
+					&& !checkbox.checked;
 			} );
-			check( "T5 Modern re-enters on the freshly rendered content", reentered );
-			check( "T5 the re-entered editor contains the saved edit",
-				/ADDED BY TEST/.test( CKEDITOR.instances.content.getData() ) );
+			check( "T5 save lands on Off (visible confirmation, no re-enter)", landedOffAfterSave );
+			check( "T5 the saved edit stays visible on the page", /ADDED BY TEST/.test( regionHTML() ) );
+			check( "T5 trigger shows Off after save", /Off/.test( switchLi().querySelector( ".dropdown-toggle" ).textContent ) );
 
 			// ---- T5b: publish flow (auto-confirmed bootbox) ------------------------
-			// core's save flow leaves the buttons disabled for a few ms while its
+			clickMode( "modern" );
+			await until( function() { return !!document.querySelector( ".tiptap-inline" ); } );
+			// core's flows leave the buttons disabled for a few ms while its
 			// always-handler and instanceReady run - wait as a human effectively does
 			await until( function() {
 				var b = document.querySelector( ".content-editor-editor-container .editor-btn-publish" );
@@ -282,20 +323,20 @@
 				return window.__alerts.some( function( a ) { return /Published \(mock\)/.test( a.message || "" ); } );
 			} );
 			check( "T5b publish saves, prompts and posts publishAction", published, "posts: " + window.__posts.join( ", " ) );
-			var reentered2 = await until( function() {
-				return document.body.classList.contains( "frontend-editing-modern" )
-					&& !!document.querySelector( ".tiptap-editor-container.tiptap-inline" );
+			var landedOffAfterPublish = await until( function() {
+				return !document.body.classList.contains( "frontend-editing-modern" )
+					&& !document.querySelector( ".tiptap-editor-container.tiptap-inline" ) && !checkbox.checked;
 			} );
-			check( "T5b Modern re-enters after publish", reentered2 );
+			check( "T5b publish lands on Off", landedOffAfterPublish );
 
 			// ---- T6: cancel restores byte-identically and lands on Off -------------
-			var beforeCancel = regionHTML().replace( /<div class="tiptap-editor-container[\s\S]*?$/, "" );
 			// capture what the region SHOULD be after cancel: the current saved render
-			// (cancel discards the pending edit, not the saved content). Exit + re-enter
-			// cleanly first so originals == current render.
-			clickMode( "off" );
-			await wait( 20 );
+			// (cancel discards the pending edit, not the saved content).
 			var savedRender = regionHTML();
+			// the save re-render went through $(comment).after() on the emulated
+			// broken build - block ORDER must survive (ADDED BY TEST was block 1)
+			check( "T6 saved render preserves block order through the broken build",
+				savedRender.indexOf( "<p>ADDED BY TEST</p>" ) === 0, savedRender.slice( 0, 80 ) );
 			clickMode( "modern" );
 			await until( function() { return !!document.querySelector( ".tiptap-inline" ); } );
 			CKEDITOR.instances.content._t.commands.insertContentAt( 0, "<p>DISCARD ME</p>" );
@@ -309,6 +350,45 @@
 			} );
 			check( "T6 cancel falls back to Off", landedOff );
 			check( "T6 trigger shows Off again", /Off/.test( switchLi().querySelector( ".dropdown-toggle" ).textContent ) );
+
+			// ---- T6b: unsaved-changes guard on mode switch ---------------------------
+			var confirmCalls = 0, confirmAnswer = true;
+			var origConfirm  = window.presideBootbox.confirm;
+			window.presideBootbox.confirm = function( msg, cb ) { confirmCalls++; cb( confirmAnswer ); };
+
+			// clean editor -> no prompt, straight out
+			clickMode( "modern" );
+			await until( function() { return !!document.querySelector( ".tiptap-inline" ); } );
+			clickMode( "off" );
+			await until( function() { return !document.querySelector( ".tiptap-inline" ); } );
+			check( "T6b no prompt when nothing changed", confirmCalls === 0, confirmCalls + " prompts" );
+
+			// dirty + accept: the draft is saved on the way out, edits stay visible
+			clickMode( "modern" );
+			await until( function() { return !!document.querySelector( ".tiptap-inline" ); } );
+			CKEDITOR.instances.content._t.commands.insertContentAt( 0, "<p>KEEP ME</p>" );
+			window.__posts.length = 0;
+			clickMode( "off" );
+			var savedOut = await until( function() {
+				return confirmCalls === 1 && /KEEP ME/.test( regionHTML() )
+					&& !document.body.classList.contains( "frontend-editing-modern" ) && !checkbox.checked;
+			} );
+			check( "T6b dirty switch prompts, saves the draft and lands on Off", savedOut,
+				JSON.stringify( { calls: confirmCalls, posts: window.__posts, modern: document.body.classList.contains( "frontend-editing-modern" ),
+					checked: checkbox.checked, inline: !!document.querySelector( ".tiptap-inline" ), keep: /KEEP ME/.test( regionHTML() ) } ) );
+
+			// dirty + decline: edits discarded, exactly like Cancel
+			confirmAnswer = false;
+			clickMode( "modern" );
+			await until( function() { return !!document.querySelector( ".tiptap-inline" ); } );
+			CKEDITOR.instances.content._t.commands.insertContentAt( 0, "<p>DROP ME</p>" );
+			clickMode( "off" );
+			var discarded = await until( function() {
+				return !document.body.classList.contains( "frontend-editing-modern" )
+					&& !/DROP ME/.test( regionHTML() ) && /KEEP ME/.test( regionHTML() );
+			} );
+			check( "T6b declining the prompt discards the edits", discarded, regionHTML().slice( 0, 80 ) );
+			window.presideBootbox.confirm = origConfirm;
 
 			// ---- T7: selection bubble, filtered per block ---------------------------
 			clickMode( "modern" );
