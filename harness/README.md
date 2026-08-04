@@ -64,6 +64,13 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
     `toolbar_<name>` named toolbars, `format_tags`, numeric `CKEDITOR.ENTER_BR`,
     `disallowedContent`) with instance-over-file precedence asserted,
   - the stock core `/ckeditorExtensions/config.js` executing harmlessly,
+  - **admin style isolation** (T19): the page carries a `<style>` block
+    emulating what the real admin does to an in-page editable
+    (`html{font-size:10px}`, a body font, bare `p`/`h2`/`ul`/`*` rules), and the
+    assertions check the content stylesheet's `body` font reaches the editable,
+    that its `rem` sizes rebase off 16px rather than the admin root, that admin
+    element rules do not leak in, and that our own chrome inside the editable
+    survives the reset,
   - the **opt-out contract** for the chrome this extension adds (`outline`,
     `darkMode`, `wordcount`): site-wide via
     `settings.ckeditor.defaults.defaultConfigs` (as `cfrequest`), per field via

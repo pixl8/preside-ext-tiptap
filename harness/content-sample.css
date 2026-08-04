@@ -1,5 +1,9 @@
 /* Sample "content CSS" for the harness — stands in for an app's front-end
    stylesheet loaded into the editor via data-stylesheets (contentsCss). */
+/* `body` IS the editable (it was CKEditor's iframe body) — the commonest way a
+   site sets its content font, and `rem` here must resolve against the 16px an
+   iframe had, not the admin page's html{font-size:10px}. */
+body { font-family: Palatino, Georgia, serif; font-size: 1.5rem; }
 h2 { color: #0a7d5a; font-family: Georgia, serif; }
 p.lead { font-size: 1.25em; color: #444; font-weight: 300; }
 blockquote { border-left: 4px solid #0a7d5a; padding-left: 14px; color: #666; font-style: italic; }

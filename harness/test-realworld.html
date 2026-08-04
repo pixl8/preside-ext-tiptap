@@ -17,6 +17,20 @@
 		.fixture{margin:18px 0}
 		.fixture h3{font-size:13px;margin:0 0 4px;color:#555}
 	</style>
+	<!-- ADMIN STYLE LEAK EMULATION (T19). Reproduces what the Preside admin page
+	     actually does to an in-page editable: Ace/bootstrap set html{font-size:10px}
+	     (so every `rem` in a content stylesheet resolves against 10px instead of the
+	     16px CKEditor's iframe had) plus body/element/global rules that reach into
+	     the content. Without the isolation layer in src/tiptap.css these win over -
+	     or combine with - the field's own content styles. -->
+	<style>
+		html{font-size:10px}
+		body{font-family:"Trebuchet MS",sans-serif;font-size:14px}
+		*,*:before,*:after{box-sizing:border-box}
+		p{letter-spacing:3px}
+		h2{font-family:"Courier New",monospace;font-weight:bold}
+		ul{padding-left:60px}
+	</style>
 </head>
 <body>
 	<header>Preside Tiptap — <strong>real-world configuration tests</strong> &nbsp;·&nbsp; <a href="/">index</a></header>
@@ -904,6 +918,59 @@
 			} );
 		}
 
+		// ---- T19: the admin's CSS must not reach the content -----------------
+		// The <style> block in this page's head emulates the real admin leak (see
+		// the comment there). Everything asserted here is about the EDITABLE only:
+		// getData() must be untouched by any of it.
+		function isolationChecks() {
+			var $c  = $( "textarea[name=t3]" ).next( ".tiptap-editor-container" );
+			var pm  = $c.find( ".tiptap-editor-mount .ProseMirror" )[ 0 ];
+			var before = CKEDITOR.instances.t3.getData();
+			var ed  = CKEDITOR.instances.t3._t;
+
+			// Give the editable something of each kind to measure.
+			ed.commands.setContent( '<p>para</p><h2>heading</h2><ul><li>item</li></ul>' );
+
+			var cs = getComputedStyle( pm );
+			var p  = pm.querySelector( "p" ), h2 = pm.querySelector( "h2" ), ul = pm.querySelector( "ul" );
+
+			// 1. The content stylesheet's `body` rule styles the editable (it was the
+			//    iframe's body), rather than being scoped to a <body> that isn't there.
+			check( "T19 content CSS `body` font applies to the editable (not the admin's)",
+				/Palatino/i.test( cs.fontFamily ), cs.fontFamily );
+
+			// 2. `1.5rem` means 24px (the 16px an iframe root had), NOT 15px from the
+			//    admin's html{font-size:10px}.
+			check( "T19 rem in content CSS is rebased off 16px, not the admin root",
+				cs.fontSize === "24px", cs.fontSize );
+
+			// 3. Admin element rules that the content CSS says nothing about are
+			//    reverted to browser defaults instead of leaking in.
+			check( "T19 admin `p{letter-spacing}` does not reach the content",
+				getComputedStyle( p ).letterSpacing === "normal", getComputedStyle( p ).letterSpacing );
+			check( "T19 admin `ul{padding-left:60px}` does not reach the content",
+				getComputedStyle( ul ).paddingLeft !== "60px", getComputedStyle( ul ).paddingLeft );
+			check( "T19 admin `*{box-sizing}` does not reach the content",
+				getComputedStyle( p ).boxSizing === "content-box", getComputedStyle( p ).boxSizing );
+
+			// 4. ...and where both have an opinion, the content CSS wins (this is the
+			//    "combining with / winning out over my styles" complaint).
+			check( "T19 content CSS h2 font beats the admin's h2 font",
+				/Georgia/i.test( getComputedStyle( h2 ).fontFamily ), getComputedStyle( h2 ).fontFamily );
+
+			// 5. Chrome inside the editable is unlayered, so the reset never strips it.
+			check( "T19 our own content chrome still styles itself (td border-box)",
+				( function() {
+					ed.commands.setContent( "<table><tr><td>x</td></tr></table>" );
+					var td = pm.querySelector( "td" );
+					return td && getComputedStyle( td ).boxSizing === "border-box";
+				} )() );
+
+			ed.commands.setContent( before );
+			check( "T19 none of it changed the stored content", CKEDITOR.instances.t3.getData() === before,
+				CKEDITOR.instances.t3.getData() );
+		}
+
 		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --
 		function stylesMenuItems() {
 			var $tb = toolbarOf( "t3" );
@@ -922,6 +989,7 @@
 				check( "T3 stylesSet append appears in Styles dropdown (table.compact)", hasStylesSet, JSON.stringify( items ) );
 				check( "T4 stylesheet-harvested selector appears (p.lead from /content-sample.css)", hasHarvested, JSON.stringify( items ) );
 				check( "T4 scoped content CSS injected (no admin bleed)", !!document.querySelector( 'style[data-preside-content-css="/content-sample.css"]' ) );
+				isolationChecks();
 				// outlineChecks() ends with the deferred table-bubble assertions, so
 				// the summary has to wait for them rather than render mid-run.
 				Promise.resolve( outlineChecks() ).then( finish, finish );

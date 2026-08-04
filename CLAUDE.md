@@ -58,6 +58,7 @@ preside-ext-tiptap/
     tokens.js             {{…}} token <-> HTML conversion
     normalize.js          output normalisation (byte-fidelity vs CKEditor)
     presideStyles.js      applies Preside content styles into the editor
+                          (scoping, body->editable mapping, rem rebasing)
     presideLinkSerialization.js  link href <-> {{link|asset|custom}} tokens
     presidePickerModal.js iframe picker + onDialogEvent protocol
     extensions/
@@ -703,6 +704,73 @@ the rules are exact:
   T15). T17 sets `colwidth` the way a finished drag leaves it and asserts the
   serialisation contract; the drag itself was verified with a real Playwright
   mouse.
+
+## Admin/page style isolation + content-CSS fidelity
+
+CKEditor edited inside an **iframe**, so the admin's CSS could not reach the
+content and the field's `contentsCss` was the only thing styling it. Tiptap edits
+in the page DOM, so three separate things had to be reproduced. All three are
+about the **editable only** — `getData()` is untouched by any of it.
+
+1. **The admin's CSS is walled out** (`src/tiptap.css`, the ADMIN / PAGE STYLE
+   ISOLATION block): `all:revert` on the editable, its subtree and the
+   Format/Styles previews drops every *author* declaration back to the
+   user-agent origin — the iframe's starting point — killing the admin's
+   `body{font-family;font-size}` inheritance, its element rules (`p`, `h2`,
+   `ul`, `table`, `img`) and its `*{box-sizing:border-box}`.
+   - **The specificity of those two rules is a contract, `(0,2,0)`**, and the
+     block's comment carries the ordering table. Admin element rules are
+     `(0,0,x)` and lose; our own chrome and the injected content CSS are
+     `(0,2,1)+` (or `(0,2,0)` *later* in the file) and win. The `:where()`
+     wrappers add the container/inline qualification and the chrome exclusion
+     list **for free** — do not turn them into plain compounds.
+   - **It cannot be a cascade layer** (it was, first): layered author styles lose
+     to *all* unlayered ones, including the admin's — i.e. exactly the rules it
+     has to beat. The harness T19 assertions fail loudly if someone "simplifies"
+     it back.
+   - Four content rules (`table`, `td`/`th`, `th`, `pre`) carry a
+     `.tiptap-editor-container` prefix **purely for specificity**, to sit above
+     the reset.
+   - prosemirror-view injects its editable CSS at `.ProseMirror` `(0,1,0)`, which
+     the reset outranks, so the properties the editor needs to *function* are
+     restated after it — `white-space:break-spaces` above all (without it the
+     browser collapses runs of spaces as you type). **Keep that in step with
+     prosemirror-view on upgrade.**
+   - A baseline typography is put back (`--tt-content-font/-size/-line/-fg`,
+     CKEditor's own `contents.css` values), because UA defaults alone mean Times
+     New Roman at 16px. Dark mode overrides `--tt-content-fg` — the editable can
+     no longer inherit the mount's colour.
+   - **Modern inline mode is excluded** (`.tiptap-inline`): there the editable IS
+     the site page and must keep inheriting the theme. Classic frontend editors
+     are NOT excluded — they are modal, like the admin, so the site theme is
+     walled out there exactly as CKEditor's iframe did.
+
+2. **`html`/`:root`/`body` selectors in a content stylesheet ARE the editable**
+   (`src/presideStyles.js` `scopeSelector`). In the iframe the editable *was*
+   `<body>`, so `body{font-family:…}` — how nearly every site sets its content
+   font — styled the content; scoped naively as a descendant it matched nothing.
+   That was the reported "the body font is the admin's, but it picked up my
+   heading font". Qualified forms (`body.night p`) keep the qualifier **on** the
+   scope, so they match nothing — just as they did not match CKEditor's own body.
+
+3. **`rem` is rebased to px at injection time** (`remBase`/`declarations`). The
+   admin root is `html{font-size:10px}` (Ace/bootstrap `scaffolding.less`), not
+   the 16px an iframe had, so rem-based content styles came out at 62.5% of their
+   intended size. **Nothing in CSS can rebase `rem` for a subtree — not scoping,
+   not shadow DOM** (`rem` always resolves against the document root, and
+   inherited properties cross shadow boundaries too, which is why shadow DOM is
+   not the fix for any of this and would cost us ProseMirror's selection/paste
+   handling). So each `Nrem` becomes px against the base the sheet *would* have
+   had in the iframe: its own `html`/`:root` font-size if it declares one
+   (`62.5%` → 10px), else 16px. `body{font-size}` is ignored — it never affected
+   rem. Media-query lengths are left alone (rem there always resolves against the
+   initial font size, in the admin exactly as in the iframe), and declarations are
+   walked property-by-property rather than regexed over `cssText` so quoted
+   `content` values and `url()` payloads are never touched.
+
+Tests: `harness/test-realworld.html` **T19**, backed by an admin-leak emulation
+`<style>` block in that page's head and a `body` + `1.5rem` rule in
+`harness/content-sample.css`.
 
 ## Light / dark mode
 

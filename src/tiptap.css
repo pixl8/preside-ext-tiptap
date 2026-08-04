@@ -47,6 +47,14 @@
 	--tt-table-border:#bbb;
 	--tt-outline-line:#cccccc;
 	--tt-outline-flash:#fee188;
+	/* Baseline CONTENT typography for the editable (see the isolation block
+	   below). Values are CKEditor's own contents.css / .cke_editable defaults, so
+	   a field with no content stylesheets looks like the editor we replace rather
+	   than like the admin page. Overridable per site with these variables. */
+	--tt-content-font:sans-serif,Arial,Verdana,"Trebuchet MS";
+	--tt-content-size:13px;
+	--tt-content-line:1.6;
+	--tt-content-fg:#333;
 	/* position: the outline navigator is absolutely positioned against it. */
 	position:relative;
 	border:1px solid var(--tt-border);border-radius:3px;background:var(--tt-bg);color:var(--tt-fg)
@@ -61,8 +69,79 @@
 .tiptap-btn:hover{background-color:var(--tt-btn-hover-bg);border-color:var(--tt-border-soft)}
 .tiptap-btn.is-active{background:var(--tt-active-bg);border-color:var(--tt-active-border);color:var(--tt-active-fg)}
 .tiptap-theme-toggle{border-radius:50%;width:26px;min-width:26px;padding:0}
+/* ---- ADMIN / PAGE STYLE ISOLATION -------------------------------------------
+   CKEditor edited inside an <iframe>, so the admin's own CSS could not reach the
+   content: the editable started from browser defaults plus whatever contentsCss
+   the field named. Tiptap edits in the page DOM, so without this the admin's
+   `body{font-family;font-size}`, its element rules (h1..h6, p, ul, table, img)
+   and `*{box-sizing:border-box}` all apply to the content, and combine with -
+   or beat - the site's own content styles.
+
+   The fix is `all:revert`, which drops every AUTHOR declaration for these
+   elements back to the user-agent origin - i.e. exactly what an iframe gave us -
+   applied to the editable, its whole subtree, and the Format/Styles previews.
+   Inherited properties resolve normally inside the subtree (revert falls back to
+   the inherited value where the UA sheet says nothing), so this is a wall around
+   the editable, not a per-element flattening.
+
+   THE SPECIFICITY OF THESE TWO RULES IS A CONTRACT - it is what orders the reset
+   against everything that has to beat it, and it is exactly (0,2,0):
+
+     admin / theme CSS   loses    - its element rules (`p`, `ul`, `h2`, `*`) are
+                                    (0,0,x), and inheritance has no specificity
+                                    contest at all once the root is reverted
+     this reset          (0,2,0)
+     our own chrome      wins     - either (0,2,1)+ or (0,2,0) LATER in this file
+     content CSS         wins     - src/presideStyles.js scopes it to
+                                    `.tiptap-editor-mount .ProseMirror <sel>`,
+                                    (0,2,1)+, and injects it into <head> after us
+
+   Hence the `:where()` wrappers: they restrict WHAT matches without adding
+   specificity, so the container/inline qualification and the exclusion list below
+   are free. A cascade layer would have been tidier, but layered author styles
+   lose to ALL unlayered ones - including the admin's, i.e. the exact rules this
+   has to beat. Do not "simplify" it back into a layer, and do not add or drop a
+   class from these selectors without re-reading the table above.
+
+   The exclusion list keeps the reset off elements that are CHROME rather than
+   content - ProseMirror's own (gapcursor, separator), our node-view frames and
+   placeholders - so their (often low-specificity) rules are not in the contest at
+   all. Their DESCENDANTS are still reverted: server-rendered preview HTML is
+   content and the admin's `img`/`table` rules must not reach it either.
+
+   Modern inline mode is deliberately EXCLUDED (.tiptap-inline): there the
+   editable IS the site page and must keep inheriting the theme's own styles. */
+:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror,
+:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror *:not(:where([class*=tiptap-],[class*=ProseMirror],[class*=placeholder],[class*=preside-])),
+.tiptap-fmt-preview,
+.tiptap-fmt-preview *{all:revert}
+/* ...then put a baseline back, since UA defaults alone mean Times New Roman at
+   16px. These are CKEditor's contents.css values (--tt-content-* above), and they
+   sit at the same (0,2,0) as the reset - so a field's content stylesheet, being
+   more specific, overrides them. */
+:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror,
+.tiptap-fmt-preview{
+	font-family:var(--tt-content-font);
+	font-size:var(--tt-content-size);
+	line-height:var(--tt-content-line);
+	color:var(--tt-content-fg)
+}
 .tiptap-editor-mount{padding:8px 10px}
-.tiptap-editor-mount .ProseMirror{outline:none;min-height:60px}
+/* prosemirror-view injects its own editable CSS at `.ProseMirror` (0,1,0), which
+   the isolation reset above outranks - so the handful of properties the editor
+   actually needs to FUNCTION are restated here, at (0,2,0) later in the file.
+   `white-space:break-spaces` is the load-bearing one: without it the browser
+   collapses runs of spaces as you type them. Keep this in step with
+   prosemirror-view's stylesheet on upgrade. */
+.tiptap-editor-mount .ProseMirror{
+	outline:none;min-height:60px;
+	position:relative;
+	white-space:break-spaces;overflow-wrap:break-word;
+	font-variant-ligatures:none;font-feature-settings:"liga" 0
+}
+.tiptap-editor-mount .ProseMirror [contenteditable=false]{white-space:normal}
+.tiptap-editor-mount .ProseMirror [contenteditable=false] [contenteditable=true]{white-space:pre-wrap}
+.tiptap-editor-mount .ProseMirror-hideselection *{caret-color:transparent}
 .tiptap-editor-mount .ProseMirror p{margin:0 0 .6em}
 /* Maximized: the container is portalled to <body> first (see src/maximize.js) so
    it escapes any ancestor stacking context / containing block - on the front end
@@ -238,14 +317,17 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
 .tiptap-source{width:100%;min-height:220px;border:0;outline:none;font-family:monospace;font-size:12px;padding:8px;box-sizing:border-box;background:var(--tt-bg);color:var(--tt-fg)}
-.tiptap-editor-mount table{border-collapse:collapse;margin:8px 0}
+/* Table/pre content rules carry the container prefix purely for SPECIFICITY:
+   (0,2,1) puts them above the (0,2,0) isolation reset near the top of this file,
+   which would otherwise revert them to browser defaults. */
+.tiptap-editor-container .tiptap-editor-mount table{border-collapse:collapse;margin:8px 0}
 /* box-sizing:border-box so `min-width` means the WHOLE cell, matching what a
    stored column width means. With the default content-box the 44px floor became
    ~61px once padding and borders were added, so a dragged column stored a number
    that did not match what the editor had just rendered. */
-.tiptap-editor-mount td,.tiptap-editor-mount th{box-sizing:border-box;border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
-.tiptap-editor-mount th{background:var(--tt-th-bg);font-weight:bold}
-.tiptap-editor-mount pre{background:#2b2b2b;color:#e6e6e6;padding:10px 12px;border-radius:4px;overflow:auto;font-family:monospace}
+.tiptap-editor-container .tiptap-editor-mount td,.tiptap-editor-container .tiptap-editor-mount th{box-sizing:border-box;border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
+.tiptap-editor-container .tiptap-editor-mount th{background:var(--tt-th-bg);font-weight:bold}
+.tiptap-editor-container .tiptap-editor-mount pre{background:#2b2b2b;color:#e6e6e6;padding:10px 12px;border-radius:4px;overflow:auto;font-family:monospace}
 /* Column resizing (prosemirror-tables). The handle is the blue bar on the cell
    border; `resize-cursor` is the class the plugin puts on the EDITABLE while the
    pointer is over a draggable border - without a cursor rule there is no hint
@@ -398,6 +480,9 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 	--tt-table-border:#4a4d55;
 	--tt-outline-line:#5c616b;
 	--tt-outline-flash:#59491d;
+	/* The isolation layer sets the editable's colour explicitly (it can no longer
+	   inherit the mount's), so the dark surface has to recolour the content here. */
+	--tt-content-fg:#e6e6e6;
 	color-scheme:dark
 }
 .tiptap-editor-container.tiptap-dark .tiptap-editor-mount{color:var(--tt-fg)}
