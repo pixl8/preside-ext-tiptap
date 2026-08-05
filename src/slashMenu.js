@@ -21,7 +21,7 @@
 import { ICONS } from "./icons.js";
 import { COMMANDS } from "./toolbar.js";
 import { t } from "./i18n.js";
-import { pageRect, frameOf } from "./editorFrame.js";
+import { pageRect, frameOf, containerOf } from "./editorFrame.js";
 import { focusEditable } from "./editorFocus.js";
 
 // Opt out per site/field, matching the wordcount / outline / tableTools opt-outs.
@@ -344,7 +344,7 @@ function createPopup( editor ) {
 	// container's tiptap-dark class is the single source of truth, checked at
 	// open so a theme toggle mid-session is picked up.
 	function syncTheme() {
-		const container = editor && editor.view && editor.view.dom.closest( ".tiptap-editor-container" );
+		const container = editor && editor.view && containerOf( editor.view.dom );
 		ensure().classList.toggle( "tiptap-dark", !!( container && container.classList.contains( "tiptap-dark" ) ) );
 	}
 

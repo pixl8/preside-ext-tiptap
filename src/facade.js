@@ -28,7 +28,7 @@ import { imageToolsEnabled } from "./imageTools.js";
 import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
 import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
-import { createFrame } from "./editorFrame.js";
+import { createFrame, containerOf } from "./editorFrame.js";
 import { fitFrontendEditor } from "./frontendFit.js";
 import { resolveInlineMount } from "./inlineMode.js";
 import { initEditModeSwitch } from "./editModeSwitch.js";
@@ -253,7 +253,7 @@ import { t } from "./i18n.js";
 	};
 	CompatInstance.prototype.execCommand = function( name ) {
 		if ( name === "maximize" ) {
-			var container = this._container || this._t.view.dom.closest( ".tiptap-editor-container" );
+			var container = this._container || containerOf( this._t.view.dom );
 			if ( container ) { toggleMaximize( container, this._t ); }
 		}
 	};

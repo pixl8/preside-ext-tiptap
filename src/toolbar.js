@@ -15,8 +15,11 @@ import { getContentSelectors } from "./presideStyles.js";
 import { themeEnabled, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, isMaximized } from "./maximize.js";
 import { t } from "./i18n.js";
+import { containerOf } from "./editorFrame.js";
 
-function container( e ) { return e.view.dom.closest( ".tiptap-editor-container" ); }
+// containerOf(), not closest(): the editable is in the editing IFRAME, so a
+// same-document closest() from view.dom finds nothing (see editorFrame.js).
+function container( e ) { return containerOf( e.view.dom ); }
 
 // name -> { run(editor), active(editor) }; icons come from ICONS[name]
 // (own MIT-licensed set — see icons.js), with `label` as a text fallback.
@@ -126,7 +129,15 @@ export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
 		if ( ICONS[ name ] ) { btn.innerHTML = ICONS[ name ]; }
 		else { btn.textContent = cmd.label || name; }
 		btn.setAttribute( "data-cmd", name );
-		btn.addEventListener( "click", function( ev ) { ev.preventDefault(); cmd.run( focusEditable( editor ) ); } );
+		// Refresh the is-active states straight after the click, not only on the next
+		// transaction: Maximize toggles CHROME, so it changes its own active state
+		// without touching the document, and the button would otherwise stay unlit
+		// until the next edit.
+		btn.addEventListener( "click", function( ev ) {
+			ev.preventDefault();
+			cmd.run( focusEditable( editor ) );
+			updaters.forEach( function( u ) { u(); } );
+		} );
 		groupEl.appendChild( btn );
 
 		if ( cmd.active ) { updaters.push( function() { btn.classList.toggle( "is-active", !!cmd.active( editor ) ); } ); }

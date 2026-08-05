@@ -326,6 +326,28 @@ export function surfaceOf( el ) {
 	};
 }
 
+/**
+ * The `.tiptap-editor-container` an element belongs to, ACROSS the frame boundary.
+ *
+ * `el.closest()` stops at the root of `el`'s OWN document, so for anything inside
+ * the editing frame - i.e. `editor.view.dom` for every boxed editor - it returns
+ * null: the container is in the host page. Every caller that reaches for the
+ * container from the editable must go through here.
+ *
+ * This is not theoretical: it is what silently broke the toolbar's Maximize button
+ * (it toggled a null container, so nothing happened) and the slash menu's
+ * light/dark sync when the editable moved into the frame.
+ */
+export function containerOf( el ) {
+	if ( !el ) { return null; }
+	if ( el.closest ) {
+		const own = el.closest( ".tiptap-editor-container" );
+		if ( own ) { return own; }
+	}
+	const frame = frameOf( el );
+	return ( frame && frame.closest && frame.closest( ".tiptap-editor-container" ) ) || null;
+}
+
 /** The frame an element lives in, or null when it is in the host document. */
 export function frameOf( el ) {
 	try {

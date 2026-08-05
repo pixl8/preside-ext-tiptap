@@ -829,6 +829,14 @@ Do not reintroduce an `all: revert` anywhere in the editable's cascade.
   dragged table *vanished* (T16). Living in the frame also means no coordinate
   translation in that module at all. The frame's `body` is `position:relative`
   so the absolutely-positioned rail scrolls with the content.
+- **Never `view.dom.closest( ".tiptap-editor-container" )` — use `containerOf()`**
+  (`editorFrame.js`). `closest()` stops at the root of the editable's OWN
+  document, so from inside the frame it returns null and the caller silently
+  operates on nothing. That is exactly how the toolbar's **Maximize** button
+  stopped working (it toggled a null container) and how the slash menu lost its
+  light/dark sync. Toolbar `is-active` states also refresh right after a button
+  click, not only on the next transaction, because Maximize changes chrome
+  without touching the document.
 - **The gutter classes go on whichever root can reach the mount** — the frame's
   `<html>` for a boxed editor. The padding they apply is on `.tiptap-editor-mount`,
   which a class on the container can no longer select.

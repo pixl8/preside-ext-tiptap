@@ -1164,6 +1164,29 @@
 				&& frameDocOf( $c ).querySelector( ".ProseMirror" ) === maxEditable
 				&& CKEDITOR.instances.t3.getData() === before );
 
+			// The TOOLBAR BUTTON is a different code path from execCommand("maximize"):
+			// the command has the container to hand (this._container), while the button
+			// only has the editor, and the editable is in the FRAME - so a
+			// same-document closest() from view.dom found no container and the button
+			// silently toggled nothing. t2 is the fixture whose toolbar has Maximize.
+			var $c2   = $( "textarea[name=t2]" ).next( ".tiptap-editor-container" );
+			var $maxB = toolbarOf( "t2" ).find( '.tiptap-btn[data-cmd=Maximize]' );
+			check( "T20 the toolbar renders a Maximize button", $maxB.length === 1 );
+			if ( $maxB.length ) {
+				$maxB[ 0 ].click();
+				check( "T20 the toolbar BUTTON maximizes (not just execCommand)",
+					$c2[ 0 ].classList.contains( "is-maximized" )
+					&& Math.round( $c2[ 0 ].getBoundingClientRect().width ) === window.innerWidth,
+					Math.round( $c2[ 0 ].getBoundingClientRect().width ) + " vs " + window.innerWidth );
+				check( "T20 ...and lights up while maximized",
+					$maxB[ 0 ].classList.contains( "is-active" ) );
+				$maxB[ 0 ].click();
+				check( "T20 ...and the button restores it",
+					!$c2[ 0 ].classList.contains( "is-maximized" )
+					&& !$maxB[ 0 ].classList.contains( "is-active" )
+					&& !document.documentElement.classList.contains( "tiptap-maximized-host" ) );
+			}
+
 			// ---- T21: widgets are BLOCK chips, and a click selects the node --------
 			// Asserted on the node views alone: they are created synchronously (with a
 			// loading label) so none of this waits on the preview render.
