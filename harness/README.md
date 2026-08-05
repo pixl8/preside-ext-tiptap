@@ -64,19 +64,20 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
     `toolbar_<name>` named toolbars, `format_tags`, numeric `CKEDITOR.ENTER_BR`,
     `disallowedContent`) with instance-over-file precedence asserted,
   - the stock core `/ckeditorExtensions/config.js` executing harmlessly,
-  - **admin style isolation** (T19): the page carries a `<style>` block
-    emulating what the real admin does to an in-page editable
-    (`html{font-size:10px}`, a body font, bare `p`/`h2`/`ul`/`*` rules), and the
-    assertions check the content stylesheet's `body` font reaches the editable,
-    that its `rem` sizes rebase off 16px rather than the admin root, that admin
-    element rules do not leak in, and that our own chrome inside the editable
-    survives the reset **subtree and all** (icon sizes/stroke in the image
-    bubble) — plus that **the editable is still editable**
-    (`isContentEditable`, text actually insertable, `contenteditable=false` node
-    views still not editable): WebKit maps the `contenteditable` attribute to
-    `-webkit-user-modify` as a presentational hint, which `all:revert` reverts
-    away, so **run this page under WebKit as well as Chromium** — Blink cannot
-    see that class of bug,
+  - **style isolation + content-CSS fidelity** (T19): the page's head carries a
+    `<style>` block emulating what the real admin does to an in-page editable
+    (`html{font-size:10px}`, a body font, bare `p`/`h2`/`ul`/`*` rules) **plus the
+    two forms that defeat any specificity-based isolation** — an `!important`
+    rule and a `(0,2,1)` selector. The editable is in an iframe
+    (`src/editorFrame.js`), so the assertions check the boundary itself, that
+    none of that leak reaches the content, that `rem` resolves against the
+    frame's root (`1.5rem` = 24px, not the admin's 15px) and `em` chains off it
+    (`1.25em` = 30px), that the site's stylesheet arrives **unmodified**, and
+    that the editable is genuinely editable (`isContentEditable`, text
+    insertable, `contenteditable=false` node views still not editable). **Run
+    this page under WebKit as well as Chromium** — the previous approach failed
+    only in WebKit (it maps `contenteditable` to `-webkit-user-modify` as a
+    presentational hint), and Blink cannot see that class of bug,
   - the **opt-out contract** for the chrome this extension adds (`outline`,
     `darkMode`, `wordcount`): site-wide via
     `settings.ckeditor.defaults.defaultConfigs` (as `cfrequest`), per field via
@@ -113,6 +114,16 @@ screenshot / snapshot / click / evaluate. Example contract check on the Tiptap p
 await page.goto("http://localhost:8700/tiptap.html");
 await page.evaluate(() => window.CKEDITOR.instances.content.getData());  // token HTML
 ```
+
+**The editable is inside an iframe**, so `container.querySelector(".ProseMirror")`
+finds nothing — it cannot cross a document boundary. Use `page.frameLocator(
+"iframe.tiptap-editor-frame" )`, or in page script the helpers at the top of
+`test-realworld.html`: `frameElOf()` / `frameDocOf()` / `$in()` (search the
+frame), `surfaceEl()` (the editable's visible box in the host document — the
+frame element), `scrollerOf()` (what actually scrolls: the frame's *document*)
+and `hoverAt()` (dispatch a hover the drag handle will see, which means inside
+the frame). Modern inline mode has no frame and every helper falls back to the
+container, so the same test text works for both.
 
 ## Status vs. what you'll see
 

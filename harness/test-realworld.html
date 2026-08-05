@@ -19,10 +19,15 @@
 	</style>
 	<!-- ADMIN STYLE LEAK EMULATION (T19). Reproduces what the Preside admin page
 	     actually does to an in-page editable: Ace/bootstrap set html{font-size:10px}
-	     (so every `rem` in a content stylesheet resolves against 10px instead of the
-	     16px CKEditor's iframe had) plus body/element/global rules that reach into
-	     the content. Without the isolation layer in src/tiptap.css these win over -
-	     or combine with - the field's own content styles. -->
+	     (so every `rem` resolves against 10px instead of the 16px an iframe root
+	     has) plus body/element/global rules that reach into the content.
+	     The editable is inside an IFRAME (src/editorFrame.js), so none of this can
+	     reach it - that is the whole point, and T19 is what proves it.
+
+	     The second block is the two forms that DEFEAT any specificity-based
+	     isolation, which is why the `all:revert` wall this replaced could never have
+	     worked: `!important` beats a reset outright, and (0,2,1)+ outranks the
+	     (0,2,0) the reset sat at. Both are ordinary content of a real stylesheet. -->
 	<style>
 		html{font-size:10px}
 		body{font-family:"Trebuchet MS",sans-serif;font-size:14px}
@@ -30,6 +35,10 @@
 		p{letter-spacing:3px}
 		h2{font-family:"Courier New",monospace;font-weight:bold}
 		ul{padding-left:60px}
+	</style>
+	<style>
+		p{font-style:italic !important}
+		body main .tiptap-editor-container p{text-transform:uppercase}
 	</style>
 </head>
 <body>
@@ -148,6 +157,55 @@
 		function toolbarOf( name ) {
 			return $( "textarea[name=" + name + "]" ).next( ".tiptap-editor-container" ).find( ".tiptap-toolbar" );
 		}
+		// ---- reaching into the editing frame ---------------------------------
+		// The editable lives in an IFRAME (src/editorFrame.js), so it is not
+		// reachable with container.find() / querySelector() - those cannot cross a
+		// document boundary. Modern inline mode has no frame, so every helper falls
+		// back to the container and the same test text works for both.
+		function frameElOf( container ) {
+			var el = ( container && container.jquery ) ? container[ 0 ] : container;
+			if ( !el ) { return null; }
+			if ( !el.querySelector ) { return null; }
+			return el.classList && el.classList.contains( "tiptap-editor-frame" )
+				? el : el.querySelector( "iframe.tiptap-editor-frame" );
+		}
+		// The editable's visible BOX in this document: the frame when there is one
+		// (it is the viewport the content is clipped to), else the mount div.
+		function surfaceEl( container ) {
+			var el = ( container && container.jquery ) ? container[ 0 ] : container;
+			return frameElOf( el ) || el.querySelector( ".tiptap-editor-mount" );
+		}
+		function frameDocOf( container ) {
+			var f = frameElOf( container );
+			return f ? f.contentDocument : document;
+		}
+		// jQuery set of matches from inside the frame's document.
+		function $in( container, sel ) {
+			var el = ( container && container.jquery ) ? container[ 0 ] : container;
+			var f  = frameElOf( el );
+			return $( f ? f.contentDocument.querySelectorAll( sel ) : el.querySelectorAll( sel ) );
+		}
+		// Hover a block the way the drag handle listens for it. Mouse tracking is
+		// bound INSIDE the frame (src/dragHandle.js keeps the whole drag in one
+		// document), so the synthetic move has to be dispatched there - in frame
+		// coordinates, which is the space an in-frame element's own rect is already
+		// in.
+		function hoverAt( container, el ) {
+			var r = el.getBoundingClientRect();
+			var d = frameDocOf( container );
+			var w = d.defaultView || window;
+			( d.documentElement || ( container.jquery ? container[ 0 ] : container ) )
+				.dispatchEvent( new w.MouseEvent( "mousemove",
+					{ clientY: r.top + 4, clientX: r.left + 40, bubbles: true } ) );
+			return r;
+		}
+		// What actually scrolls the content: the frame's own document, or the mount.
+		function scrollerOf( container ) {
+			var f = frameElOf( container );
+			if ( f ) { return f.contentDocument.documentElement; }
+			var el = ( container && container.jquery ) ? container[ 0 ] : container;
+			return el.querySelector( ".tiptap-editor-mount" );
+		}
 		function footerOf( name ) {
 			return $( "textarea[name=" + name + "]" ).next( ".tiptap-editor-container" ).find( ".tiptap-footer" );
 		}
@@ -236,14 +294,14 @@
 			check( "T9 outline sheds detail to fit (fewer markers than the 90 headings)", rows > 0 && rows < 90, rows + " markers for 90 headings" );
 			check( "T9 panel lists exactly the headings the markers represent", items === rows, items + " entries vs " + rows + " markers" );
 			// Neither list may outgrow the editable it is measured against.
-			var mountH = $t9.closest( ".tiptap-editor-container" ).find( ".tiptap-editor-mount" )[ 0 ].clientHeight;
+			var mountH = surfaceEl( $t9.closest( ".tiptap-editor-container" ) ).clientHeight;
 			var panelH = $t9.find( ".tiptap-outline-panel" )[ 0 ].scrollHeight;
 			check( "T9 panel fits the editor without scrolling", panelH <= mountH, panelH + "px of list in a " + mountH + "px editable" );
 			// The rail must stay centred on the EDITABLE no matter how long the
 			// heading list is (the panel is out of flow precisely so it cannot
 			// stretch the wrapper and push the rail upwards).
 			var railBox  = $t9.find( ".tiptap-outline-rail" )[ 0 ].getBoundingClientRect();
-			var mountBox = $t9.closest( ".tiptap-editor-container" ).find( ".tiptap-editor-mount" )[ 0 ].getBoundingClientRect();
+			var mountBox = surfaceEl( $t9.closest( ".tiptap-editor-container" ) ).getBoundingClientRect();
 			var offCentre = Math.abs( ( railBox.top + railBox.bottom ) / 2 - ( mountBox.top + mountBox.bottom ) / 2 );
 			check( "T9 rail stays centred on the editable", offCentre <= 1, offCentre + "px off centre" );
 
@@ -280,9 +338,14 @@
 					, footer     : !!container.querySelector( ".tiptap-footer" )
 					, themeToggle: !!container.querySelector( ".tiptap-theme-toggle" )
 					, tableTools : !!container.querySelector( ".tiptap-table-bubble" )
-					, dragHandle : !!container.querySelector( ".tiptap-drag-handle" )
-					, blockInsert: !!container.querySelector( ".tiptap-block-insert" )
-					, gutter     : ( container.className.match( /tiptap-gutter-\d/ ) || [ "" ] )[ 0 ]
+					// The drag rail lives INSIDE the frame (a drag must begin and end in
+					// one document - see src/dragHandle.js), and the gutter class with it,
+					// on the frame's own <html>.
+					, dragHandle : !!$in( container, ".tiptap-drag-handle" ).length
+					, blockInsert: !!$in( container, ".tiptap-block-insert" ).length
+					, gutter     : ( ( frameElOf( container )
+					                  ? frameDocOf( container ).documentElement.className
+					                  : container.className ).match( /tiptap-gutter-\d/ ) || [ "" ] )[ 0 ]
 					, slashMenu  : !!( CKEDITOR.instances[ ta.name ]._t.extensionManager.extensions || [] )
 						.filter( function( e ) { return e.name === "presideSlashMenu"; } ).length
 				};
@@ -342,13 +405,15 @@
 			new PresideRichEditor( shortTa );
 
 			var shortContainer = shortTa.nextSibling;
-			var shortMount     = shortContainer.querySelector( ".tiptap-editor-mount" );
+			var shortMount     = surfaceEl( shortContainer );
+			var shortScroller  = scrollerOf( shortContainer );
 
 			// data-max-height="auto" is what ckEditorJs.cfm sends when the setting is
 			// unset; `parseInt( "auto" ) || 0` used to make that max-height:0px.
 			check( "T11 maxHeight 'auto' leaves the editable uncapped", !shortMount.style.maxHeight && shortMount.clientHeight > 20,
 				"max-height=" + ( shortMount.style.maxHeight || "(none)" ) + ", height=" + shortMount.clientHeight );
-			check( "T11 a fully-visible field has nothing to scroll", shortMount.scrollHeight - shortMount.clientHeight <= 4 );
+			// The frame's own DOCUMENT is the scroller, not the frame element.
+			check( "T11 a fully-visible field has nothing to scroll", shortScroller.scrollHeight - shortScroller.clientHeight <= 4 );
 
 			shortContainer.scrollIntoView( { block: "center" } );
 			var pageBefore = window.pageYOffset;
@@ -414,7 +479,7 @@
 			} );
 			check( "T12 releasing closes the picker", !$menu.hasClass( "open" ) );
 
-			var $tbl = $t2c.find( ".tiptap-editor-mount table" );
+			var $tbl = $in( $t2c, ".tiptap-editor-mount table" );
 			check( "T12 the chosen size is what gets inserted", $tbl.find( "tr" ).length === 2
 				&& $tbl.find( "tr:first-child > *" ).length === 3, $tbl.find( "tr" ).length + " rows" );
 			check( "T12 'with header row' produces <th> in the first row only",
@@ -525,27 +590,25 @@
 			$c[ 0 ].scrollIntoView( { block: "center" } );
 
 			// ---- T15: drag handle (synchronous) ----------------------------
-			var handle = $c.find( ".tiptap-drag-handle" )[ 0 ];
+			var handle = $in( $c, ".tiptap-drag-handle" )[ 0 ];
+			// The gutter class is on the FRAME's <html>: the padding it applies is on
+			// the mount, which lives in the frame's document.
 			check( "T15 the drag handle renders and the gutter is applied",
-				!!handle && $c.hasClass( "tiptap-has-draghandle" ) );
+				!!handle && frameDocOf( $c ).documentElement.classList.contains( "tiptap-has-draghandle" ) );
 
 			// The gutter holds "+" AND the grip, and is sized for both. The "+" only
 			// types a "/", so it must not be rendered when the slash menu is off.
 			check( "T15 the gutter holds both the insert button and the grip",
-				$c.find( ".tiptap-block-gutter .tiptap-block-insert" ).length === 1
-				&& $c.find( ".tiptap-block-gutter .tiptap-drag-handle" ).length === 1
-				&& $c.hasClass( "tiptap-gutter-2" ) );
+				$in( $c, ".tiptap-block-gutter .tiptap-block-insert" ).length === 1
+				&& $in( $c, ".tiptap-block-gutter .tiptap-drag-handle" ).length === 1
+				&& frameDocOf( $c ).documentElement.classList.contains( "tiptap-gutter-2" ) );
 
-			var bq  = $c.find( ".tiptap-editor-mount blockquote" )[ 0 ];
+			var bq  = $in( $c, ".tiptap-editor-mount blockquote" )[ 0 ];
 			var bqr = bq.getBoundingClientRect();
-			function hoverBlock( el ) {
-				var r = el.getBoundingClientRect();
-				$c[ 0 ].dispatchEvent( new MouseEvent( "mousemove", { clientY: r.top + 4, clientX: r.left + 40, bubbles: true } ) );
-				return r;
-			}
+			function hoverBlock( el ) { return hoverAt( $c, el ); }
 			// `is-visible` lives on the gutter wrapper, not the grip - both controls
 			// show and move together.
-			var gutter = $c.find( ".tiptap-block-gutter" )[ 0 ];
+			var gutter = $in( $c, ".tiptap-block-gutter" )[ 0 ];
 			hoverBlock( bq );
 			check( "T15 hovering a block shows the grip, aligned to its first line",
 				gutter.classList.contains( "is-visible" )
@@ -571,7 +634,7 @@
 				!!ed.view.dragging && ed.view.dragging.move === true
 				&& ed.view.dragging.slice.content.firstChild.type.name === "blockquote" );
 
-			var h2  = $c.find( ".tiptap-editor-mount h2" )[ 0 ];
+			var h2  = $in( $c, ".tiptap-editor-mount h2" )[ 0 ];
 			var h2r = h2.getBoundingClientRect();
 			var at  = { clientX: Math.round( h2r.left + 10 ), clientY: Math.round( h2r.top + 1 ) };
 			ed.view.dom.dispatchEvent( new DragEvent( "dragover", $.extend( { bubbles: true, cancelable: true, dataTransfer: dt }, at ) ) );
@@ -596,8 +659,8 @@
 				document.dispatchEvent( new KeyboardEvent( "keydown", { key: "Escape", bubbles: true } ) );
 			}
 			var blocksBefore = ed.state.doc.childCount;
-			hoverBlock( $c.find( ".tiptap-editor-mount h2" )[ 0 ] );
-			$c.find( ".tiptap-block-insert" )[ 0 ].click();
+			hoverBlock( $in( $c, ".tiptap-editor-mount h2" )[ 0 ] );
+			$in( $c, ".tiptap-block-insert" )[ 0 ].click();
 			check( "T15 '+' inserts an EMPTY block below and opens the menu (no '/' typed)",
 				ed.state.doc.childCount === blocksBefore + 1
 				&& ed.state.selection.$from.parent.textContent === ""
@@ -621,9 +684,9 @@
 			// On an already-empty paragraph it must REUSE the block, not stack blanks.
 			ed.chain().focus( "end" ).insertContent( "<p></p>" ).run();
 			var blocksWithBlank = ed.state.doc.childCount;
-			var $blanks = $c.find( ".tiptap-editor-mount .ProseMirror > p" ).filter( function() { return this.textContent === ""; } );
+			var $blanks = $in( $c, ".tiptap-editor-mount .ProseMirror > p" ).filter( function() { return this.textContent === ""; } );
 			hoverBlock( $blanks[ $blanks.length - 1 ] );
-			$c.find( ".tiptap-block-insert" )[ 0 ].click();
+			$in( $c, ".tiptap-block-insert" )[ 0 ].click();
 			check( "T15 '+' on an empty paragraph reuses it rather than stacking blanks",
 				ed.state.doc.childCount === blocksWithBlank && slashMenuOpen(),
 				ed.state.doc.childCount + " vs " + blocksWithBlank );
@@ -732,17 +795,16 @@
 					var countFn  = function( s ) { return ( s.match( /<table>/g ) || [] ).length; };
 					var tablesBefore = countFn( before );
 
-					var tbl = $c.find( ".tiptap-editor-mount table" )[ 0 ];
-					var r   = tbl.getBoundingClientRect();
-					$c[ 0 ].dispatchEvent( new MouseEvent( "mousemove", { clientY: r.top + 4, clientX: r.left + 40, bubbles: true } ) );
+					var tbl = $in( $c, ".tiptap-editor-mount table" )[ 0 ];
+					var r   = hoverAt( $c, tbl );
 
-					var handle = $c.find( ".tiptap-drag-handle" )[ 0 ];
+					var handle = $in( $c, ".tiptap-drag-handle" )[ 0 ];
 					var dt = new DataTransfer();
 					handle.dispatchEvent( new DragEvent( "dragstart", { bubbles: true, cancelable: true, dataTransfer: dt } ) );
 					check( "T16 dragging a table arms ProseMirror with the table itself",
 						!!ed.view.dragging && ed.view.dragging.slice.content.firstChild.type.name === "table" );
 
-					var tail = $c.find( ".tiptap-editor-mount .ProseMirror > p" ).last()[ 0 ];
+					var tail = $in( $c, ".tiptap-editor-mount .ProseMirror > p" ).last()[ 0 ];
 					var t2   = tail.getBoundingClientRect();
 					var at   = { clientX: Math.round( t2.left + 10 ), clientY: Math.round( t2.top + 1 ) };
 					ed.view.dom.dispatchEvent( new DragEvent( "dragover", $.extend( { bubbles: true, cancelable: true, dataTransfer: dt }, at ) ) );
@@ -830,7 +892,7 @@
 			// The plugin's floor must match the css floor, or a column could be
 			// dragged narrower than the editor will ever render it.
 			var tableExt = ed.extensionManager.extensions.filter( function( e ) { return e.name === "table"; } )[ 0 ];
-			var cellCss  = getComputedStyle( $( ta ).next( ".tiptap-editor-container" ).find( "td" )[ 0 ] );
+			var cellCss  = getComputedStyle( $in( $( ta ).next( ".tiptap-editor-container" ), "td" )[ 0 ] );
 			check( "T17 cellMinWidth matches the css min-width (what you drag is what you store)",
 				tableExt.options.cellMinWidth + "px" === cellCss.minWidth && cellCss.boxSizing === "border-box",
 				tableExt.options.cellMinWidth + "px vs css " + cellCss.minWidth + " / " + cellCss.boxSizing );
@@ -895,14 +957,14 @@
 
 					requestAnimationFrame( function() { requestAnimationFrame( function() {
 						check( "T12 a multi-cell selection is highlighted and enables merge",
-							$t2c.find( ".selectedCell" ).length === 2 && !bubbleBtn( "Merge cells" ).disabled,
-							$t2c.find( ".selectedCell" ).length + " cells highlighted" );
+							$in( $t2c, ".selectedCell" ).length === 2 && !bubbleBtn( "Merge cells" ).disabled,
+							$in( $t2c, ".selectedCell" ).length + " cells highlighted" );
 
 						// A bubble command must actually edit the table.
 						ed.chain().focus().addRowAfter().run();
 						check( "T12 a bubble command actually edits the table",
-							$t2c.find( ".tiptap-editor-mount table tr" ).length === 3,
-							$t2c.find( ".tiptap-editor-mount table tr" ).length + " rows" );
+							$in( $t2c, ".tiptap-editor-mount table tr" ).length === 3,
+							$in( $t2c, ".tiptap-editor-mount table tr" ).length + " rows" );
 
 						ed.chain().focus().deleteTable().run();
 						check( "T12 deleting the table restores the original content",
@@ -924,34 +986,71 @@
 		// getData() must be untouched by any of it.
 		function isolationChecks() {
 			var $c  = $( "textarea[name=t3]" ).next( ".tiptap-editor-container" );
-			var pm  = $c.find( ".tiptap-editor-mount .ProseMirror" )[ 0 ];
+			var pm  = $in( $c, ".tiptap-editor-mount .ProseMirror" )[ 0 ];
 			var before = CKEDITOR.instances.t3.getData();
 			var ed  = CKEDITOR.instances.t3._t;
 
 			// Give the editable something of each kind to measure.
-			ed.commands.setContent( '<p>para</p><h2>heading</h2><ul><li>item</li></ul>' );
+			ed.commands.setContent( '<p>para</p><p class="lead">lead</p><h2>heading</h2><ul><li>item</li></ul>' );
 
 			var cs = getComputedStyle( pm );
 			var p  = pm.querySelector( "p" ), h2 = pm.querySelector( "h2" ), ul = pm.querySelector( "ul" );
 
 			// 1. The content stylesheet's `body` rule styles the editable (it was the
 			//    iframe's body), rather than being scoped to a <body> that isn't there.
-			check( "T19 content CSS `body` font applies to the editable (not the admin's)",
+			// 0. THE BOUNDARY ITSELF. Everything below follows from the editable
+			//    living in its own document, so assert that first - if this ever goes
+			//    back to being an in-page div, the rest of T19 becomes meaningless
+			//    rather than failing loudly.
+			check( "T19 the editable lives in its own document (the editing frame)",
+				!!frameElOf( $c ) && pm.ownerDocument === frameDocOf( $c ) && pm.ownerDocument !== document );
+
+			// 1. The content stylesheet's `body` rule styles the editable, because the
+			//    frame HAS a body. This needed a selector-rewriting hack before (a
+			//    scoped `body{...}` matched nothing) and now just works.
+			check( "T19 content CSS `body` font applies to the editable",
 				/Palatino/i.test( cs.fontFamily ), cs.fontFamily );
 
-			// 2. `1.5rem` means 24px (the 16px an iframe root had), NOT 15px from the
-			//    admin's html{font-size:10px}.
-			check( "T19 rem in content CSS is rebased off 16px, not the admin root",
+			// 2. `rem` resolves against the FRAME's root (16px), not the admin's
+			//    html{font-size:10px}: body{font-size:1.5rem} is 24px, not 15px. This
+			//    is the bug no amount of CSS could fix - rem always resolves against
+			//    the document root, and a shadow root is not one. A second document is.
+			check( "T19 rem resolves against the frame's root, not the admin's 10px",
 				cs.fontSize === "24px", cs.fontSize );
 
-			// 3. Admin element rules that the content CSS says nothing about are
-			//    reverted to browser defaults instead of leaking in.
+			// 3. ...and `em` chains off that correctly: p.lead{1.25em} of 24px = 30px.
+			//    Worth asserting separately - rebasing rem to px broke the chain
+			//    silently, since the px it produced was only ever approximate.
+			var leadP = pm.querySelector( "p.lead" );
+			check( "T19 em chains off the content CSS body size (1.25em of 24px)",
+				!!leadP && getComputedStyle( leadP ).fontSize === "30px",
+				leadP ? getComputedStyle( leadP ).fontSize : "(no p.lead)" );
+
+			// 4. Admin element rules do not reach the content.
 			check( "T19 admin `p{letter-spacing}` does not reach the content",
 				getComputedStyle( p ).letterSpacing === "normal", getComputedStyle( p ).letterSpacing );
 			check( "T19 admin `ul{padding-left:60px}` does not reach the content",
 				getComputedStyle( ul ).paddingLeft !== "60px", getComputedStyle( ul ).paddingLeft );
 			check( "T19 admin `*{box-sizing}` does not reach the content",
 				getComputedStyle( p ).boxSizing === "content-box", getComputedStyle( p ).boxSizing );
+
+			// 5. THE TWO THAT BEAT THE OLD RESET, and the reason this is an iframe and
+			//    not a cleverer stylesheet. Nothing crosses a document boundary, so
+			//    both are simply absent here.
+			check( "T19 an admin `!important` rule does NOT reach the content",
+				getComputedStyle( p ).fontStyle === "normal", getComputedStyle( p ).fontStyle );
+			check( "T19 a higher-specificity admin rule does NOT reach the content",
+				getComputedStyle( p ).textTransform === "none", getComputedStyle( p ).textTransform );
+
+			// 6. The content stylesheet reaches the editable UNMODIFIED - as the site
+			//    wrote it, sharing the site's own cache. Nothing rewrites it for the
+			//    editable any more; the transformed copy that survives is scoped to
+			//    the Format/Styles previews.
+			check( "T19 the content stylesheet is injected into the frame unmodified",
+				( function() {
+					var links = frameDocOf( $c ).querySelectorAll( "link[data-preside-content-css]" );
+					return links.length === 1 && /content-sample\.css/.test( links[ 0 ].getAttribute( "href" ) );
+				} )() );
 
 			// 4. ...and where both have an opinion, the content CSS wins (this is the
 			//    "combining with / winning out over my styles" complaint).
@@ -1022,6 +1121,36 @@
 			ed.commands.setContent( before );
 			check( "T19 none of it changed the stored content", CKEDITOR.instances.t3.getData() === before,
 				CKEDITOR.instances.t3.getData() );
+
+			// ---- T20: maximize must not re-parent the container -----------------
+			// RE-PARENTING AN IFRAME RE-INITIALISES ITS DOCUMENT (chromium, webkit and
+			// firefox all replace it with a fresh about:blank), so the old
+			// portal-to-<body> maximize wiped the editable out of the DOM. It looked
+			// survivable from the outside - ProseMirror's state is JS-side, so getData()
+			// and even insertContent() still worked against a detached view - which is
+			// why this asserts the DOM identity of the document and the editable, not
+			// just that the editor still answers.
+			var maxParent  = $c[ 0 ].parentElement;
+			var maxDoc     = frameDocOf( $c );
+			var maxEditable = pm;
+			CKEDITOR.instances.t3.execCommand( "maximize" );
+			check( "T20 maximize does not move the container",
+				$c[ 0 ].parentElement === maxParent );
+			check( "T20 maximize does not replace the frame's document",
+				frameDocOf( $c ) === maxDoc && frameElOf( $c ).contentDocument === maxDoc );
+			check( "T20 the editable is the same live node, still connected",
+				frameDocOf( $c ).querySelector( ".ProseMirror" ) === maxEditable && maxEditable.isConnected );
+			check( "T20 the content is still on screen",
+				maxEditable.textContent.length > 0 && frameElOf( $c ).getBoundingClientRect().height > 100,
+				maxEditable.textContent.length + " chars, frame "
+					+ Math.round( frameElOf( $c ).getBoundingClientRect().height ) + "px" );
+			check( "T20 the container fills the viewport",
+				Math.round( $c[ 0 ].getBoundingClientRect().width ) === window.innerWidth );
+			CKEDITOR.instances.t3.execCommand( "maximize" );
+			check( "T20 un-maximizing restores it in place, content intact",
+				$c[ 0 ].parentElement === maxParent
+				&& frameDocOf( $c ).querySelector( ".ProseMirror" ) === maxEditable
+				&& CKEDITOR.instances.t3.getData() === before );
 		}
 
 		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --

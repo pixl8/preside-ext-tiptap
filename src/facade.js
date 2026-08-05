@@ -349,6 +349,22 @@ import { t } from "./i18n.js";
 		// and no-ops on our nameless editable.
 		try { if ( tiptap.view && tiptap.view.dom ) { tiptap.view.dom.form = ta.form || null; } } catch ( e ) {}
 
+		// Fit the frame to the content NOW. setHeights() above ran before the editor
+		// existed, so it measured an empty mount - the ResizeObserver corrects it a
+		// tick later, but until then the frame is short and its document scrolls,
+		// which anything measuring the editor synchronously after construction sees
+		// (T11 caught exactly that). The first paint should be the right size.
+		if ( frameApi ) {
+			frameApi.refit();
+			// ...and on every edit, synchronously. The ResizeObserver alone leaves the
+			// frame one tick behind its content, so a block added programmatically sat
+			// outside the frame's viewport until the next frame - which made chrome
+			// that clamps to the visible band (the drag grip) correctly refuse to show
+			// for it (T15 caught this). An edit changing the height should change the
+			// frame in the same tick.
+			tiptap.on( "update", frameApi.refit );
+		}
+
 		var instance = new CompatInstance( name, tiptap, cfg, ta, container );
 		instance.initialdata = instance.getData();
 		ta.value = instance.initialdata;

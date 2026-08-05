@@ -57,8 +57,10 @@ preside-ext-tiptap/
     customConfig.js       custom CKEditor config-file (configFile/customConfig) loader
     tokens.js             {{…}} token <-> HTML conversion
     normalize.js          output normalisation (byte-fidelity vs CKEditor)
-    presideStyles.js      applies Preside content styles into the editor
-                          (scoping, body->editable mapping, rem rebasing)
+    editorFrame.js        THE ISOLATION BOUNDARY - the per-editor editing iframe
+                          (creation, own-CSS injection, auto-height, surfaceOf())
+    presideStyles.js      content stylesheets: UNMODIFIED into the frame, plus a
+                          scoped copy for the Format/Styles previews only
     presideLinkSerialization.js  link href <-> {{link|asset|custom}} tokens
     presidePickerModal.js iframe picker + onDialogEvent protocol
     extensions/
@@ -711,104 +713,120 @@ the rules are exact:
   serialisation contract; the drag itself was verified with a real Playwright
   mouse.
 
-## Admin/page style isolation + content-CSS fidelity
+## The editing iframe (isolation + content-CSS fidelity)
 
-CKEditor edited inside an **iframe**, so the admin's CSS could not reach the
-content and the field's `contentsCss` was the only thing styling it. Tiptap edits
-in the page DOM, so three separate things had to be reproduced. All three are
-about the **editable only** — `getData()` is untouched by any of it.
+**The editable lives in its own document.** `src/editorFrame.js` builds a
+per-editor `<iframe>`; the toolbar, footer, outline rail and pickers stay in the
+host page. This is what CKEditor 4 did, and returning to it deleted three CSS
+transforms that each existed only because we were not in an iframe.
 
-1. **The admin's CSS is walled out** (`src/tiptap.css`, the ADMIN / PAGE STYLE
-   ISOLATION block): `all:revert` on the editable, its subtree and the
-   Format/Styles previews drops every *author* declaration back to the
-   user-agent origin — the iframe's starting point — killing the admin's
-   `body{font-family;font-size}` inheritance, its element rules (`p`, `h2`,
-   `ul`, `table`, `img`) and its `*{box-sizing:border-box}`.
-   - **The specificity of those two rules is a contract, `(0,2,0)`**, and the
-     block's comment carries the ordering table. Admin element rules are
-     `(0,0,x)` and lose; our own chrome and the injected content CSS are
-     `(0,2,1)+` (or `(0,2,0)` *later* in the file) and win. The `:where()`
-     wrappers add the container/inline qualification and the chrome exclusion
-     list **for free** — do not turn them into plain compounds.
-   - **It cannot be a cascade layer** (it was, first): layered author styles lose
-     to *all* unlayered ones, including the admin's — i.e. exactly the rules it
-     has to beat. The harness T19 assertions fail loudly if someone "simplifies"
-     it back.
-   - Four content rules (`table`, `td`/`th`, `th`, `pre`) carry a
-     `.tiptap-editor-container` prefix **purely for specificity**, to sit above
-     the reset.
-   - **`-webkit-user-modify:read-write` is restated on the editable, and this is
-     load-bearing, not tidiness.** WebKit implements the `contenteditable`
-     *attribute* by mapping it to that property as a **presentational hint**, and
-     presentational hints sit at the bottom of the **author** origin — so
-     `all:revert` reverted it away and **the editable went read-only in Safari:
-     no caret, no typing, text still selectable**. Blink applies the same mapping
-     below the author origin, which is why nothing showed in Chrome or in the
-     harness until it was run under WebKit. Because the property **inherits**, it
-     is restated in both directions (read-only on `[contenteditable=false]`,
-     read-write on a `true` nested in a `false`) — the same three selectors as the
-     `white-space` set — or an embed's preview HTML becomes editable. WebKit's two
-     other editing hints (`-webkit-line-break:after-white-space`,
-     `-webkit-nbsp-mode:space`) go back for the same reason. Asserted by T19 via
-     `isContentEditable`, which is the engine's own answer.
-   - **Our chrome is excluded from the reset SUBTREE AND ALL**
-     (`:not(:where(.ProseMirror [class*=tiptap-]) *)`), because element-deep was
-     not enough: the image bubble is the one piece of chrome that lives *inside*
-     the editable, and reverting its descendants dropped all six of its icons to
-     a 0×0 box (`.tiptap-btn svg` is `(0,1,1)` and loses) while also discarding
-     the SVGs' `stroke="currentColor"`/`fill="none"` — presentation attributes
-     are author origin too.
-     - **The `.ProseMirror` in that selector is not decoration**: bare
-       `[class*=tiptap-]` also matches the container and the **mount**, which are
-       ancestors of every content element there is, so the unqualified form turns
-       the whole reset off.
-     - `.tiptap-embed-preview *` is then **re-included** in the reset: the
-       server-rendered preview HTML is content, and it sits inside
-       `.tiptap-embed-frame`, which the subtree exclusion would otherwise cover.
-     - Descendants of the other excluded lists stay reverted on purpose —
-       `[class*=ProseMirror]` matches `ProseMirror-selectednode`, which lands on
-       real content nodes as the selection moves, so exempting its subtree would
-       restyle content on selection.
-   - prosemirror-view injects its editable CSS at `.ProseMirror` `(0,1,0)`, which
-     the reset outranks, so the properties the editor needs to *function* are
-     restated after it — `white-space:break-spaces` above all (without it the
-     browser collapses runs of spaces as you type). **Keep that in step with
-     prosemirror-view on upgrade.**
-   - A baseline typography is put back (`--tt-content-font/-size/-line/-fg`,
-     CKEditor's own `contents.css` values), because UA defaults alone mean Times
-     New Roman at 16px. Dark mode overrides `--tt-content-fg` — the editable can
-     no longer inherit the mount's colour.
-   - **Modern inline mode is excluded** (`.tiptap-inline`): there the editable IS
-     the site page and must keep inheriting the theme. Classic frontend editors
-     are NOT excluded — they are modal, like the admin, so the site theme is
-     walled out there exactly as CKEditor's iframe did.
+### Why an iframe and not CSS, and not shadow DOM
 
-2. **`html`/`:root`/`body` selectors in a content stylesheet ARE the editable**
-   (`src/presideStyles.js` `scopeSelector`). In the iframe the editable *was*
-   `<body>`, so `body{font-family:…}` — how nearly every site sets its content
-   font — styled the content; scoped naively as a descendant it matched nothing.
-   That was the reported "the body font is the admin's, but it picked up my
-   heading font". Qualified forms (`body.night p`) keep the qualifier **on** the
-   scope, so they match nothing — just as they did not match CKEditor's own body.
+Three separate problems, one boundary:
 
-3. **`rem` is rebased to px at injection time** (`remBase`/`declarations`). The
-   admin root is `html{font-size:10px}` (Ace/bootstrap `scaffolding.less`), not
-   the 16px an iframe had, so rem-based content styles came out at 62.5% of their
-   intended size. **Nothing in CSS can rebase `rem` for a subtree — not scoping,
-   not shadow DOM** (`rem` always resolves against the document root, and
-   inherited properties cross shadow boundaries too, which is why shadow DOM is
-   not the fix for any of this and would cost us ProseMirror's selection/paste
-   handling). So each `Nrem` becomes px against the base the sheet *would* have
-   had in the iframe: its own `html`/`:root` font-size if it declares one
-   (`62.5%` → 10px), else 16px. `body{font-size}` is ignored — it never affected
-   rem. Media-query lengths are left alone (rem there always resolves against the
-   initial font size, in the admin exactly as in the iframe), and declarations are
-   walked property-by-property rather than regexed over `cssText` so quoted
-   `content` values and `url()` payloads are never touched.
+1. **Isolation.** The previous `all: revert` wall was a *specificity contest* at
+   `(0,2,0)`, so it was beaten by any admin/theme rule at `(0,2,1)` or above and
+   by **any `!important`** — both of which real admin stylesheets contain. No
+   ordering wins that argument. It also cost a release: reverting `all` discards
+   the presentational hint WebKit maps `contenteditable` onto, so the editable
+   went read-only in Safari. A shadow root would have fixed this much, and
+   neither of the next two.
+2. **`rem`.** Always resolves against the **document root** — spec, no
+   exceptions, and a shadow root is not a new root. The admin is
+   `html{font-size:10px}` (Ace/bootstrap), so a site's rem-based content CSS
+   rendered at 62.5% of its intended size. A frame has its own root, so `1.2rem`
+   is simply `19.2px`.
+3. **`vw`/`vh` and media queries.** Resolve against the frame's own box — roughly
+   the width the content will really be rendered at — instead of the whole admin
+   viewport. A real site's `clamp(1.125rem, 0.9375rem + 0.5vw, 1.375rem)` base
+   size was being computed for a 1600px viewport inside an 800px editor.
 
-Tests: `harness/test-realworld.html` **T19**, backed by an admin-leak emulation
-`<style>` block in that page's head and a `body` + `1.5rem` rule in
-`harness/content-sample.css`.
+**Deleted with the wall:** the reset and its specificity contract, the
+`html`/`:root`/`body` → editable selector mapping, and the rem→px rebasing.
+Content stylesheets go in as plain unmodified `<link>`s — same bytes, same cache
+as the site. An unstyled field is therefore **raw browser defaults**, exactly as
+CKEditor's iframe with no `contentsCss` was; the editor imposes no content
+typography of its own (`p{margin:0 0 .6em}` went too — at `(0,2,1)` it had been
+beating sites' own `p` margins, including on the real page in Modern mode).
+
+Do not reintroduce an `all: revert` anywhere in the editable's cascade.
+
+### The rules
+
+- **Synchronous by contract.** Core's `frontendEditors.js` reads `.editor`
+  straight off the constructor, so the frame is appended, its document written
+  and the editor built in ONE stack. `open()/write()/close()` into a freshly
+  appended `about:blank` is synchronous and the document is not replaced
+  afterwards (verified in chromium, webkit and firefox). **The frame must be in
+  the document before `contentDocument` exists** — hence it is created *after*
+  the container is inserted.
+- **Our own stylesheet is copied in as `cssText`, not linked** — it must apply
+  before the first height measurement, and a `<link>` would still be loading.
+  The `--tt-*` variables are declared for `.tiptap-editor-doc` (the frame's
+  `<html>`) as well as the container, and `applyTheme()` mirrors the dark class
+  onto the frame root, because a class on the container cannot cross documents.
+- **Height is measured, not CSS.** A frame is a replaced element and does not
+  grow with its content. `refit()` applies `min`/`maxHeight`; the editor also
+  refits **on every update, synchronously** — a ResizeObserver alone leaves the
+  frame a tick behind its content, and chrome that clamps to the visible band
+  then correctly refuses to show for a block that is briefly outside it (T15
+  caught the `+` button silently doing nothing). The initial fit is re-run after
+  the editor is built, since `setHeights()` runs before the editor exists and
+  would otherwise measure an empty mount.
+- **Whether the frame scrolls is DERIVED from its rendered height**
+  (`syncOverflow()`), not from the configured `maxHeight` — a CSS cap can clamp
+  it too, which is exactly what the front end does with a viewport-relative
+  `max-height` so core's fixed save bar stays clear. Scrolling is otherwise off:
+  on an auto-growing frame a scrollbar is pointless *and* a feedback loop
+  (appearing changes the content width → text rewraps → height changes →
+  scrollbar toggles again). The ResizeObserver observes the **body only**, never
+  `documentElement` whose box is the height we write, and defers through rAF.
+- **What lives where.** The frame holds the editable and the chrome glued to the
+  content: embeds/image tools, **the drag gutter** and the table bubble's target.
+  The host holds the toolbar, footer, outline rail, pickers, slash menu.
+- **`surfaceOf()` / `pageRect()`** let host-side chrome work against either
+  shape: `mount` now means *the frame* for a boxed editor and *the mount div* in
+  Modern inline mode. `box()` is the visible editor box (a frame's own rect IS
+  the viewport its content is clipped to), `toHost()` translates content
+  geometry, and `onScroll()` binds to whatever actually scrolls — **an
+  `<iframe>` never fires a scroll event itself**, its document does.
+- **THE DRAG RAIL IS INSIDE THE FRAME, and that is not cosmetic**: a drag must
+  begin and end in one document. With the grip in the host and the editable in
+  the frame, `dragstart` fired in one and ProseMirror's drop handling ran in the
+  other — `view.dragging` armed correctly and the drop then did nothing, so a
+  dragged table *vanished* (T16). Living in the frame also means no coordinate
+  translation in that module at all. The frame's `body` is `position:relative`
+  so the absolutely-positioned rail scrolls with the content.
+- **The gutter classes go on whichever root can reach the mount** — the frame's
+  `<html>` for a boxed editor. The padding they apply is on `.tiptap-editor-mount`,
+  which a class on the container can no longer select.
+- **The slash menu's manual session binds keys to BOTH documents.** The popup is
+  body-portalled in the host (it has to escape a capped field's clipping) but the
+  user types into the frame, so a host-only listener never saw the keystrokes.
+- **Four table/pre rules lost their `.tiptap-editor-container` prefix.** It was
+  there purely for specificity against the reset, and inside the frame there is no
+  container ancestor, so it had become actively wrong (T19's `td` box-sizing and
+  T12's `.selectedCell` highlight both caught it).
+- **Modern inline mode gets NO frame.** There the editable IS the site page: it
+  must inherit the theme, and `rem`/`vw` already resolve against the site's own
+  root and viewport. It is correct by construction.
+
+### What still transforms content CSS
+
+`applyContentStyles()` keeps the scope/rewrite/rem-rebase path for **one**
+consumer: the Format/Styles dropdown previews (`.tiptap-fmt-preview`), which are
+toolbar chrome in the host document and cannot move into the frame. They keep an
+`all: revert` of their own — needed there, and harmless, because a preview is
+decorative. The old "inject the sheet **unscoped** on fetch failure" fallback is
+gone: it dumped a whole site stylesheet into the admin's own `<head>`, and the
+editable no longer depends on that path succeeding.
+
+Tests: `harness/test-realworld.html` **T19** asserts the boundary itself, that an
+admin `!important` and a higher-specificity admin rule do **not** reach the
+content, that `rem` resolves against the frame root (`1.5rem` = 24px, not 15px)
+and that `em` chains off it (`1.25em` = 30px), and that the content sheet arrives
+unmodified. Its head carries the admin-leak emulation, including the two rule
+forms that defeated the old reset.
 
 ## Light / dark mode
 

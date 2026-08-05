@@ -103,7 +103,12 @@ export function createFrame( container, opts ) {
 		// here besides our editor sheet and the site's content CSS, so there is
 		// nothing to wall out. body margin goes because the mount owns the padding.
 		+ '<style>html,body{margin:0;padding:0;background:transparent}'
-		+ 'html{overflow-y:auto;overflow-x:hidden}</style>'
+		// `position:relative` on body makes it the containing block for the block
+		// drag rail (dragHandle.js appends it here so a drag begins and ends in ONE
+		// document). Without it the rail resolves against the frame's viewport and
+		// sticks in place while the content scrolls under it.
+		+ 'body{position:relative}'
+		+ 'html{overflow-x:hidden}</style>'
 		+ '</head><body></body></html>'
 	);
 	doc.close();
@@ -140,14 +145,50 @@ export function createFrame( container, opts ) {
 		return Math.max( de ? de.scrollHeight : 0, mount.scrollHeight || 0 );
 	}
 
+	// Re-entrancy guard. Setting the frame's height relayouts its document, which
+	// changes scrollHeight, which fires the ResizeObserver again - WebKit reports
+	// that as "ResizeObserver loop completed with undelivered notifications".
+	// Sub-pixel churn is also ignored (the 1px band below) so a fractional content
+	// height cannot oscillate.
+	let fitting = false;
+
 	function refit() {
-		if ( frame.__ttFlex ) { return; }   // maximized: the flex layout owns the height
+		// Maximized: the flex layout owns the HEIGHT (maximize.js), but the frame is
+		// then a fixed tall box whose content can overflow it, so whether it scrolls
+		// still has to be kept in step.
+		if ( frame.__ttFlex ) { syncOverflow(); return; }
+		if ( fitting ) { return; }
 		let h = contentHeight();
 		if ( minH > 0 && h < minH ) { h = minH; }
 		if ( maxH > 0 && h > maxH ) { h = maxH; }
 		if ( minH <= 0 && h < 60 )  { h = 60; }
 		h = Math.ceil( h );
-		if ( h !== fitted ) { fitted = h; frame.style.height = h + "px"; }
+		if ( Math.abs( h - fitted ) >= 1 ) {
+			fitting = true;
+			fitted = h;
+			frame.style.height = h + "px";
+			fitting = false;
+		}
+		syncOverflow();
+	}
+
+	// Whether the frame's document scrolls is derived from what the frame ACTUALLY
+	// ended up being, not from the configured maxHeight - because a CSS cap can
+	// clamp it too. The front end does exactly that: `.content-editor-editor-container
+	// .tiptap-editor-frame` gets a viewport-relative max-height so core's fixed save
+	// bar stays clear, and a frame capped that way with overflow hidden would clip
+	// its content with no way to reach it.
+	//
+	// Scrolling is otherwise switched OFF, and that matters: on an auto-growing
+	// frame the scrollbar is pointless AND a feedback loop - appearing changes the
+	// content width, which rewraps the text, which changes the height, which toggles
+	// the scrollbar again.
+	function syncOverflow() {
+		const de = doc.documentElement;
+		if ( !de ) { return; }
+		const needed = ( frame.clientHeight || 0 ) + 1 < contentHeight();
+		const want   = needed ? "auto" : "hidden";
+		if ( de.style.overflowY !== want ) { de.style.overflowY = want; }
 	}
 
 	function setHeights( min, max ) {
@@ -164,10 +205,14 @@ export function createFrame( container, opts ) {
 	// Content edits, image loads and late stylesheets all change the height.
 	// ResizeObserver on the frame's body catches every one of them without a
 	// polling loop; the editor also calls refit() on update.
+	// Observe the BODY only, never documentElement. The root's box IS the height we
+	// set, so observing it feeds our own write straight back in as a change - the
+	// loop WebKit reports as "ResizeObserver loop completed with undelivered
+	// notifications". The body's height is content-driven, which is the signal we
+	// actually want.
 	let ro = null;
 	if ( window.ResizeObserver ) {
 		ro = new window.ResizeObserver( refit );
-		ro.observe( doc.documentElement );
 		ro.observe( doc.body );
 	}
 

@@ -177,6 +177,13 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    toolbar+footer chrome - with a 240px floor for short viewports. `--tt-frontend-offset`
    is however far frontendFit.js had to push the editor down to clear a fixed header;
    the editable gives back exactly that much so the fixed save bar stays clear. */
+/* The FRAME carries the cap on the front end, not the mount - the mount is in the
+   frame's document and this stylesheet's `.content-editor-editor-container`
+   ancestor does not exist there. `max-height` also has to beat the fitted inline
+   height, hence the `height:auto` alongside it: editorFrame.js writes an explicit
+   px height, which would otherwise win. The mount rule stays for Modern inline
+   mode, which has no frame. */
+.content-editor-editor-container .tiptap-editor-frame{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .content-editor-editor-container .tiptap-editor-mount{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .tiptap-editor-mount .ProseMirror a{color:var(--tt-accent);text-decoration:underline}
 .tiptap-editor-mount .img-placeholder,.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{display:inline-block;vertical-align:middle}
@@ -318,17 +325,19 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
 .tiptap-source{width:100%;min-height:220px;border:0;outline:none;font-family:monospace;font-size:12px;padding:8px;box-sizing:border-box;background:var(--tt-bg);color:var(--tt-fg)}
-/* Table/pre content rules carry the container prefix purely for SPECIFICITY:
-   (0,2,1) puts them above the (0,2,0) isolation reset near the top of this file,
-   which would otherwise revert them to browser defaults. */
-.tiptap-editor-container .tiptap-editor-mount table{border-collapse:collapse;margin:8px 0}
+/* These four used to carry a `.tiptap-editor-container` prefix purely for
+   SPECIFICITY - (0,2,1), to sit above the (0,2,0) isolation reset. The reset is
+   gone, and the prefix had become actively WRONG: inside the editing frame there
+   is no container ancestor, so all four stopped matching (T19's td border-box and
+   T12's .selectedCell highlight both caught it). */
+.tiptap-editor-mount table{border-collapse:collapse;margin:8px 0}
 /* box-sizing:border-box so `min-width` means the WHOLE cell, matching what a
    stored column width means. With the default content-box the 44px floor became
    ~61px once padding and borders were added, so a dragged column stored a number
    that did not match what the editor had just rendered. */
-.tiptap-editor-container .tiptap-editor-mount td,.tiptap-editor-container .tiptap-editor-mount th{box-sizing:border-box;border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
-.tiptap-editor-container .tiptap-editor-mount th{background:var(--tt-th-bg);font-weight:bold}
-.tiptap-editor-container .tiptap-editor-mount pre{background:#2b2b2b;color:#e6e6e6;padding:10px 12px;border-radius:4px;overflow:auto;font-family:monospace}
+.tiptap-editor-mount td,.tiptap-editor-mount th{box-sizing:border-box;border:1px solid var(--tt-table-border);padding:4px 8px;min-width:44px;position:relative}
+.tiptap-editor-mount th{background:var(--tt-th-bg);font-weight:bold}
+.tiptap-editor-mount pre{background:#2b2b2b;color:#e6e6e6;padding:10px 12px;border-radius:4px;overflow:auto;font-family:monospace}
 /* Column resizing (prosemirror-tables). The handle is the blue bar on the cell
    border; `resize-cursor` is the class the plugin puts on the EDITABLE while the
    pointer is over a draggable border - without a cursor rule there is no hint

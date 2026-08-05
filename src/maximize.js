@@ -1,6 +1,18 @@
 /**
  * Maximize (full-viewport) toggle for an editor container.
  *
+ * IT DOES NOT MOVE THE CONTAINER, AND MUST NOT. It used to portal it to <body>;
+ * the editable now lives in an <iframe> (src/editorFrame.js), and RE-PARENTING AN
+ * IFRAME RE-INITIALISES ITS DOCUMENT - chromium, webkit and firefox all replace
+ * it with a fresh about:blank. Maximizing therefore wiped the editable out of the
+ * DOM. It looked survivable from the outside (ProseMirror's state is JS-side, so
+ * getData() and even insertContent() still worked against a detached view) which
+ * is exactly what makes it worth this comment: the editor was blank on screen.
+ *
+ * So the container is made `position:fixed; inset:0` WHERE IT IS, and the
+ * ancestor constraints that would otherwise defeat that are neutralised for the
+ * duration and restored on exit (see hoistAncestors).
+ *
  * `position:fixed` alone is not enough: on the FRONT END the editor is rendered
  * inside `.content-editor-editor-container` (see Preside's
  * views/admin/frontendEditing/_editorTemplate.cfm + frontend/frontendEditor.less),
@@ -33,15 +45,40 @@ function heightBoxOf( container ) {
 	    || container.querySelector( ".tiptap-editor-mount" );
 }
 
+// Suspend the ancestor constraints that would clip or shrink a fixed, full-viewport
+// container, and hand back a restore function. Deliberately narrow: only the
+// properties that can defeat `inset:0` are touched, only on the ancestors between
+// the container and <body>, and every original inline value is put back verbatim.
+function hoistAncestors( container ) {
+	var touched = [];
+	var el = container.parentElement;
+	while ( el && el !== document.body && el !== document.documentElement ) {
+		var cs = window.getComputedStyle( el );
+		var needs = ( cs.overflow !== "visible" ) || ( cs.maxWidth !== "none" ) || ( cs.maxHeight !== "none" );
+		if ( needs ) {
+			touched.push( { el: el, overflow: el.style.overflow, maxWidth: el.style.maxWidth, maxHeight: el.style.maxHeight } );
+			el.style.overflow  = "visible";
+			el.style.maxWidth  = "none";
+			el.style.maxHeight = "none";
+		}
+		el = el.parentElement;
+	}
+	return function() {
+		touched.forEach( function( t ) {
+			t.el.style.overflow  = t.overflow;
+			t.el.style.maxWidth  = t.maxWidth;
+			t.el.style.maxHeight = t.maxHeight;
+		} );
+	};
+}
+
 export function enterMaximize( container ) {
 	if ( !container || isMaximized( container ) ) { return; }
 
-	var box         = heightBoxOf( container );
-	var placeholder = document.createComment( "tiptap-maximized" );
+	var box = heightBoxOf( container );
 
-	container.parentNode.insertBefore( placeholder, container );
 	container._ttMaximizeState = {
-		  placeholder : placeholder
+		  unhoist     : hoistAncestors( container )
 		, width       : container.style.width
 		, maxHeight   : box ? box.style.maxHeight : ""
 		, overflowY   : box ? box.style.overflowY : ""
@@ -58,9 +95,10 @@ export function enterMaximize( container ) {
 		// the height, or it fights it back to the content height every edit.
 		box.__ttFlex = true;
 		box.style.height = "";
+		// The frame is now a tall fixed box; its own document has to scroll.
+		if ( typeof box.__ttRefit === "function" ) { box.__ttRefit(); }
 	}
 
-	document.body.appendChild( container );
 	container.classList.add( MAX_CLASS );
 	document.documentElement.classList.add( HOST_CLASS );
 }
@@ -85,10 +123,7 @@ export function exitMaximize( container ) {
 			if ( typeof box.__ttRefit === "function" ) { box.__ttRefit(); }
 		}
 
-		if ( state.placeholder && state.placeholder.parentNode ) {
-			state.placeholder.parentNode.insertBefore( container, state.placeholder );
-			state.placeholder.parentNode.removeChild( state.placeholder );
-		}
+		if ( typeof state.unhoist === "function" ) { state.unhoist(); }
 		window.scrollTo( 0, state.scrollTop );
 	}
 

@@ -671,7 +671,12 @@ function renderSource( editor ) {
 		ev.preventDefault();
 		const mount = editor.view.dom.parentNode; // .tiptap-editor-mount
 		if ( !mount.__srcTa ) {
-			const ta = document.createElement( "textarea" );
+			// Created in the MOUNT's own document: for a boxed editor that is the
+			// editing frame, not this one. Appending a host-created node would be
+			// auto-adopted, but it would also be built with the wrong realm's
+			// prototypes - and the frame is where its stylesheet and the editor's
+			// key isolation live.
+			const ta = mount.ownerDocument.createElement( "textarea" );
 			ta.className = "tiptap-source";
 			ta.value = tokenize( editor.getHTML() );
 			editor.view.dom.style.display = "none";

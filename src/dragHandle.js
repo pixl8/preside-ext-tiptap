@@ -45,13 +45,42 @@ export function dragHandleEnabled( cfg ) {
 export function createDragHandle( editor, container, mount, withInsert, opts ) {
 	const fixed = !!( opts && opts.fixed );
 
-	// `mount` is the editing FRAME for a boxed editor, the mount div inline. The
-	// rail stays in the HOST document (it has to escape the frame's clip to sit in
-	// the gutter), so every block rect measured inside the frame is translated with
-	// toHost(), and the content's scroller is the frame's own document.
+	// `mount` is the editing FRAME for a boxed editor, the mount div inline.
+	//
+	// THE RAIL LIVES INSIDE THE FRAME, and that is not a style choice - a drag has
+	// to begin and end in ONE document. With the grip in the host document and the
+	// editable in the frame, `dragstart` fired in one and ProseMirror's
+	// `dragover`/`drop` handling ran in the other: `view.dragging` was armed with
+	// the right block and the drop then did nothing, so a dragged table vanished
+	// instead of moving (T16 caught exactly that - the doc came back with no cells
+	// in it at all).
+	//
+	// Living in the frame also means NO coordinate translation anywhere in this
+	// module: the block rects, the pointer, the gutter and the scroller are all in
+	// the frame's own space. `host` is what the rail is positioned against and what
+	// mouse tracking is bound to - the frame's body/document, or the container in
+	// Modern inline mode, which has no frame.
 	const surface = surfaceOf( mount );
-	// Where the visible editor box is, in host coordinates.
-	const boxRect = function() { return surface.box(); };
+	const inFrame = surface.isFrame;
+	const hostDoc = surface.doc;
+	const hostWin = surface.win;
+	// The rail's offset parent AND the box its coordinates are relative to. The
+	// frame's <body> is made `position:relative` by the frame's own reset, so an
+	// absolutely-positioned rail scrolls with the content instead of sticking to
+	// the frame's viewport.
+	const host    = inFrame ? hostDoc.body : container;
+	// The element mouse tracking is bound to: hovering the gutter must not read as
+	// leaving the block, and the gutter is inside the frame with the content.
+	const tracker = inFrame ? hostDoc.documentElement : container;
+	// The visible editor box, in the same space as everything else here. Inside a
+	// frame that is the frame's viewport, whose origin is 0,0.
+	const boxRect = function() {
+		if ( !inFrame ) { return surface.box(); }
+		return { top: 0, left: 0, bottom: hostWin.innerHeight, right: hostWin.innerWidth,
+		         width: hostWin.innerWidth, height: hostWin.innerHeight };
+	};
+	const viewportH = function() { return inFrame ? hostWin.innerHeight : ( window.innerHeight || 0 ); };
+	const viewportW = function() { return inFrame ? hostWin.innerWidth  : ( window.innerWidth || 0 ); };
 
 	// The gutter only exists when this chrome does, so opting out leaves the
 	// editable's padding exactly as it was. Its width depends on how many controls
@@ -78,14 +107,14 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 
 	// One wrapper for both controls so they move together and share the hover
 	// bookkeeping - hovering either must not count as leaving the block.
-	const rail = document.createElement( "span" );
+	const rail = hostDoc.createElement( "span" );
 	rail.className = "tiptap-block-gutter" + ( fixed ? " is-fixed" : "" );
-	( fixed ? document.body : container ).appendChild( rail );
+	( fixed ? document.body : host ).appendChild( rail );
 
 	// "+" first, matching the reference editor's order (and Notion's).
 	let insertBtn = null;
 	if ( withInsert ) {
-		insertBtn = document.createElement( "button" );
+		insertBtn = hostDoc.createElement( "button" );
 		insertBtn.type = "button";
 		insertBtn.className = "tiptap-block-insert";
 		insertBtn.title = t( "draghandle.insert" );
@@ -96,7 +125,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		rail.appendChild( insertBtn );
 	}
 
-	const handle = document.createElement( "button" );
+	const handle = hostDoc.createElement( "button" );
 	handle.type = "button";
 	handle.className = "tiptap-drag-handle";
 	handle.draggable = true;
@@ -158,9 +187,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 			if ( found ) { return; }
 			const dom = editor.view.nodeDOM( offset );
 			if ( !dom || !dom.getBoundingClientRect ) { return; }
-			// Host coordinates: `y` comes from a mousemove on the container, in the
-			// host document, while the block's own box is frame-relative.
-			const rect = surface.toHost( dom.getBoundingClientRect() );
+			const rect = dom.getBoundingClientRect();
 			if ( y >= rect.top - 2 && y <= rect.bottom + 2 ) {
 				found = { node: node, offset: offset, dom: dom, rect: rect };
 			}
@@ -175,7 +202,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 	}
 
 	function show( block ) {
-		const cRect = container.getBoundingClientRect();
+		const cRect = host.getBoundingClientRect();
 		const mRect = boxRect();
 
 		// The VISIBLE part of the mount - its intersection with the viewport. In
@@ -183,7 +210,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		// inline (Modern mode) the mount is page-height and the raw rect would
 		// clamp the grip somewhere off screen.
 		const vTop    = Math.max( mRect.top, 0 );
-		const vBottom = Math.min( mRect.bottom, window.innerHeight );
+		const vBottom = Math.min( mRect.bottom, viewportH() );
 
 		// Don't hover-show a block scrolled out of that visible band.
 		if ( block.rect.bottom < vTop || block.rect.top > vBottom ) { hide(); return; }
@@ -240,14 +267,14 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		hide();
 	}
 	function onRailLeave( e ) {
-		if ( e.relatedTarget && ( container.contains( e.relatedTarget ) || rail.contains( e.relatedTarget ) ) ) { return; }
+		if ( e.relatedTarget && ( tracker.contains( e.relatedTarget ) || rail.contains( e.relatedTarget ) ) ) { return; }
 		hide();
 	}
 	// Fixed-position coordinates go stale the moment the page scrolls.
 	function onWinScroll() { if ( fixed ) { hide(); } }
 
-	container.addEventListener( "mousemove", onMove );
-	container.addEventListener( "mouseleave", onLeave );
+	tracker.addEventListener( "mousemove", onMove );
+	tracker.addEventListener( "mouseleave", onLeave );
 	// A frame scrolls its own document, so the listener goes through the surface.
 	const offContentScroll = surface.onScroll( hide );
 	if ( fixed ) {
@@ -361,14 +388,16 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 
 		if ( surface.canScroll() ) {
 			const vTop    = Math.max( mRect.top, 0 );
-			const vBottom = Math.min( mRect.bottom, window.innerHeight );
+			const vBottom = Math.min( mRect.bottom, viewportH() );
 			if ( y < vTop + SCROLL_ZONE )         { surface.scrollTo( surface.scrollTop() - scrollSpeed( y - vTop ) ); }
 			else if ( y > vBottom - SCROLL_ZONE ) { surface.scrollTo( surface.scrollTop() + scrollSpeed( vBottom - y ) ); }
 		}
 		// The window scrolls too when the editor overflows the viewport (inline
 		// mode, or a tall uncapped admin field).
-		if ( y < SCROLL_ZONE )                            { window.scrollBy( 0, -scrollSpeed( y ) ); }
-		else if ( y > window.innerHeight - SCROLL_ZONE )  { window.scrollBy( 0, scrollSpeed( window.innerHeight - y ) ); }
+		// Inside a frame it is the frame's own window that scrolls; inline it is the
+		// page. Either way `hostWin` is the one whose viewport `y` is measured in.
+		if ( y < SCROLL_ZONE )                       { hostWin.scrollBy( 0, -scrollSpeed( y ) ); }
+		else if ( y > viewportH() - SCROLL_ZONE )    { hostWin.scrollBy( 0, scrollSpeed( viewportH() - y ) ); }
 	}
 
 	function forwardToEditable( e ) {
@@ -377,7 +406,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 
 		const mRect = boxRect();
 		const vTop    = Math.max( mRect.top, 0 );
-		const vBottom = Math.min( mRect.bottom, window.innerHeight );
+		const vBottom = Math.min( mRect.bottom, viewportH() );
 		// The forwarding band: the gutter / rail column left of the content
 		// (fixed-mode rails float up to ~50px outside the mount), within the
 		// visible part of the mount.
@@ -413,15 +442,15 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		forwardToEditable( e );
 	}
 
-	document.addEventListener( "dragover", onDocDragOver, true );
-	document.addEventListener( "drop", onDocDrop, true );
+	hostDoc.addEventListener( "dragover", onDocDragOver, true );
+	hostDoc.addEventListener( "drop", onDocDrop, true );
 
 	editor.on( "destroy", function() {
-		container.removeEventListener( "mousemove", onMove );
-		container.removeEventListener( "mouseleave", onLeave );
+		tracker.removeEventListener( "mousemove", onMove );
+		tracker.removeEventListener( "mouseleave", onLeave );
 		offContentScroll();
-		document.removeEventListener( "dragover", onDocDragOver, true );
-		document.removeEventListener( "drop", onDocDrop, true );
+		hostDoc.removeEventListener( "dragover", onDocDragOver, true );
+		hostDoc.removeEventListener( "drop", onDocDrop, true );
 		if ( fixed ) {
 			window.removeEventListener( "scroll", onWinScroll, { capture: true } );
 			// Body-portalled - the facade's container removal cannot collect it.

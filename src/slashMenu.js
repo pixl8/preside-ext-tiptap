@@ -205,9 +205,20 @@ export function createSlashMenu( T, cfg ) {
 					close();
 					if ( it ) { it.run( editor ); }
 				}
+				// BOTH documents, and both are needed. The user types into the EDITABLE,
+				// which for a boxed editor is inside the editing frame - a listener on the
+				// host document never sees those keystrokes, so the manual menu could not
+				// be filtered or dismissed from the keyboard at all. The popup itself is
+				// body-portalled in the HOST document, so an outside-click that should
+				// dismiss the menu is a host mousedown. Modern inline mode has one
+				// document and `docs` collapses to it.
+				const docs = [ document, editor.view.dom.ownerDocument ]
+					.filter( function( d, i, all ) { return d && all.indexOf( d ) === i; } );
 				function close() {
-					document.removeEventListener( "keydown", onKey, true );
-					document.removeEventListener( "mousedown", onDown, true );
+					docs.forEach( function( d ) {
+						d.removeEventListener( "keydown", onKey, true );
+						d.removeEventListener( "mousedown", onDown, true );
+					} );
 					popup.close();
 				}
 				function onDown( e ) { if ( !popup.contains( e.target ) ) { close(); } }
@@ -232,8 +243,10 @@ export function createSlashMenu( T, cfg ) {
 					close();
 				}
 
-				document.addEventListener( "keydown", onKey, true );
-				document.addEventListener( "mousedown", onDown, true );
+				docs.forEach( function( d ) {
+					d.addEventListener( "keydown", onKey, true );
+					d.addEventListener( "mousedown", onDown, true );
+				} );
 				popup.open();
 				refilter();
 			};
