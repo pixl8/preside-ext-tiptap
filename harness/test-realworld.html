@@ -1163,6 +1163,49 @@
 				$c[ 0 ].parentElement === maxParent
 				&& frameDocOf( $c ).querySelector( ".ProseMirror" ) === maxEditable
 				&& CKEDITOR.instances.t3.getData() === before );
+
+			// ---- T21: widgets are BLOCK chips, and a click selects the node --------
+			// Asserted on the node views alone: they are created synchronously (with a
+			// loading label) so none of this waits on the preview render.
+			var widgetHtml = "{{widget:news:%7B%7D:widget}}{{widget:events:%7B%7D:widget}}";
+			CKEDITOR.instances.t3.setData( widgetHtml );
+			var chips = $in( $c, ".widget-placeholder" );
+			check( "T21 two widget tokens make two placeholders", chips.length === 2, chips.length + " found" );
+			if ( chips.length === 2 ) {
+				var box1 = chips[ 0 ].getBoundingClientRect();
+				var box2 = chips[ 1 ].getBoundingClientRect();
+				// They are block nodes in the schema; as `display:inline-block` their DOM
+				// shared a line and two widgets in a row sat side by side.
+				check( "T21 consecutive widgets STACK rather than sharing a line",
+					box2.top >= box1.bottom - 1,
+					"first bottom=" + Math.round( box1.bottom ) + ", second top=" + Math.round( box2.top ) );
+				// ...but still shrink-wrap, so a widget reads as a chip not a full-width bar
+				check( "T21 ...and still shrink-wrap to their content",
+					box1.width > 10 && box1.width < frameElOf( $c ).clientWidth - 40,
+					Math.round( box1.width ) + "px in a " + frameElOf( $c ).clientWidth + "px editor" );
+
+				// A click selects the NODE, so the chip gets the selected border instead
+				// of the browser painting a text selection across its preview.
+				var fdoc21 = frameDocOf( $c );
+				var fwin21 = fdoc21.defaultView;
+				var cr = chips[ 0 ].getBoundingClientRect();
+				chips[ 0 ].dispatchEvent( new fwin21.MouseEvent( "mousedown",
+					{ bubbles: true, button: 0, clientX: cr.left + 10, clientY: cr.top + 8 } ) );
+				var sel21 = CKEDITOR.instances.t3._t.state.selection;
+				check( "T21 clicking a widget selects the node",
+					!!sel21.node && sel21.node.type.name === "presideWidget",
+					sel21.node ? sel21.node.type.name : "(not a node selection)" );
+				check( "T21 ...the chip itself carries the selected outline",
+					chips[ 0 ].classList.contains( "ProseMirror-selectednode" )
+					&& fwin21.getComputedStyle( chips[ 0 ] ).outlineStyle === "solid",
+					fwin21.getComputedStyle( chips[ 0 ] ).outlineStyle );
+				check( "T21 ...and no text is selected inside it",
+					!( fdoc21.getSelection && String( fdoc21.getSelection() ).length ),
+					String( fdoc21.getSelection ? fdoc21.getSelection() : "" ).slice( 0, 30 ) );
+				check( "T21 the widget tokens round-trip unchanged",
+					CKEDITOR.instances.t3.getData() === widgetHtml, CKEDITOR.instances.t3.getData() );
+			}
+			CKEDITOR.instances.t3.setData( before );
 		}
 
 		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --

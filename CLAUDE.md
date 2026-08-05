@@ -438,6 +438,36 @@ Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
   including serving the mock svg AT the requested size so the aspect ratio the
   editor reads is real.
 
+## Embeds: block chips, and click-to-select
+
+All three embeds (`presideImage`, `presideAttachment`, `presideWidget`) are
+**block** atom nodes, and their DOM has to be block-level too.
+
+- **Widget/attachment placeholders are `display:block; width:fit-content`.** As
+  `inline-block` their DOM shared a line, so two widgets in a row sat side by side
+  instead of stacking - wrong for a block node. `fit-content` keeps the shrink-wrap
+  that makes a widget read as a chip rather than a full-width bar (shrinking AND
+  stacking verified in blink, webkit and gecko).
+- **The IMAGE keeps `inline-block`**, deliberately: its alignment feature floats
+  the wrapper so text can sit beside it, and `center` switches itself to
+  `display:block` for the auto margins. So two consecutive *images* can still share
+  a line - that is the alignment feature working, not the widget bug.
+- **A single click selects the NODE.** These are atoms with
+  `contenteditable=false`, but their previews are server-rendered HTML full of real
+  text, and a click landing on it left the browser to start a text selection
+  *inside* the embed. `makePreviewDom()` adds a `mousedown` handler that
+  `preventDefault()`s (which is what stops the text selection) and sets a
+  NodeSelection. Only for embeds with no tools of their own - **imageTools already
+  does this for images**, where the click must also arm the handles and the bubble.
+  `user-select:none` on all three stops a drag painting a highlight across them.
+- **The selected outline goes on the CHIP for widget/attachment, on the FRAME for
+  the image.** The image's wrapper goes full-width to centre itself, so outlining
+  it drew a selection box across the whole editor; a chip shrink-wraps and is the
+  box the user actually sees.
+
+Tests: `harness/test-realworld.html` **T21** (stacking, shrink-wrap,
+click-selects-node, the outline, no text selection, and token round-trip).
+
 ## The "/" insert menu
 
 `src/slashMenu.js` - type `/` in an empty block to filter and insert any

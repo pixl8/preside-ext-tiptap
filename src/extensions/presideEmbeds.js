@@ -21,6 +21,7 @@
 import { Node } from "@tiptap/core";
 import { openPickerModal, postForm } from "../presidePickerModal.js";
 import { attachImageTools } from "../imageTools.js";
+import { focusEditable } from "../editorFocus.js";
 import { t } from "../i18n.js";
 
 function makeEmbedNode( opts, deps ) {
@@ -124,6 +125,26 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 		dom.addEventListener( "dblclick", function( e ) {
 			e.preventDefault(); e.stopPropagation();
 			openPicker();
+		} );
+	}
+
+	// A SINGLE click selects the whole node, so an embed gets the selected-border
+	// state rather than a text selection painted across its preview. These are atom
+	// nodes with contenteditable=false, but their previews are server-rendered HTML
+	// full of real text, and a click landing on that text left the browser to start
+	// a text selection inside it.
+	//
+	// Images already behave this way because imageTools does it (its click also has
+	// to arm the drag handles and the bubble), so this covers the embeds that have
+	// no tools of their own - attachments and widgets. preventDefault is what stops
+	// the text selection starting, and it also suppresses the native focus, so the
+	// DOM focus is taken explicitly - see src/editorFocus.js for why that has to
+	// happen outside the transaction.
+	if ( edit && edit.editor && !edit.imageTools ) {
+		dom.addEventListener( "mousedown", function( e ) {
+			if ( e.button !== 0 || typeof edit.getPos !== "function" ) { return; }
+			e.preventDefault();
+			focusEditable( edit.editor ).chain().setNodeSelection( edit.getPos() ).run();
 		} );
 	}
 

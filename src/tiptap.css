@@ -186,9 +186,24 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .content-editor-editor-container .tiptap-editor-frame{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .content-editor-editor-container .tiptap-editor-mount{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .tiptap-editor-mount .ProseMirror a{color:var(--tt-accent);text-decoration:underline}
-.tiptap-editor-mount .img-placeholder,.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{display:inline-block;vertical-align:middle}
+/* All three embeds are BLOCK nodes in the schema, so their DOM must be
+   block-level too - as `inline-block` they shared a line, and two widgets in a row
+   sat side by side instead of stacking. `width:fit-content` keeps the shrink-wrap
+   that makes a widget read as a chip rather than a full-width bar (verified
+   shrinking AND stacking in blink, webkit and gecko).
+
+   THE IMAGE KEEPS `inline-block`, deliberately: its alignment feature floats the
+   wrapper (see the [data-tt-align] rules below) so text can sit beside it, and
+   `center` already switches itself to `display:block` to get the auto margins. */
+.tiptap-editor-mount .img-placeholder{display:inline-block;vertical-align:middle}
+.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{display:block;width:fit-content;max-width:100%}
+/* Clicking an embed selects the NODE (see makePreviewDom in
+   src/extensions/presideEmbeds.js) - so a drag across the preview must not paint a
+   text selection over it either. These previews are placeholders, not content;
+   CKEditor's widgets were not text-selectable. */
+.tiptap-editor-mount .img-placeholder,.tiptap-editor-mount .attachment-placeholder,.tiptap-editor-mount .widget-placeholder{user-select:none;-webkit-user-select:none}
 /* Widget placeholder glyph: inline data-URI SVG (Tabler "puzzle", MIT) — no icon files. */
-.tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat;border:1px solid var(--tt-border);border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:var(--tt-fg);display:inline-block}
+.tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat;border:1px solid var(--tt-border);border-radius:5px;padding:6px 10px 6px 26px;margin:2px;color:var(--tt-fg)}
 .tiptap-editor-mount .attachment-placeholder{padding:2px}
 /* All three embeds render as `dom > frame > preview`: `preview` holds the
    server-rendered HTML (replaced wholesale on every refresh), `frame` shrink-wraps
@@ -203,7 +218,14 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    editor instead of the image. The frame is also where the resize handles live, so
    outline and handles now always agree. */
 .tiptap-editor-mount .ProseMirror-selectednode>.tiptap-embed-frame{outline:2px solid var(--tt-selected);outline-offset:1px}
-.tiptap-editor-mount .img-placeholder.ProseMirror-selectednode,.tiptap-editor-mount .attachment-placeholder.ProseMirror-selectednode,.tiptap-editor-mount .widget-placeholder.ProseMirror-selectednode{outline:none}
+/* The image's outline goes on the FRAME, not the wrapper: a centre-aligned image
+   makes the wrapper a full-width block (that is how it centres), so outlining the
+   wrapper drew a selection box across the whole editor. A widget/attachment chip
+   shrink-wraps and has no alignment, so IT is the right thing to outline - and it
+   is the box the user sees. */
+.tiptap-editor-mount .img-placeholder.ProseMirror-selectednode{outline:none}
+.tiptap-editor-mount .attachment-placeholder.ProseMirror-selectednode>.tiptap-embed-frame,.tiptap-editor-mount .widget-placeholder.ProseMirror-selectednode>.tiptap-embed-frame{outline:none}
+.tiptap-editor-mount .attachment-placeholder.ProseMirror-selectednode,.tiptap-editor-mount .widget-placeholder.ProseMirror-selectednode{outline:2px solid var(--tt-selected);outline-offset:1px}
 .tiptap-editor-mount .loading{color:#999;font-style:italic}
 .tiptap-editor-mount .error{color:#c00;border:1px solid #f4b4b4;padding:1px 4px;border-radius:3px}
 .tiptap-editor-mount .ProseMirror-selectednode{outline:2px solid var(--tt-selected);outline-offset:1px}
