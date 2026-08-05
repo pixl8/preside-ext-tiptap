@@ -22,6 +22,7 @@
 import { ICONS } from "./icons.js";
 import { t } from "./i18n.js";
 import { surfaceOf } from "./editorFrame.js";
+import { focusEditable } from "./editorFocus.js";
 
 // Opt out per site/field, matching the wordcount / outline / imageTools opt-outs.
 export function tableToolsEnabled( cfg ) {
@@ -93,7 +94,7 @@ export function createTableTools( editor, container, mount ) {
 		btn.addEventListener( "mousedown", function( e ) { e.preventDefault(); } );
 		btn.addEventListener( "click", function( e ) {
 			e.preventDefault();
-			const chain = editor.chain().focus();
+			const chain = focusEditable( editor ).chain().focus();
 			if ( typeof chain[ spec[ 2 ] ] === "function" ) { chain[ spec[ 2 ] ]().run(); }
 		} );
 

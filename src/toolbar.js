@@ -10,6 +10,7 @@
  */
 import { tokenize, detokenize } from "./tokens.js";
 import { ICONS } from "./icons.js";
+import { focusEditable } from "./editorFocus.js";
 import { getContentSelectors } from "./presideStyles.js";
 import { themeEnabled, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, isMaximized } from "./maximize.js";
@@ -125,7 +126,7 @@ export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
 		if ( ICONS[ name ] ) { btn.innerHTML = ICONS[ name ]; }
 		else { btn.textContent = cmd.label || name; }
 		btn.setAttribute( "data-cmd", name );
-		btn.addEventListener( "click", function( ev ) { ev.preventDefault(); cmd.run( editor ); } );
+		btn.addEventListener( "click", function( ev ) { ev.preventDefault(); cmd.run( focusEditable( editor ) ); } );
 		groupEl.appendChild( btn );
 
 		if ( cmd.active ) { updaters.push( function() { btn.classList.toggle( "is-active", !!cmd.active( editor ) ); } ); }
@@ -222,7 +223,7 @@ function renderFormat( editor, updaters, cfg ) {
 }
 
 function applyFormat( editor, v ) {
-	const c = editor.chain().focus();
+	const c = focusEditable( editor ).chain().focus();
 	if ( v === "p" ) { c.setParagraph().run(); }
 	else if ( v === "pre" ) { c.setNode( "codeBlock" ).run(); }
 	else if ( v === "div" ) { c.setNode( "presideDiv" ).run(); }
@@ -304,7 +305,7 @@ function renderAlign( editor, updaters, names ) {
 		item.addEventListener( "mousedown", function( e ) { e.preventDefault(); } ); // keep the selection
 		item.addEventListener( "click", function( e ) {
 			e.preventDefault();
-			COMMANDS[ name ].run( editor );
+			COMMANDS[ name ].run( focusEditable( editor ) );
 			closeMenu();
 		} );
 		itemBtns[ name ] = item;
@@ -478,7 +479,7 @@ function renderTable( editor, updaters ) {
 	function insert() {
 		const r = selR, c = selC;
 		closeMenu();
-		editor.chain().focus().insertTable( { rows: r, cols: c, withHeaderRow: hdrBox.checked } ).run();
+		focusEditable( editor ).chain().focus().insertTable( { rows: r, cols: c, withHeaderRow: hdrBox.checked } ).run();
 	}
 
 	function reset() {
@@ -581,9 +582,9 @@ export function styleItems( cfg ) {
 function applyStyle( editor, item ) {
 	if ( item.tag === "span" ) {
 		if ( editor.isActive( "presideInlineStyle", { "class": item.className } ) ) {
-			editor.chain().focus().unsetMark( "presideInlineStyle" ).run();
+			focusEditable( editor ).chain().focus().unsetMark( "presideInlineStyle" ).run();
 		} else {
-			editor.chain().focus().setMark( "presideInlineStyle", { "class": item.className } ).run();
+			focusEditable( editor ).chain().focus().setMark( "presideInlineStyle", { "class": item.className } ).run();
 		}
 		return;
 	}
@@ -594,7 +595,7 @@ function applyStyle( editor, item ) {
 
 	if ( !t.existingOnly ) { applyFormat( editor, item.tag ); }
 	const current = editor.getAttributes( t.type )[ "class" ];
-	editor.chain().focus().updateAttributes( t.type, { "class": current === item.className ? null : item.className } ).run();
+	focusEditable( editor ).chain().focus().updateAttributes( t.type, { "class": current === item.className ? null : item.className } ).run();
 }
 
 function styleIsActive( editor, item ) {

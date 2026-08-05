@@ -34,6 +34,7 @@
  */
 import { t } from "./i18n.js";
 import { surfaceOf } from "./editorFrame.js";
+import { focusEditable } from "./editorFocus.js";
 
 const MAX_LEVEL = 6;
 
@@ -239,7 +240,18 @@ export function createOutline( tiptap, mount, opts ) {
 	function go( item ) {
 		// Caret first, WITHOUT Tiptap's own scrollIntoView - we do the scrolling
 		// ourselves so the same path runs whether the mount or the page scrolls.
-		try { tiptap.chain().focus( item.pos + 1, { scrollIntoView: false } ).run(); } catch ( e ) {}
+		//
+		// setTextSelection, NOT `focus( pos )`. Passing a position to Tiptap's focus
+		// command skips its own `view.hasFocus()` early-return, so on Safari it runs
+		// a SYNCHRONOUS `view.dom.focus()` mid-chain - prosemirror re-reads the
+		// selection, dispatches a correction, and the chain's own transaction is then
+		// applied to a state it was not built from ("Applying a mismatched
+		// transaction"). The whole chain was lost, so clicking a rail entry silently
+		// failed to move the caret in Safari - silently because of this try/catch.
+		// See src/editorFocus.js. The DOM focus is taken first, outside the chain,
+		// where it is free to dispatch whatever it likes.
+		focusEditable( tiptap );
+		try { tiptap.chain().setTextSelection( item.pos + 1 ).run(); } catch ( e ) {}
 		if ( flash ) { flash( item.pos ); }
 
 		const el = headingDom( tiptap, item.pos );
@@ -508,7 +520,19 @@ export function createOutline( tiptap, mount, opts ) {
 	// frame - and whenever the editor is resized (maximize, window resize).
 	if ( window.requestAnimationFrame ) { window.requestAnimationFrame( layout ); }
 	if ( window.ResizeObserver && mount ) {
-		const ro = new window.ResizeObserver( function() { layout(); } );
+		// Deferred through rAF: laying out from inside the callback writes styles that
+		// can need another delivery cycle, which WebKit reports as "ResizeObserver
+		// loop completed with undelivered notifications" - harmless, but it shows up
+		// as a page error and would mask a real one.
+		let roQueued = false;
+		const ro = new window.ResizeObserver( function() {
+			if ( roQueued ) { return; }
+			roQueued = true;
+			( window.requestAnimationFrame || window.setTimeout )( function() {
+				roQueued = false;
+				layout();
+			}, 16 );
+		} );
 		ro.observe( mount );
 		tiptap.on( "destroy", function() { ro.disconnect(); } );
 	}

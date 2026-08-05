@@ -38,6 +38,7 @@
  */
 import { t } from "./i18n.js";
 import { ICONS } from "./icons.js";
+import { focusEditable } from "./editorFocus.js";
 import { postForm } from "./presidePickerModal.js";
 
 const TOKEN_RE  = /^\{\{image:([\s\S]*):image\}\}$/;
@@ -312,7 +313,7 @@ export function attachImageTools( ctx ) {
 	function removeNode() {
 		const pos = typeof ctx.getPos === "function" ? ctx.getPos() : null;
 		if ( pos == null || pos < 0 ) { return; }
-		editor.chain().focus().deleteRange( { from: pos, to: pos + node.nodeSize } ).run();
+		focusEditable( editor ).chain().focus().deleteRange( { from: pos, to: pos + node.nodeSize } ).run();
 	}
 
 	// ---- Alignment + spacing ------------------------------------------------

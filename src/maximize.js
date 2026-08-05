@@ -145,7 +145,11 @@ export function toggleMaximize( container, editor ) {
 	}
 
 	if ( editor ) {
-		try { editor.commands.focus(); } catch ( e ) {}
+		// view.focus(), not commands.focus() - see the note on CompatInstance.focus in
+		// src/facade.js: the command dispatches a transaction built before its own
+		// view.focus() ran, which WebKit turns into a mismatched transaction. The
+		// try/catch here had been silently swallowing exactly that.
+		try { editor.view.focus(); } catch ( e ) {}
 	}
 	return isMaximized( container );
 }

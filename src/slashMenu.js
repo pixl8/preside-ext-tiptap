@@ -22,6 +22,7 @@ import { ICONS } from "./icons.js";
 import { COMMANDS } from "./toolbar.js";
 import { t } from "./i18n.js";
 import { pageRect, frameOf } from "./editorFrame.js";
+import { focusEditable } from "./editorFocus.js";
 
 // Opt out per site/field, matching the wordcount / outline / tableTools opt-outs.
 export function slashMenuEnabled( cfg ) {
@@ -203,7 +204,7 @@ export function createSlashMenu( T, cfg ) {
 				function pick( i ) {
 					const it = list[ i ];
 					close();
-					if ( it ) { it.run( editor ); }
+					if ( it ) { it.run( focusEditable( editor ) ); }
 				}
 				// BOTH documents, and both are needed. The user types into the EDITABLE,
 				// which for a boxed editor is inside the editing frame - a listener on the
@@ -270,8 +271,8 @@ export function createSlashMenu( T, cfg ) {
 					// Drop the "/query" text, then run the item. Deleting first means
 					// the item's own command sees a clean block - important for the
 					// pickers, which insert a block-level node at the selection.
-					editor.chain().focus().deleteRange( range ).run();
-					props.run( editor );
+					focusEditable( editor ).chain().focus().deleteRange( range ).run();
+					props.run( focusEditable( editor ) );
 				}
 
 				, items: function( { query } ) { return filterItems( items(), query ); }

@@ -59,6 +59,8 @@ preside-ext-tiptap/
     normalize.js          output normalisation (byte-fidelity vs CKEditor)
     editorFrame.js        THE ISOLATION BOUNDARY - the per-editor editing iframe
                           (creation, own-CSS injection, auto-height, surfaceOf())
+    editorFocus.js        focusEditable() - take DOM focus BEFORE building a
+                          command chain (a Safari-only Tiptap hazard)
     presideStyles.js      content stylesheets: UNMODIFIED into the frame, plus a
                           scoped copy for the Format/Styles previews only
     presideLinkSerialization.js  link href <-> {{link|asset|custom}} tokens
@@ -827,6 +829,49 @@ content, that `rem` resolves against the frame root (`1.5rem` = 24px, not 15px)
 and that `em` chains off it (`1.25em` = 30px), and that the content sheet arrives
 unmodified. Its head carries the admin-leak emulation, including the two rule
 forms that defeated the old reset.
+
+## Safari: never build a command chain on an unfocused editable
+
+`src/editorFocus.js` `focusEditable( editor )`. **Call it at every point where our
+own chrome runs an editor command**, and chain off its return value:
+`focusEditable( editor ).chain().focus().toggleBold().run()`.
+
+Tiptap snapshots the transaction when a chain is created (`createChain()` does
+`const tr = state.tr`) and dispatches that same transaction at `.run()`. Its
+`focus` command contains a **Safari-only** branch that takes the DOM focus
+*synchronously*, where every other engine defers it to a `requestAnimationFrame`:
+
+```js
+if ( isSafari() && !isiOS() && !isAndroid() ) { view.dom.focus( { preventScroll: true } ); }
+```
+
+A DOM focus makes prosemirror-view re-read the document selection and, if it
+differs from `state.selection`, dispatch a correcting transaction. So on Safari the
+state moves on mid-chain and `.run()` applies a transaction built from the state
+before it: **`RangeError: Applying a mismatched transaction`, and the whole chain
+is silently lost.** What that cost, all Safari-only:
+
+- **every frontend editor threw as it opened** — core's `frontendEditors.js`
+  calls `e.editor.focus()` from its own `instanceReady` handler (line ~174), and
+  the throw aborted the rest of core's handler, including its scroll-to-the-editor;
+- a **toolbar button pressed while the editable was not focused did nothing**;
+- the **outline rail could not move the caret** (silently — its `try/catch`).
+
+The way out is Tiptap's own guard, `if ( view.hasFocus() && position === null )
+return true;` — so take the DOM focus **first, outside any transaction**, where it
+is free to dispatch whatever it likes.
+
+- **`CompatInstance.focus()` uses `view.focus()`, not `commands.focus()`** — no
+  transaction is built, so there is nothing to mismatch, and it is the more
+  faithful reading of CKEditor's `focus()`, which focused the editing surface and
+  never moved the caret. Same in `maximize.js` (whose `try/catch` had been
+  swallowing exactly this).
+- **`chain().focus( pos )` is NOT protected by `focusEditable()`** — passing a
+  position deliberately skips the `hasFocus()` guard. Use
+  `setTextSelection( pos )` on the chain instead; that is what `outline.js` does.
+- The harness pages carry the same discipline as `edFocus( ed )`, because a
+  synthetic test drives the editor from an unfocused editable where a real user's
+  click would have focused it natively.
 
 ## Light / dark mode
 

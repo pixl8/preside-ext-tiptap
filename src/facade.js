@@ -187,7 +187,32 @@ import { t } from "./i18n.js";
 		}
 	};
 	CompatInstance.prototype.fire = function( evt, data ) { this._emit( evt, data ); };
-	CompatInstance.prototype.focus = function() { this._t.commands.focus(); };
+	// DOM focus, deliberately NOT Tiptap's focus command.
+	//
+	// Tiptap builds a transaction when `.commands` is ACCESSED (`const { tr } =
+	// state`) and dispatches that same transaction after the command body has run.
+	// The focus command's body calls `view.focus()`, and in WebKit a DOM focus
+	// synchronously fires the events prosemirror-view uses to re-read the document
+	// selection - so it dispatches a correcting transaction of its own, the state
+	// moves on, and the transaction Tiptap built a moment earlier is then applied to
+	// a state it was not created from: "RangeError: Applying a mismatched
+	// transaction".
+	//
+	// That was not theoretical. Core's frontendEditors.js calls
+	// `e.editor.focus()` from its own `instanceReady` handler (line ~174), so in
+	// Safari EVERY frontend editor threw here as it opened, and the throw aborted
+	// the rest of core's handler - including its scroll-to-the-editor - leaving the
+	// page silently un-scrolled.
+	//
+	// `view.focus()` is prosemirror-view's own method: it focuses the editable and
+	// lets ProseMirror reconcile the selection itself, building no transaction, so
+	// there is nothing to mismatch. It is also the more faithful reading of
+	// CKEditor's focus(), which focused the editing surface and never moved the
+	// caret. Chained forms (`chain().focus().x().run()`) are unaffected - a chain
+	// builds and dispatches one transaction at .run().
+	CompatInstance.prototype.focus = function() {
+		try { this._t.view.focus(); } catch ( e ) {}
+	};
 	CompatInstance.prototype.getSelection = function() { return null; }; // TODO Phase 2
 	// Mirrors real CKEditor's destroy(): tear down the editor DOM and restore the
 	// textarea so a later `new PresideRichEditor()` on the same element starts

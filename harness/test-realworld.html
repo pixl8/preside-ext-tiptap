@@ -146,6 +146,18 @@
 	presideJQuery( function() {
 		var $ = presideJQuery;
 		var results = [], listEl = document.getElementById( "results" );
+		// Take the DOM focus BEFORE building a command chain, then chain without
+		// `.focus()`. Tiptap's focus command has a Safari-only branch that focuses the
+		// DOM synchronously; that makes prosemirror dispatch a selection correction
+		// mid-chain, and the chain's own transaction is then applied to a state it was
+		// not built from ("Applying a mismatched transaction"), losing the chain. Its
+		// own `view.hasFocus()` guard is the way out, so focus first. This is the same
+		// discipline src/editorFocus.js applies in the editor's own chrome - a real
+		// user click focuses the editable natively, which is what this stands in for.
+		function edFocus( e ) {
+			try { if ( e && !e.isDestroyed && e.view && !e.view.hasFocus() ) { e.view.focus(); } } catch ( err ) {}
+			return e;
+		}
 
 		function check( label, ok, detail ) {
 			results.push( { label: label, ok: !!ok, detail: detail || "" } );
@@ -696,8 +708,8 @@
 			// A real slash goes through the input handler; inserting the character via
 			// a transaction is enough for @tiptap/suggestion, which watches state.
 			ed.chain().focus( "end" ).run();
-			ed.chain().focus().insertContent( "<p></p>" ).run();
-			ed.chain().focus().insertContent( "/" ).run();
+			edFocus( ed ).chain().insertContent( "<p></p>" ).run();
+			edFocus( ed ).chain().insertContent( "/" ).run();
 
 			return new Promise( function( resolve ) {
 				requestAnimationFrame( function() { requestAnimationFrame( function() {
@@ -720,7 +732,7 @@
 						labels.indexOf( "Image gallery" ) === -1, JSON.stringify( labels ) );
 
 					// Filtering, then insert.
-					ed.chain().focus().insertContent( "quo" ).run();
+					edFocus( ed ).chain().insertContent( "quo" ).run();
 					requestAnimationFrame( function() { requestAnimationFrame( function() {
 						var filtered = Array.prototype.map.call(
 							document.querySelectorAll( ".tiptap-slash-menu .tiptap-slash-label" ),
@@ -740,7 +752,7 @@
 								!document.querySelector( ".tiptap-slash-menu" ).classList.contains( "is-open" ) );
 
 							// Real slashes in prose must never open it (dates, paths, and/or).
-							ed.chain().focus().insertContent( " and/or 12/05/2026" ).run();
+							edFocus( ed ).chain().insertContent( " and/or 12/05/2026" ).run();
 							requestAnimationFrame( function() { requestAnimationFrame( function() {
 								check( "T14 a slash mid-sentence does not open the menu",
 									!document.querySelector( ".tiptap-slash-menu" ).classList.contains( "is-open" ) );
@@ -822,7 +834,7 @@
 					// allowTableNodeSelection must not have cost us the table bubble.
 					var cells = [];
 					ed.state.doc.descendants( function( n, p ) { if ( n.type.name === "tableCell" ) { cells.push( p ); } } );
-					ed.chain().focus().setTextSelection( cells[ 0 ] + 1 ).run();
+					edFocus( ed ).chain().setTextSelection( cells[ 0 ] + 1 ).run();
 					requestAnimationFrame( function() { requestAnimationFrame( function() {
 						check( "T16 the table bubble still opens with the caret in a cell",
 							$c.find( ".tiptap-table-bubble" ).hasClass( "is-open" ) );
@@ -961,12 +973,12 @@
 							$in( $t2c, ".selectedCell" ).length + " cells highlighted" );
 
 						// A bubble command must actually edit the table.
-						ed.chain().focus().addRowAfter().run();
+						edFocus( ed ).chain().addRowAfter().run();
 						check( "T12 a bubble command actually edits the table",
 							$in( $t2c, ".tiptap-editor-mount table tr" ).length === 3,
 							$in( $t2c, ".tiptap-editor-mount table tr" ).length + " rows" );
 
-						ed.chain().focus().deleteTable().run();
+						edFocus( ed ).chain().deleteTable().run();
 						check( "T12 deleting the table restores the original content",
 							CKEDITOR.instances.t2.getData() === originalData, CKEDITOR.instances.t2.getData() );
 

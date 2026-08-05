@@ -140,6 +140,18 @@
 	<script>
 	presideJQuery( function( $ ) {
 		var results = [];
+		// Take the DOM focus BEFORE building a command chain, then chain without
+		// `.focus()`. Tiptap's focus command has a Safari-only branch that focuses the
+		// DOM synchronously; that makes prosemirror dispatch a selection correction
+		// mid-chain, and the chain's own transaction is then applied to a state it was
+		// not built from ("Applying a mismatched transaction"), losing the chain. Its
+		// own `view.hasFocus()` guard is the way out, so focus first. This is the same
+		// discipline src/editorFocus.js applies in the editor's own chrome - a real
+		// user click focuses the editable natively, which is what this stands in for.
+		function edFocus( e ) {
+			try { if ( e && !e.isDestroyed && e.view && !e.view.hasFocus() ) { e.view.focus(); } } catch ( err ) {}
+			return e;
+		}
 		// Track every AJAX post for diagnosis/assertions.
 		window.__posts = [];
 		var __origPost = $.post;
@@ -427,7 +439,7 @@
 						found = { from: pos + i, to: pos + i + text.length };
 					}
 				} );
-				if ( found ) { ed.chain().focus().setTextSelection( found ).run(); }
+				if ( found ) { edFocus( ed ).chain().setTextSelection( found ).run(); }
 				return !!found;
 			}
 
@@ -435,16 +447,16 @@
 
 			// a single CLICK (caret, no selection) is enough context for the bubble
 			var pm7 = document.querySelector( ".tiptap-inline .ProseMirror" );
-			ed.chain().focus().setTextSelection( 2 ).run();
+			edFocus( ed ).chain().setTextSelection( 2 ).run();
 			pm7.dispatchEvent( new MouseEvent( "mouseup", { bubbles: true } ) );
 			var caretShown = await until( function() { return bubbleEl().classList.contains( "is-open" ); } );
 			check( "T7 single click shows the bubble (caret context)", caretShown );
 			check( "T7 caret bubble is filtered for the block", !!bubbleBtn( "Bold" ) && !bubbleBtn( "Outdent" ) );
 			// ...and TYPING keeps it: the focused block is still the context
-			ed.chain().focus().insertContent( "x" ).run();
+			edFocus( ed ).chain().insertContent( "x" ).run();
 			await wait( 250 );
 			check( "T7 typing keeps the bubble up", bubbleEl().classList.contains( "is-open" ) );
-			ed.chain().focus().undo().run();
+			edFocus( ed ).chain().undo().run();
 			// blur is what drops it
 			ed.commands.blur();
 			var blurred = await until( function() { return !bubbleEl().classList.contains( "is-open" ); } );
@@ -470,7 +482,7 @@
 
 			// collapsing to a caret while FOCUSED keeps the bubble (the block is
 			// still the context); it re-filters for the caret's block
-			ed.chain().focus().setTextSelection( 1 ).run();
+			edFocus( ed ).chain().setTextSelection( 1 ).run();
 			await wait( 250 );
 			check( "T7 collapsed-but-focused caret keeps the bubble", bubbleEl().classList.contains( "is-open" ) );
 			check( "T7 ...re-filtered for the caret's block", !bubbleBtn( "PresideUnlink" ) && !bubbleBtn( "Outdent" ) );
@@ -482,7 +494,7 @@
 				bubbleEl().getBoundingClientRect().left + " vs " + blockLeft7 );
 			var xBefore7 = bubbleEl().getBoundingClientRect().left;
 			// caret to the END of the same block - different caret x, same block left
-			ed.chain().focus().setTextSelection( ed.state.doc.firstChild.content.size + 1 ).run();
+			edFocus( ed ).chain().setTextSelection( ed.state.doc.firstChild.content.size + 1 ).run();
 			await wait( 250 );
 			check( "T7 caret position does not drag it horizontally",
 				Math.abs( bubbleEl().getBoundingClientRect().left - xBefore7 ) <= 1,
@@ -492,10 +504,10 @@
 			await wait( 3000 );
 			check( "T7 idle (2.5s no activity) fades the bubble", bubbleEl().classList.contains( "is-idle" )
 				&& bubbleEl().classList.contains( "is-open" ) );
-			ed.chain().focus().insertContent( "y" ).run();
+			edFocus( ed ).chain().insertContent( "y" ).run();
 			var woke = await until( function() { return !bubbleEl().classList.contains( "is-idle" ); } );
 			check( "T7 typing wakes it again", woke );
-			ed.chain().focus().undo().run();
+			edFocus( ed ).chain().undo().run();
 
 			// ---- T7d: the fixed outline navigator -------------------------------------
 			var outline7 = document.querySelector( ".tiptap-inline .tiptap-outline.is-fixed" );
@@ -510,7 +522,7 @@
 			check( "T7d rail sits at the viewport's right edge",
 				Math.abs( outline7.getBoundingClientRect().right - ( window.innerWidth - 12 ) ) <= 2,
 				outline7.getBoundingClientRect().right + " vs " + window.innerWidth );
-			ed.chain().focus().undo().run();
+			edFocus( ed ).chain().undo().run();
 			await until( function() { return outline7.classList.contains( "is-empty" ); } );
 
 			// ---- T7b: the fixed drag rail (body-portalled, clip-proof) ---------------
@@ -519,12 +531,23 @@
 				&& getComputedStyle( rail ).position === "fixed" );
 			check( "T7b inline container reserves no gutter",
 				!document.querySelector( ".tiptap-inline" ).classList.contains( "tiptap-has-draghandle" ) );
-			var pRect = document.querySelector( ".tiptap-inline .ProseMirror > p" ).getBoundingClientRect();
+			// Scroll the block into view FIRST. The grip is only shown for a block
+			// inside the visible band (src/dragHandle.js clamps to mount-intersect-
+			// viewport), which is correct behaviour - a user cannot hover what is off
+			// screen. Whether this paragraph starts above or below the fold is a matter
+			// of a few pixels of font metrics, so without the scroll the test passes in
+			// Blink and fails in WebKit and Gecko for no product reason.
+			var pEl7b = document.querySelector( ".tiptap-inline .ProseMirror > p" );
+			pEl7b.scrollIntoView( { block: "center" } );
+			await wait( 60 );
+			var pRect = pEl7b.getBoundingClientRect();
 			document.querySelector( ".tiptap-inline" ).dispatchEvent(
 				new MouseEvent( "mousemove", { bubbles: true, clientX: pRect.left + 20, clientY: pRect.top + 5 } ) );
 			var railShown = await until( function() { return rail.classList.contains( "is-visible" ); } );
 			check( "T7b rail shows on block hover, left of the content", railShown
-				&& rail.getBoundingClientRect().right <= pRect.left );
+				&& rail.getBoundingClientRect().right <= pRect.left,
+				"shown=" + railShown + ", rail.right=" + Math.round( rail.getBoundingClientRect().right )
+					+ ", p.left=" + Math.round( pRect.left ) + ", p.top=" + Math.round( pRect.top ) );
 			check( "T7b rail carries both + and grip", rail.querySelectorAll( "button" ).length === 2 );
 
 			// ---- T7c: full-width layout - no page margin to float the rail in --------
@@ -543,7 +566,10 @@
 			var inlineC7 = document.querySelector( ".tiptap-inline" );
 			check( "T7c full-width: interior gutter reserved", inlineC7.classList.contains( "tiptap-has-draghandle" )
 				&& parseInt( getComputedStyle( inlineC7.querySelector( ".tiptap-editor-mount" ) ).paddingLeft, 10 ) >= 28 );
-			var pRect7 = inlineC7.querySelector( ".ProseMirror > p" ).getBoundingClientRect();
+			var pEl7c = inlineC7.querySelector( ".ProseMirror > p" );
+			pEl7c.scrollIntoView( { block: "center" } );   // see T7b: hovering off screen shows nothing, by design
+			await wait( 60 );
+			var pRect7 = pEl7c.getBoundingClientRect();
 			inlineC7.dispatchEvent( new MouseEvent( "mousemove", { bubbles: true, clientX: pRect7.left + 20, clientY: pRect7.top + 5 } ) );
 			var rail7 = document.querySelector( ".tiptap-block-gutter.is-fixed" );
 			var rail7Shown = await until( function() { return rail7.classList.contains( "is-visible" ); } );
@@ -594,6 +620,10 @@
 		} )().catch( function( e ) {
 			check( "UNCAUGHT: " + e.message, false, e.stack );
 			document.getElementById( "summary" ).textContent = "crashed";
+			// Publish what DID run: without this a crash reports zero assertions and
+			// an automated run cannot tell "died on the first line" from "died at the
+			// last one".
+			window.__results = results;
 			window.__done = true;
 		} );
 	} );
