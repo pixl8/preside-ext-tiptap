@@ -55,9 +55,44 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
   extensions:
   - the `preside-ext-ready-membership-cms-basics` named toolbar
     (`Bold|Italic|PresideLink,PresideUnlink|Format`, as the server resolves it),
-  - the `preside-ext-pdf-templating` toolbar, full of CKEditor buttons with no
-    Tiptap analogue (`Find`, `Scayt`, `SpecialChar`, `BidiLtr`, …) which must be
-    skipped gracefully with the editor still functional,
+  - the `preside-ext-pdf-templating` toolbar, full of CKEditor buttons - the ones
+    with no Tiptap analogue (`Scayt`, `SelectAll`, `CreateDiv`, `Language`, `Cut`,
+    `Copy`) must be skipped gracefully with the editor still functional, while
+    `Find`/`Replace`/`SpecialChar`/`BidiLtr`/`BidiRtl` must now render,
+  - **Find and Replace, special characters and text direction** (T22/T23/T24):
+    the search highlights without touching the document, never matches across a
+    block boundary, honours match-case/whole-word/cyclic, replaces on the second
+    click and Replace-All in one undo step; the character picker offers CKEditor's
+    whole 210-entry list in 17 columns and inserts the CHARACTER (not the entity)
+    with the caret's marks; `dir` is written or REMOVED per CKEditor's
+    `useComputedState`, an inline `direction:` is stripped, and an existing `dir`
+    round-trips. T22 also asserts **the dialog's shadow boundary**: the page
+    injects the admin theme's own `!important` rules on `legend`/`label`/
+    `fieldset`/`input`/`button` (what really mangled the light-DOM version in the
+    admin — a 21px ruled legend, options forced onto one line, re-skinned
+    checkboxes) and checks that none of them reach the dialog. Reaching into it
+    from a test needs `host.shadowRoot` (`dlgHost()`/`dlg()`),
+  - **the manual resize grip** (T25): CKEditor's `resize` plugin - vertical by
+    default, the dragged height sticking (the frame stops auto-growing and scrolls
+    instead), `resize_enabled:false` / `resize_dir:"both"` / min===max, hidden while
+    maximized, and the min-lowering rule that stops a stock 300px-capped field
+    jumping on the first pixel of drag. Driven with real PointerEvents, since the
+    grip uses pointer capture,
+  - **an embed's links do not navigate while the editor is open** (T27): the
+    attachment preview's real download link is cancelled on click and middle click
+    (it used to download the file from inside the editor), the click selects the
+    embed instead, and an ordinary content link is left alone. The mock renders a
+    genuine `/mock/asset/...` download href for this - with the `href="#"` it had
+    before, the bug was invisible here,
+  - **the embed bubble** (T21): the widget/attachment Edit+Remove bubble - the same
+    chrome and placement as the image's, shared from `src/embedBubble.js` - shown on
+    the selected chip only, flipped below when there is no room above, and Remove
+    deleting just that embed,
+  - **the source view** (T26): CKEditor's layout (blank line between top-level
+    blocks, tab indents, inline content on one line, `<pre>` byte-for-byte), the
+    highlight layer painting exactly the textarea's text at identical metrics, and
+    the display-only contract — open-then-close is byte-identical, an edit applies
+    and ONLY the edit (token, `<pre>` whitespace and `&amp;` all survive),
   - the cms-basics `defaultConfigs.stylesSet` append
     (`table.compact` → Styles dropdown) plus stylesheet-harvested styles,
   - a site-style **custom CKEditor config file** (`custom-config-fixture.js`:

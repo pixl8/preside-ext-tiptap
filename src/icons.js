@@ -57,6 +57,26 @@ export const ICONS = {
 	, ImagePicker     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M15 8h.01"/><path d="M3 6a3 3 0 0 1 3 -3h12a3 3 0 0 1 3 3v12a3 3 0 0 1 -3 3h-12a3 3 0 0 1 -3 -3v-12z"/><path d="M3 16l5 -5c.928 -.893 2.072 -.893 3 0l5 5"/><path d="M14 14l1 -1c.928 -.893 2.072 -.893 3 0l3 3"/></svg>'
 	, AttachmentPicker: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M15 7l-6.5 6.5a1.5 1.5 0 0 0 3 3l6.5 -6.5a3 3 0 0 0 -6 -6l-6.5 6.5a4.5 4.5 0 0 0 9 9l6.5 -6.5"/></svg>'
 	, CodeSnippet     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M7 8l-4 4l4 4"/><path d="M17 8l4 4l-4 4"/><path d="M14 4l-4 16"/></svg>'
+	// Find / Replace (src/findReplace.js). Find is Tabler "search". REPLACE IS
+	// CKEDITOR'S OWN METAPHOR, redrawn: its sprite is a bold "b" and "a" with two
+	// curved arrows swapping between them - i.e. one letter becoming another. A
+	// magnifier-with-arrows was tried first and read as nothing in particular at
+	// 16px. The letters are <text> rather than paths so they stay crisp at any
+	// size, with the family pinned (the icon renders in the admin page AND inside
+	// the editing frame, and must not pick up either one's font). CKEditor draws
+	// TWO arrows; this draws one, checked by rasterising both at a true 16px and
+	// magnifying - the second arrow crowds the "a" into a smudge at that size,
+	// and the metaphor survives one arrow intact.
+	, Find            : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M10 10m-7 0a7 7 0 1 0 14 0a7 7 0 1 0 -14 0"/><path d="M21 21l-6 -6"/></svg>'
+	, Replace         : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><text x="0.5" y="12" font-size="14" font-weight="700" font-family="Arial,Helvetica,sans-serif" fill="currentColor" stroke="none">b</text><text x="13.5" y="23.5" font-size="14" font-weight="700" font-family="Arial,Helvetica,sans-serif" fill="currentColor" stroke="none">a</text><path d="M11.5 5.5h5.5a2.5 2.5 0 0 1 2.5 2.5v2"/><path d="M16.5 8l3 3l3 -3"/></svg>'
+	// Insert special character (src/specialChar.js). CKEditor's button was an
+	// omega, so this draws one: the bowl is an arc open at the bottom, the two
+	// horizontal strokes are its feet.
+	, SpecialChar     : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M9 19a7 7 0 1 1 6 0"/><path d="M4 19h5"/><path d="M15 19h5"/></svg>'
+	// Text direction (src/bidi.js) — Tabler "text-direction-ltr" / "-rtl": the
+	// paragraph glyph plus a baseline whose arrow points the way text runs.
+	, BidiLtr         : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M16 4h-6.5a3.5 3.5 0 0 0 0 7h.5"/><path d="M14 15v-11"/><path d="M10 15v-11"/><path d="M5 19h14"/><path d="M17 21l2 -2l-2 -2"/></svg>'
+	, BidiRtl         : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M16 4h-6.5a3.5 3.5 0 0 0 0 7h.5"/><path d="M14 15v-11"/><path d="M10 15v-11"/><path d="M5 19h14"/><path d="M7 21l-2 -2l2 -2"/></svg>'
 	, ThemeLight      : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 12m-4 0a4 4 0 1 0 8 0a4 4 0 1 0 -8 0"/><path d="M3 12h1m8 -9v1m8 8h1m-9 8v1m-6.4 -15.4l.7 .7m12.1 -.7l-.7 .7m0 11.4l.7 .7m-12.1 -.7l-.7 .7"/></svg>'
 	, ThemeDark       : '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" ><path stroke="none" d="M0 0h24v24H0z" fill="none"/><path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z"/></svg>'
 	// Image tools (src/imageTools.js): the bubble over a selected image.

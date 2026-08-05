@@ -39,6 +39,7 @@
 import { t } from "./i18n.js";
 import { ICONS } from "./icons.js";
 import { focusEditable } from "./editorFocus.js";
+import { bubbleButton, placeBubble as placeBubbleAt } from "./embedBubble.js";
 import { postForm } from "./presidePickerModal.js";
 
 const TOKEN_RE  = /^\{\{image:([\s\S]*):image\}\}$/;
@@ -107,20 +108,6 @@ function nonLocalKey( config ) {
 
 function clamp( v, min, max ) { return v < min ? min : ( v > max ? max : v ); }
 
-function button( cls, icon, label, text ) {
-	const b = document.createElement( "button" );
-	b.type = "button";
-	b.className = "tiptap-btn " + cls;
-	b.title = label;
-	b.setAttribute( "aria-label", label );
-	if ( text ) { b.textContent = text; } else { b.innerHTML = icon; }
-	// Keep focus (and the node selection) where it is: a focused button inside the
-	// contenteditable=false wrapper collapses the NodeSelection, which hides the
-	// very chrome that was just clicked.
-	b.addEventListener( "mousedown", e => { e.preventDefault(); e.stopPropagation(); } );
-	return b;
-}
-
 /**
  * Mount the tools over one image node view.
  *
@@ -164,11 +151,13 @@ export function attachImageTools( ctx ) {
 	chrome.appendChild( badge );
 
 	const bubble = document.createElement( "div" );
-	bubble.className = "tiptap-image-bubble";
+	// Both classes: `tiptap-embed-bubble` is the shared chrome (also the
+	// widget/attachment bubble), `tiptap-image-bubble` carries the image-only extras.
+	bubble.className = "tiptap-embed-bubble tiptap-image-bubble";
 
 	const alignBtns = {};
 	[ [ "left", "JustifyLeft" ], [ "center", "JustifyCenter" ], [ "right", "JustifyRight" ] ].forEach( function( pair ) {
-		const b = button( "tiptap-image-align", ICONS[ pair[ 1 ] ], t( "image.align." + pair[ 0 ] ) );
+		const b = bubbleButton( "tiptap-image-align", ICONS[ pair[ 1 ] ], t( "image.align." + pair[ 0 ] ) );
 		// Clicking the active alignment clears it back to "auto" (the picker's
 		// default), so the three buttons cover all four states.
 		b.addEventListener( "click", () => setAlignment( currentAlignment() === pair[ 0 ] ? "auto" : pair[ 0 ] ) );
@@ -179,28 +168,28 @@ export function attachImageTools( ctx ) {
 	bubble.appendChild( separator() );
 
 	PRESETS.forEach( function( pct ) {
-		const b = button( "tiptap-image-preset", "", t( "image.size.percent", { count: pct } ), pct + "%" );
+		const b = bubbleButton( "tiptap-image-preset", "", t( "image.size.percent", { count: pct } ), pct + "%" );
 		b.addEventListener( "click", () => setWidth( Math.round( maxWidth() * pct / 100 ) ) );
 		bubble.appendChild( b );
 	} );
 
-	const originalBtn = button( "tiptap-image-original", ICONS.AspectRatio, t( "image.size.original" ) );
+	const originalBtn = bubbleButton( "tiptap-image-original", ICONS.AspectRatio, t( "image.size.original" ) );
 	originalBtn.addEventListener( "click", useOriginalSize );
 	bubble.appendChild( originalBtn );
 
 	bubble.appendChild( separator() );
 
-	const editBtn = button( "tiptap-image-edit", ICONS.Pencil, t( "image.edit" ) );
+	const editBtn = bubbleButton( "tiptap-image-edit", ICONS.Pencil, t( "image.edit" ) );
 	editBtn.addEventListener( "click", () => ctx.openPicker() );
 	bubble.appendChild( editBtn );
 
-	const removeBtn = button( "tiptap-image-remove", ICONS.Trash, t( "image.remove" ) );
+	const removeBtn = bubbleButton( "tiptap-image-remove", ICONS.Trash, t( "image.remove" ) );
 	removeBtn.addEventListener( "click", removeNode );
 	bubble.appendChild( removeBtn );
 
 	// Centre refresh: only present while the preview is out of date (see the
 	// header note on why re-rendering is manual).
-	const refreshBtn = button( "tiptap-image-refresh", ICONS.Refresh, t( "image.refresh" ) );
+	const refreshBtn = bubbleButton( "tiptap-image-refresh", ICONS.Refresh, t( "image.refresh" ) );
 	refreshBtn.addEventListener( "click", function() {
 		// It covers the middle of the image, so a click aimed at the image lands here
 		// instead of selecting the node. Select as well as refresh, so that click is
@@ -375,35 +364,12 @@ export function attachImageTools( ctx ) {
 		placeBubble();
 	}
 
-	// Keep the whole bubble inside the editable. It is anchored to the image's left
-	// edge and is wider than a small image, so without this the buttons run off the
-	// editor's border (and on a right-floated image, off the other side).
-	//
-	// Vertically it prefers to sit ABOVE the image and flips BELOW it when there is
-	// no room - an image at the top of the editable otherwise put the bubble over
-	// the toolbar, or outside the mount entirely, with none of its buttons
-	// reachable. The room is measured against the VISIBLE part of the mount (its
-	// intersection with the viewport), the same way the table bubble and the
-	// Modern-mode selection bubble do it: inline the mount is page-height, so the
-	// raw rect would answer the wrong question.
+	// Placement is shared with the widget/attachment bubble (src/embedBubble.js):
+	// anchored to the embed's left edge, clamped inside the editable, above unless
+	// there is no room. The reasoning for each of those is documented there.
 	function placeBubble() {
 		if ( !selected ) { return; }
-		bubble.classList.remove( "is-below" );
-		bubble.style.left = "0px";
-
-		const mount = editor.view.dom.closest( ".tiptap-editor-mount" );
-		const mRect = ( mount || editor.view.dom ).getBoundingClientRect();
-		const fRect = ctx.frame.getBoundingClientRect();
-		if ( fRect.top - Math.max( mRect.top, 0 ) < bubble.offsetHeight + 8 ) {
-			bubble.classList.add( "is-below" );
-		}
-
-		const bounds = editor.view.dom.getBoundingClientRect();
-		const box    = bubble.getBoundingClientRect();
-		let dx = 0;
-		if ( box.right > bounds.right ) { dx = bounds.right - box.right; }
-		if ( box.left + dx < bounds.left ) { dx = bounds.left - box.left; }
-		if ( dx ) { bubble.style.left = Math.round( dx ) + "px"; }
+		placeBubbleAt( bubble, ctx.frame, editor );
 	}
 
 	function syncButtons() {
@@ -502,7 +468,7 @@ export function attachImageTools( ctx ) {
 		// Our chrome owns its own pointer/click handling; everything else (a click
 		// on the image itself) still reaches ProseMirror so the node gets selected.
 		ownsEvent: function( e ) {
-			return !!( e.target && e.target.closest && e.target.closest( ".tiptap-image-tools,.tiptap-image-bubble,.tiptap-image-refresh" ) );
+			return !!( e.target && e.target.closest && e.target.closest( ".tiptap-image-tools,.tiptap-embed-bubble,.tiptap-image-refresh" ) );
 		},
 
 		isSelected: function() { return selected; }

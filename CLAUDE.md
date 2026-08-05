@@ -46,17 +46,29 @@ preside-ext-tiptap/
     i18n.js               UI-string lookup: cfrequest.tiptapI18n -> English defaults
     theme.js              light/dark chrome theme (localStorage per-user preference) + its toggle button
     maximize.js           full-viewport toggle (portals the container to <body>)
+    resize.js             the bottom-right drag grip (CKEditor's `resize` plugin)
+    sourceView.js         the Source view: pretty-printer + highlighter + the
+                          textarea-over-paint-layer editor (DISPLAY-ONLY)
     outline.js            document outline navigator (heading rail -> hover panel -> scroll to)
     imageTools.js         smart images: drag-resize + alignment bubble over an embedded image
+    embedBubble.js        the SHARED embed bubble: its placement + buttons, and the
+                          Edit/Remove pair widgets and attachments get
     tableTools.js         table chrome: bubble toolbar (row/col/cell ops) over the caret's table
     slashMenu.js          the "/" insert menu (blocks + Preside pickers + widgets by name)
     dragHandle.js         Notion-style block grip: hover -> drag to reorder / click to select
+    dialog.js             modal dialog shell (head/tabs/body/buttons) IN A SHADOW ROOT
+    findReplace.js        Find + Find and Replace (one dialog, two tabs) + the search engine
+    specialChar.js        Insert Special Character dialog (grid + previews)
+    specialChars.js       DATA: CKEditor's specialChars list + its character names
+    bidi.js               text direction: dir attribute on the block (BidiLtr/BidiRtl)
     tiptap.css            css SOURCE (built minified+hashed into dist)
     icons.js              inline SVG toolbar icons (Tabler Icons, MIT)
     pasteFilter.js        disallowedContent / pasteFromWordDisallow paste filtering
     customConfig.js       custom CKEditor config-file (configFile/customConfig) loader
     tokens.js             {{…}} token <-> HTML conversion
     normalize.js          output normalisation (byte-fidelity vs CKEditor)
+    ownStyle.js           our stylesheet as cssText, for the two isolation boundaries
+                          (the editing frame's document + the dialog's shadow root)
     editorFrame.js        THE ISOLATION BOUNDARY - the per-editor editing iframe
                           (creation, own-CSS injection, auto-height, surfaceOf())
     editorFocus.js        focusEditable() - take DOM focus BEFORE building a
@@ -465,8 +477,72 @@ All three embeds (`presideImage`, `presideAttachment`, `presideWidget`) are
   it drew a selection box across the whole editor; a chip shrink-wraps and is the
   box the user actually sees.
 
+### Preview links never navigate inside the editor
+
+The previews are **real server-rendered HTML**, and an attachment renders as an
+`<a href>` to the asset - so clicking the paperclip icon or the filename
+**downloaded the file**, from inside the editor, where the click was meant to select
+the embed so it could be edited or removed. (A linked image is the same shape of
+problem.) `makePreviewDom()` cancels `click` and `auxclick` on any anchor inside an
+embed, in the **capture** phase so it lands before anything in the rendered markup.
+
+- **Selecting the node already worked; that was not the bug.** The select-me handler
+  `preventDefault()`s the *mousedown*, and a cancelled mousedown does not stop the
+  anchor's own click activation - which is what navigates.
+- `auxclick` is covered because a **middle click** opens the download in a new tab,
+  and keyboard activation fires a click of its own, so it is covered too.
+- **Nothing is neutered outside the editor, by construction**: the guard lives on the
+  node view, which only exists while the editor does. Classic closing, or Modern
+  re-rendering the region from the server, leaves the page's own markup with the page's
+  own links. Verified in both modes.
+- It is **scoped to embeds**, not a blanket "cancel every link click" - an ordinary
+  content link in the editable is untouched (asserted, so the guard cannot quietly
+  grow into one).
+
+Tests: **T27** (the mock renders the server's own download href - it used to be
+`href="#"`, which is why the harness could not see this bug; the click and the middle
+click are both cancelled; the click selects the embed instead; the token round-trips;
+an ordinary content link is left alone). Confirmed with a real Playwright mouse too:
+no navigation, no download, and **no request** for the asset.
+
+### The bubble: all three embeds get one
+
+The floating toolbar over a **selected** embed is one implementation
+(`src/embedBubble.js`) with two button sets: the image's full one (align, size
+presets, original size, edit, remove - `src/imageTools.js`) and, for widgets and
+attachments, just **Edit** and **Remove**, because they have no geometry to offer.
+
+- **`placeBubble()` and `bubbleButton()` live in `embedBubble.js` and imageTools
+  imports them**, so the two bubbles cannot drift apart. The placement rules are the
+  ones the image bubble arrived at the hard way and they are documented there: left-
+  anchored then clamped inside the editable (centring clipped half the buttons off a
+  small or floated embed), above unless there is no room and then `.is-below` (an
+  embed at the top of a field otherwise put the bubble on the toolbar with none of
+  its buttons reachable), and the room measured against the **mount ∩ viewport**
+  (inline the mount is page-height, so the raw rect answers the wrong question).
+- The css follows the same split: **`.tiptap-embed-bubble` is the shared chrome**,
+  `.tiptap-image-bubble` only carries the image-specific extras. Both classes are on
+  the image's bubble element.
+- **Chrome only** - it is a sibling of the preview inside the frame, never in the
+  document, so `getData()` is untouched whether it is on screen or not. Remove is an
+  ordinary `deleteRange`, so undo restores the token byte-for-byte.
+- **The buttons swallow `mousedown`** (`bubbleButton()`): a focused button inside the
+  `contenteditable=false` wrapper collapses the NodeSelection - which hides the very
+  chrome that was just clicked - and stopping propagation also keeps the click off the
+  embed's own select-me handler.
+- Edit reuses **`openPicker()`**, the same path the existing double-click uses, so
+  there is one way in to the picker and it stays prefilled for editing.
+- It is under the **same opt-out as the image tools** (`defaultConfigs.imageTools =
+  false`) and absent in a read-only editor: a field that turned embed chrome off
+  should not sprout a different flavour of it. An image whose token cannot be parsed
+  is still left strictly alone - it does not fall back to the reduced bubble.
+- Strings are the `embed.edit` / `embed.remove` i18n keys.
+
 Tests: `harness/test-realworld.html` **T21** (stacking, shrink-wrap,
-click-selects-node, the outline, no text selection, and token round-trip).
+click-selects-node, the outline, no text selection, token round-trip, and the bubble:
+exactly Edit + Remove on the selected chip, hidden on the unselected one, flipped
+below at the top of the field and still inside the mount, and Remove deleting just
+that embed).
 
 ## The "/" insert menu
 
@@ -625,6 +701,117 @@ doubles as "select this"). Disable per site/field with
   dispatches the real sequence (`dragstart`/`dragover`/`drop`/`dragend`) with one
   shared `DataTransfer`, which is what actually exercises the drop.
 
+## Manual resize grip (bottom-right corner)
+
+`src/resize.js` reproduces CKEditor's `resize` plugin: the grip in the bottom-right
+corner of the bottom bar (our footer status bar) that drags the editor to a size the
+author chooses. Boxed/classic editors only.
+
+- **`resize_dir` defaults to `"vertical"`**, so out of the box it drags HEIGHT only;
+  `"horizontal"`/`"both"` are honoured. Defaults are CKEditor's own: min 750x250,
+  max 3000x3000, `resize_enabled` true. An axis is draggable only when its min and
+  max differ (CKEditor's own test), so a field pinning both gets **no grip at all**.
+- **The minimum is lowered to the current size on pointer-down when the editor is
+  already smaller than it.** That is CKEditor's own line, and it matters far more
+  here: Preside's default `maxHeight` is 300, so a stock field starts under the 250
+  minimum and without it the first pixel of drag would JUMP the editor taller.
+- Clamping is against the WHOLE editor box, as CKEditor's is (`getResizable()`
+  returns the outer container), not the editable alone - so the corner stays under
+  the pointer.
+- **A dragged height is applied as `frameApi.setHeights( h, h )` - min and max
+  pinned to the same value - and that is the whole implementation.** Everything else
+  follows: the frame stops auto-growing (which is what "I chose this height" means,
+  and what CKEditor's explicit height did), and `syncOverflow()` derives on its own
+  that taller content now scrolls inside the frame. Resist adding a second height
+  path for this.
+- Nothing is persisted - a per-session size, exactly as CKEditor's was.
+- Hidden while maximized (CKEditor hides it on the `maximize` event; ours is a CSS
+  rule on `.is-maximized`), and **absent in Modern inline mode**, where the editable
+  is the site page in its own flow - CKEditor's inline mode had no bottom bar and no
+  resizer either.
+- It is drawn as the same 10px CSS border-triangle CKEditor's skin uses, NOT the
+  `◢` glyph that skin falls back to - same reasoning as the dropdown caret. Two
+  small departures: the cursor names the axis actually being dragged
+  (`ns-resize`/`ew-resize`/`se-resize`, where CKEditor's skin says `se-resize`
+  always), and the grip is focusable so arrow keys resize in 20px steps.
+- The footer's right-hand slot (`.tiptap-footer-right`) is now **always created**,
+  holding the light/dark toggle and the grip. That is deliberate: two elements each
+  with `margin-left:auto` would SPLIT the free space and park the toggle in the
+  middle of the footer. A field with `wordcount:false` has no footer, so the grip
+  floats in the container's own corner (`.is-floating`).
+
+Tests: **T25** (rendered in the footer corner, vertical-only by default with the
+matching cursor, drag down/up by the drag distance, the height STICKS when content
+is added and the frame scrolls instead, arrow keys, hidden while maximized,
+`resize_enabled:false`, min===max leaves no grip, `resize_dir:"both"` narrows the
+container, and the min-lowering rule on a field capped below the default minimum).
+Its fixtures are its own: an earlier version dragged T9's field and raced the
+outline rail's rAF-deferred re-centring - the rail does re-place itself on a resize
+(it observes the surface), just not in the same tick.
+
+## Toolbar chrome: grouped blocks, separators, carets
+
+The toolbar is deliberately CKEditor's shape, because a Preside author recognises
+it: **a grey tray of white grouped blocks**. The numbers in `src/tiptap.css` are
+not invented - they were read off the bootstrapck skin in the browser:
+`.cke_top` is `#eee` with `3px` top padding, `.cke_toolgroup` is white with
+`1px #ddd`, `4px` radius, `2px` padding and `margin:0 6px 3px 0`, and
+`.cke_button` computes to a 16px icon in 2px/4px padding at radius 2.
+`--tt-chrome-bg` and `--tt-group-bg` carry the two surfaces (with dark-theme
+overrides), so the whole tray re-themes with everything else.
+
+- **Matching CKEditor's button metrics is not only cosmetic**: it is what makes the
+  same toolbar config wrap into the same number of rows. The floating chrome (table
+  bubble, image bubble, selection bubble) keeps its own larger 24px buttons - those
+  are not toolbar rows.
+- **The group is the block, so a dropdown inside one carries no border of its own**
+  (that drew a second box inside the group's). The Format/Styles trigger is
+  otherwise styled to `.cke_combo_text`'s metrics.
+- **The selection bubble reuses `.tiptap-toolbar-group`, and explicitly zeroes the
+  block chrome**: it is one floating pill, and a white bordered box inside a white
+  pill looked like a mistake.
+- **A separator only means something BETWEEN two controls.** `tidySeparators()` in
+  `toolbar.js` drops the ones that end up leading, trailing or doubled, and it runs
+  **after** rendering rather than filtering the name list - because what actually
+  renders is not knowable up front: unknown button names are skipped and the four
+  `Justify*` collapse into one dropdown. The real `preside-ext-pdf-templating`
+  toolbar is the proof: `Cut,Copy,-,Undo,Redo` leaves a LEADING separator once
+  Cut/Copy are dropped, and `Find,Replace,-,SelectAll,-,Scayt` leaves two TRAILING
+  ones. Against the group's own border those read as doubled lines - the
+  "sometimes there are two of them" report. The separator is also centred by the
+  group's `align-items` rather than a magic top margin, so it lines up whatever the
+  row height is.
+- **NEVER use a bare class name a theme might own.** The dropdown caret used
+  `class="caret"`, which is a **bootstrap** (and Ace) class: in the admin,
+  bootstrap's own `.caret` rule drew its border triangle on top of the `&#9662;`
+  glyph we printed, so every dropdown showed **two arrows stacked**. It is now
+  `.tiptap-caret`, drawn as a CSS border triangle (nothing to double up), and the
+  label is `.tiptap-lbl` (Ace owns `.lbl` too). The toolbar lives in the LIGHT DOM
+  - unlike the dialogs, which are behind a shadow boundary - so this hazard is
+  live for anything added here. Namespace it.
+
+- **`.tiptap-dropdown` is a FLEX container, not an inline-block** — a one-pixel
+  bug worth knowing about, because it only showed on the *custom-rendered*
+  controls. As an inline-block the wrapper opened an **inline** formatting
+  context, so its trigger sat on a text baseline against the strut of the
+  wrapper's own font. Where that baseline falls depends on what is inside the
+  trigger: one with a text label (Format/Styles) puts its baseline mid-button and
+  fitted the 22px; one holding **only boxes** — the Table picker's svg, the Align
+  picker's icon span — has its baseline **synthesized at its bottom edge**, so the
+  strut's descent was added below it and the wrapper measured 23px. That made
+  exactly those two GROUPS a pixel taller than every other block in the tray and
+  shifted their buttons half a pixel up — reported, correctly, as "the taller ones
+  are the custom buttons". A flex container has no strut, so a wrapper is now
+  exactly its trigger's height whatever it contains.
+
+Tests: T2 asserts the tray/block surfaces, that no group has a leading, trailing or
+doubled separator on that real-world toolbar (while a separator between two real
+buttons survives), that a trigger carries exactly one caret, that no chrome
+uses the `caret`/`lbl` class names, and that **every group in a toolbar row is the
+same height with every button on one top edge** (that toolbar has both custom
+triggers, so it is the case the wrapper bug hit) with a dropdown wrapper exactly its
+trigger's height.
+
 ## Alignment dropdown
 
 CKEditor exposed alignment as four separate toolbar buttons
@@ -744,6 +931,284 @@ the rules are exact:
   T15). T17 sets `colwidth` the way a finished drag leaves it and asserts the
   serialisation contract; the drag itself was verified with a real Playwright
   mouse.
+
+## Source view (src/sourceView.js)
+
+The `Source` button shows the stored markup **laid out the way CKEditor's does and
+syntax highlighted** — but where CKEditor's readability came from its *output
+writer* (its `getData()` genuinely contains those newlines and tabs), **ours is
+display-only**. That is the whole constraint, and everything here follows from it.
+
+- **The formatter only INSERTS newlines and tabs at block boundaries.** Every other
+  byte is emitted from the scanner token's own `raw` text — nothing is
+  re-serialised, no attribute rewritten, no quote style normalised. So the formatter
+  cannot invent a difference, which is what lets the editor trust the text it gets
+  back. `getData()` is unchanged and the fidelity matrix numbers are identical.
+- **Closing with the text unchanged does not touch the document at all** — not even a
+  `setContent()` with identical html. So open-then-close is a no-op for `getData()`
+  *and* for the form's dirty state. (It used to re-parse on every close.)
+- **Inline content is never broken across lines, and `<pre>`/`<textarea>` are
+  emitted verbatim**: whitespace is significant in both, so a prettier layout there
+  would change what the page renders. The one newline we do add inside `<pre>` sits
+  immediately after the open tag, which every HTML parser drops — that is exactly
+  why CKEditor could do the same.
+- **The layout is CKEditor's**, read off the real editor rather than invented: a
+  BLANK line between top-level blocks, one tab per level inside lists/tables, text
+  blocks on a single line.
+- The editing surface is a **transparent `<textarea>` over a highlighted paint
+  layer**, scroll-synced. Not a contenteditable: the textarea keeps native caret
+  behaviour, IME and its own undo stack, and only the paint behind it is ours.
+  - **Every property that moves a glyph must be identical in both layers** (family,
+    size, line-height, letter-spacing, padding, wrapping, tab-size, box-sizing).
+    They are set once on a shared selector in `src/tiptap.css` — add new metrics
+    there, never to one layer.
+  - **The paint layer is a `<div>`, not a `<pre>`**, even though it renders
+    pre-formatted text. Our own `.tiptap-editor-mount pre` code-block rule is
+    (0,1,1) and beat it, and a field's content stylesheet styling `pre` is
+    completely ordinary — either one changing its font or padding slides the
+    highlight off the text it is painting. This was caught by measuring, not by eye.
+  - **No line-number gutter**: the view soft-wraps (an image or widget token is one
+    line hundreds of characters long, so wrapping beats a horizontal scrollbar), and
+    numbering wrapped lines means measuring every soft break. A gutter that
+    mis-counts is worse than none.
+- **Tokens are scanned BEFORE tags.** A `{{...}}` payload can contain a `<` or `>`
+  (alt text, a caption); letting the tag branch see it first mis-scans the rest of
+  the string. A token is highlighted as one unit and drawn as a chip with the
+  `--tt-active-*` pair, so it needs no dark-theme override of its own.
+- The palette is the **admin colours** (`lessglobals/colours.less`) like everything
+  else here — @blue-darker tags, @clay-brown attributes, @green-darker values,
+  @grey9 comments — with a dark set that is ours, since the admin is light-only.
+- **The mount's padding is given back.** Its left inset is the block drag gutter's
+  room (`.tiptap-gutter-1/-2`), and there is no rail over the source - nor any blocks
+  for one to grab - so the code view takes the full box and its layers' own 10/12px
+  is the only inset. The marker class goes on the MOUNT, not the container: the
+  gutter rule targets the mount, which lives inside the frame where a container
+  selector cannot reach it. It also has to restate the frame-root form to match the
+  gutter rule's (0,3,0) - a bare `.tiptap-editor-mount.is-source` is (0,2,0) and lost.
+- **The view is the height the editor already has**, as CKEditor's source textarea
+  was, and re-fits when the frame is resized (the grip, Maximize). Sizing it to its
+  own content would make the editor jump on every toggle; a fixed height left dead
+  space under it in any taller field.
+- **The outline rail is hidden while the source is up** (`.is-source` on the
+  container): it navigates headings in a document that is not on screen, and
+  clicking one would move a caret nobody can see. The rest of the content-glued
+  chrome cannot appear — it all hangs off the hidden editable.
+- It opens **at the top, caret on line 1**: focusing a textarea puts the caret at
+  the end, which scrolled a long document's source straight to the bottom and took
+  the frame's own scroll with it. `Tab` inserts a tab rather than walking the focus
+  out of a view whose whole content is markup.
+- **Re-opening gives the user their own layout back**, keyed on the document it
+  belongs to, so hand-made line breaks survive a toggle instead of being
+  reformatted; any later edit in the editable changes the key and the stale text is
+  dropped.
+
+Tests: **T26** (opens inside the frame; blank line between top-level blocks, tab
+indents, inline content on one line, `<pre>` byte-for-byte; the gutter's indent
+given back; the paint layer paints
+exactly the textarea's text at identical metrics; token/tag/attr highlighting;
+the rail hidden and restored; the box does not change height; `Tab` inserts a tab;
+**open-then-close is byte-identical**; an edit applies and ONLY the edit, with the
+`{{widget}}` token, `<pre>` whitespace and `&amp;` all surviving; re-open keeps the
+user's layout).
+
+## Find / Replace, special characters, text direction
+
+Four CKEditor toolbar buttons that this extension used to skip silently (they were
+literally the "unmapped" list in T2) are now implemented. All four are **modelled
+on the CKEditor plugin, not invented** - the plugin sources are in the Preside tree
+at `system/assets/ckeditor/` and are worth reading before changing any of this.
+
+### The dialog shell (`src/dialog.js`) — and why it is in a SHADOW ROOT
+
+Find/Replace and Insert Special Character were CKEditor **dialogs**, so they get
+dialog chrome rather than a popover: title bar, optional tab strip, body, status
+line, button row. One implementation, two consumers.
+
+**A dialog must be portalled to `<body>`** (a capped-height field, or any
+`overflow:hidden` ancestor, would clip it — the same reason the pickers, the slash
+menu and the selection bubble live there). But `<body>` in the admin is bootstrap +
+Ace territory, and a panel built from a **fieldset, a legend, labels, inputs and
+buttons** is exactly what an admin theme has the most opinions about. The first
+version of this dialog was portalled into the light DOM and the real admin
+mangled it:
+
+- bootstrap's `legend` is 21px, full width, with a bottom border and a 20px margin
+  — so "Find Options" drew a rule across the dialog and shoved the options down;
+- `label` is forced to `inline-block` with its own weight, so the three options ran
+  together on one line;
+- Ace re-skins `input[type=checkbox]` and re-borders text inputs;
+- **and several of those arrive with `!important`.**
+
+That is the SAME fight the editable lost before it moved into an iframe: a
+specificity contest against the admin's stylesheets cannot be won, because
+`!important` and higher-specificity selectors are ordinary content of a real admin
+theme. **So do not try to fix dialog styling with more specificity — the boundary
+is the fix.** The panel is built inside `host.attachShadow()`, where no rule from
+the page can reach it, and our own stylesheet is injected inside it
+(`src/ownStyle.js`, the same cssText trick the editing frame uses).
+
+- **A shadow root, not an iframe.** Unlike the editable, this chrome needs no
+  `rem`/`vw` root of its own, hosts nothing editable (so none of the
+  `-webkit-user-modify` trouble applies) and wants no content CSS — so the cheap
+  boundary is sufficient. Where `attachShadow` is unavailable the dialog renders in
+  the host div instead: cosmetically at the page's mercy, but working.
+- **The HOST element carries geometry and the `--tt-z-base` rung INLINE.** It is
+  the one part still exposed to the page, and an inline style cannot be
+  out-specified. Custom properties inherit through a shadow boundary, so the rung
+  still lifts with the rest of the ladder in Modern inline mode.
+- **Querying in needs `host.shadowRoot`** — that is what the harness tests do
+  (`dlgHost()` / `dlg()`), and it is the one API cost of the boundary. Keyboard
+  events are composed, so they still bubble out to the document and the Esc handler
+  is unaffected.
+- **The dialog still declares its own typography**, because inheritable properties
+  (font, colour, direction) DO cross a shadow boundary and **form controls inherit
+  no font at all** — an input with only a `font-size` renders in the UA's Arial
+  beside panel text in the page's family. So the panel states
+  family/size/line-height/letter-spacing once and every control inside is restated
+  to `inherit`, with the reset written in `:where()` to keep it at `(0,1,0)` so the
+  styled parts below can override it by simply coming later. (At `(0,2,0)` it
+  silently ate the title's weight and the character grid's glyph size.)
+- **One type scale for both dialogs: 14px semibold title, 13px body and controls,
+  12px status and secondary previews.** New rows use those three; the only
+  deliberately larger type is the special-character glyphs, which are content.
+- **One dialog at a time** (`openDialog` closes the open one) — which is also what
+  makes "press Replace while Find is open" reappear on the other tab.
+- **Tabs switch VISIBILITY, they do not rebuild the body.** CKEditor had to copy
+  every field value between its two tabs on each switch (`selectPage` override);
+  here there is one set of inputs and the panel's `data-tab` hides what does not
+  belong, so the values cannot drift.
+- **The scrim is light (.25, not the pickers' .5) and the panel is pinned near the
+  top of the viewport, not centred.** The find dialog exists to point at a
+  highlighted match *behind* it.
+- Deliberately **not** presideBootbox: an admin-page bootstrap modal, unavailable
+  on the front end, unstyled by our variables — and subject to exactly the theming
+  above.
+
+**Still in the light DOM, and still exposed to this**: the anchor dialog
+(`.preside-anchor-*`), the slash menu and the selection bubble. The anchor dialog
+is the same shape of markup and would benefit from being ported onto
+`openDialog()`; the other two are div-only and have not been reported as broken.
+
+### Find and Replace (`src/findReplace.js`)
+
+**Two buttons, ONE dialog** - `Find` opens it on the find tab, `Replace` on the
+replace tab, exactly as CKEditor registered them
+(`dialogCommand( "find", { tabId: "replace" } )`). Each tab shows the buttons
+CKEditor's own tab had (Find; Replace + Replace All).
+
+The **Replace icon is CKEditor's own metaphor redrawn**: its sprite is a bold `b`
+and `a` with curved arrows swapping between them - one letter becoming another.
+(A magnifier-with-arrows was tried first and read as nothing in particular at
+16px.) The letters are SVG `<text>` with the family pinned, since the icon renders
+both in the admin page and inside the editing frame and must not pick up either
+one's font. CKEditor draws two arrows; ours draws one - **checked by rasterising
+both at a true 16px and magnifying the result**, where the second arrow crowds the
+`a` into a smudge. Do that again before redrawing any of these: vector previews at
+96px tell you nothing about the size the toolbar actually uses.
+
+- **Searching never touches the document.** The current match is a ProseMirror
+  **decoration** (`tiptap-find-match`), not the real `<span>` CKEditor inserted and
+  then unpicked on close. So a search cannot dirty the form, cannot appear in
+  `getData()`, and has no clean-up path to get wrong - the same reasoning as the
+  outline navigator's landed-on highlight. The colours ARE CKEditor's
+  (`config.find_highlight`: `#004` on white).
+- **The search unit is a "run"**: one uninterrupted stretch of text inside a single
+  textblock. That is what makes a match **never span a block boundary** (CKEditor's
+  walker treated one as a match boundary and reset) while still spanning inline
+  marks, so `bold` finds `<b>bo</b>ld`. An inline atom (an anchor, an embed) breaks
+  a run for the same reason a block does.
+- **"Match whole word" uses CKEditor's own boundary test** - its punctuation set
+  plus the C0 and Unicode space ranges - and the start/end of a run counts as a
+  boundary.
+- **Replace is TWO clicks**, as it was in CKEditor: the first finds and highlights,
+  the second replaces *that* match. Changing any option invalidates the current
+  match so the next click re-finds. Do not "fix" this into one-click replace
+  without knowing that it is the CKEditor behaviour being reproduced.
+- **Replace All is one transaction**, hence **one undo step** (CKEditor bracketed
+  its loop with `saveSnapshot`), and applies matches **back to front** so earlier
+  edits cannot invalidate later positions. Replacement text goes in via
+  `tr.insertText`, which carries the marks across the range - replacing a word
+  inside a link or a bold run keeps its formatting.
+- Messages are CKEditor's own strings (`notFoundMsg`, `replaceSuccessMsg`) shown in
+  the dialog's **status line** rather than through `alert()`.
+- **Revealing a match** reuses outline.js's three-branch logic: scroll the frame's
+  own document when the field is capped/maximized, otherwise move the admin page
+  **only if the match is genuinely off screen**. A `scrollIntoView()` fallback on
+  an uncapped field makes the browser scroll the whole admin form instead.
+- On close the highlight goes and the match the user stopped at becomes the
+  **selection**, with focus back in the editable (CKEditor's `onHide`).
+- Excluded from the Modern selection bubble: they act on the whole document and
+  open a modal, which is persistent-chrome work, not selection work.
+
+### Insert Special Character (`src/specialChar.js` + `src/specialChars.js`)
+
+A modal grid in CKEditor's shape: **17 columns**, hover fills the two preview panes
+(the character large, and its HTML form as text), click inserts and closes. Arrow
+keys walk the grid; Enter/Space inserts.
+
+- **`src/specialChars.js` is DATA**: `CKEDITOR.config.specialChars` transcribed
+  byte-for-byte (210 entries, including the two upstream entries missing their
+  semicolon - the HTML parser decodes them anyway, so the copy stays faithful),
+  plus the English character names from CKEditor's dialog language pack. A site
+  overrides the list the CKEditor way: `defaultConfigs.specialChars` (string or
+  array; `[ char, label ]` pairs are honoured).
+- **The per-character NAMES stay English data, not i18n keys.** ~110 tooltip
+  strings through `cfrequest.tiptapI18n` would grow every admin page's payload for
+  text only seen on hover; `charName()` still checks i18n first
+  (`specialchar.char.<key>`), so an override is possible. The dialog's own chrome
+  IS localised the normal way.
+- **What is inserted is the CHARACTER, not the entity** - CKEditor built a span
+  from the entity and inserted `span.getText()`. It goes in with `tr.insertText`,
+  so it inherits the marks at the caret (an ellipsis added mid-bold-run stays
+  bold). CKEditor's output writer re-encoded non-ASCII back to entities on save
+  (`config.entities`); that is deliberately NOT reintroduced - it is a
+  whole-document output concern and it would rewrite every accented character in a
+  field the first time it was saved.
+
+### Text direction (`src/bidi.js`)
+
+`BidiLtr` / `BidiRtl` reproduce CKEditor's `bidi` plugin, and the markup is the
+whole point:
+
+- **It writes the `dir` ATTRIBUTE on the block**, never a CSS `direction` - and it
+  **strips an existing inline `direction:`** on the way past (as CKEditor's
+  `removeStyle` did), because that style would otherwise silently beat the
+  attribute the button just wrote. The rest of the `style` is untouched.
+- **`useComputedState` (CKEditor's default) means applying the direction a block
+  would have ANYWAY removes the attribute instead of writing it.** So in an LTR
+  field, "left to right" on a plain paragraph writes **nothing at all**, and on a
+  `dir="rtl"` paragraph it removes the attribute rather than writing `dir="ltr"`.
+  That is why the code compares against the **parent's computed direction** instead
+  of just setting the attribute. `useComputedState: false` is not supported (an
+  obscure config, and toolbar `COMMANDS` runners get the editor, not the field
+  config).
+- **The button state is the COMPUTED direction at the caret**, which means the LTR
+  button reads as *on* in an ordinary untouched LTR field. That looks odd and it is
+  exactly what CKEditor did (`refresh` sets `bidiltr` ON whenever the computed
+  direction is "ltr"); the alternative reports "no direction set" as "left to right
+  is off", which is worse.
+- **Which node takes the attribute**: a container type the selection fully encloses
+  (table/row/cell, list, list item, blockquote, div) takes it and its children are
+  left alone - so the drag grip's NodeSelection on a table writes
+  `<table dir="rtl">`; otherwise every **textblock** the selection touches takes
+  it, which is the ordinary caret-in-a-paragraph case writing `<p dir="rtl">`.
+- `dir` had to enter the schema, as a global passthrough attribute in
+  `src/extensions/presideAttributes.js`. Side benefit: a `dir` in existing
+  CKEditor-authored content **stops being dropped on save**.
+
+Tests: `harness/test-realworld.html` **T22** (dialog/tab wiring, prefill from the
+selection, highlight without touching the document, no match across a block
+boundary, match-case/whole-word, two-click Replace, Replace All's count message and
+single undo step, close-selects-the-match, **the shadow boundary** — the page
+injects the admin theme's own `!important` rules on legend/label/fieldset/input/
+button and asserts none of them land, plus one family and only the three type
+sizes; all five boundary assertions fail if the shadow root is removed, which is
+how they were verified), **T23** (the whole 210-character list in
+17 columns, CKEditor's names, both previews, character-not-entity insertion, marks
+preserved) and **T24** (dir written/removed per `useComputedState`, inline
+`direction:` stripped, container vs textblock target, existing `dir` round-trips).
+T2 now asserts these five buttons RENDER, and its "unmapped" list is down to
+Scayt/SelectAll/CreateDiv/Language/Cut/Copy.
 
 ## The editing iframe (isolation + content-CSS fidelity)
 
@@ -933,6 +1398,18 @@ control entirely per site/field with `defaultConfigs.darkMode = false`.
   variable override block at the bottom of the file. Add new colours as variables,
   not literals. The picker/anchor overlays live outside the container (on `<body>`,
   hosting admin forms in an iframe) and stay light deliberately.
+- **THE OVERRIDE BLOCK IS DECLARED FOR BOTH DOCUMENTS**
+  (`.tiptap-editor-container.tiptap-dark,.tiptap-editor-doc.tiptap-dark`), exactly
+  as the light block is, and the mount-scoped dark rules are prefixed with a bare
+  `.tiptap-dark` rather than the container. This was a real bug for as long as the
+  editing frame has existed: with the override on the container alone it **could not
+  match inside the frame** — `theme.js` mirrors the class onto the frame's own
+  `<html>` precisely because a container selector means nothing in there — so every
+  `--tt-*` variable kept its LIGHT value inside the editable's document. Dark mode
+  drew a dark surface (the container, behind a transparent frame) under **black
+  content text**, with light table borders, light embed placeholders and a light
+  selected-cell highlight. Anything new that colours the editable or the chrome
+  inside the frame must be reachable from the frame root, never from the container.
 - A field's own content stylesheets (`contentsCss`/`stylesheets`) are authored
   for a light page, so any explicit colour they set still wins inside the
   editable — intentional (WYSIWYG fidelity), so dark mode is a chrome-comfort

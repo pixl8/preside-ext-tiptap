@@ -36,7 +36,16 @@ export function createPresideAttributes() {
 		addGlobalAttributes() {
 			return [ {
 				types: BLOCK_TYPES,
-				attributes: { "class": passthroughAttr( "class" ), style: passthroughAttr( "style" ) }
+				attributes: {
+					  "class": passthroughAttr( "class" )
+					, style   : passthroughAttr( "style" )
+					// `dir` backs the BidiLtr/BidiRtl toolbar buttons (src/bidi.js):
+					// CKEditor's bidi plugin wrote exactly this attribute, on exactly
+					// these element types. Declaring it also stops a `dir` in existing
+					// CKEditor-authored content being dropped on save - which is this
+					// module's whole purpose.
+					, dir     : passthroughAttr( "dir" )
+				}
 			} ];
 		}
 	} );

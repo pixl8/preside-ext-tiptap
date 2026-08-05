@@ -174,7 +174,12 @@ function mockAjax( action, body ) {
 		}
 		case "assetManager.renderEmbeddedAttachmentForEditor": {
 			const cfg = parseEmbed( body.get( "embeddedAttachment" ), /^\{\{attachment:(.*):attachment\}\}$/ );
-			return `<a href="#">&#128206; ${esc( cfg.name || cfg.asset || "document" )}</a>`;
+			// A REAL download href, as Preside's renderer emits: this is what made
+			// clicking an attachment inside the editor download the file. With the
+			// `href="#"` this used to have, that bug could not show up in the harness.
+			const href = "/mock/asset/" + encodeURIComponent( cfg.asset || "doc" )
+			           + "/" + encodeURIComponent( cfg.name || "document" );
+			return `<a href="${esc( href )}">&#128206; ${esc( cfg.name || cfg.asset || "document" )}</a>`;
 		}
 		// Read by the image tools' "Original size" button (real handler measures the
 		// asset binary; upper-cased keys because CFML serialises struct keys that way).
@@ -300,6 +305,18 @@ const server = http.createServer( async ( req, res ) => {
 	if ( p === "/mock/frontend/publish" ) {
 		await readBody( req );
 		return send( res, 200, "application/json", JSON.stringify( { success: true, message: "Published (mock)" } ) );
+	}
+
+	// Mock: the attachment download itself. Real bytes with a real
+	// Content-Disposition, so a click that should NOT have navigated is observable
+	// (in the editor those links are neutered - see src/extensions/presideEmbeds.js).
+	if ( p.startsWith( "/mock/asset/" ) ) {
+		const name = decodeURIComponent( p.split( "/" ).pop() || "document" );
+		res.writeHead( 200, {
+			  "Content-Type"       : "application/octet-stream"
+			, "Content-Disposition": 'attachment; filename="' + name.replace( /"/g, "" ) + '"'
+		} );
+		return res.end( "mock attachment bytes for " + name );
 	}
 
 	// Mock: admin endpoints (picker iframes + flashram store)

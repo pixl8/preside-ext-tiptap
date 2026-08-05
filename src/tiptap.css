@@ -19,6 +19,8 @@
      --tt-border       #cccccc  @grey12
      --tt-border-soft  #dddddd  @grey13        (@default-panel-border-colour)
      --tt-muted        #777777  @grey7
+     --tt-chrome-bg    #eeeeee  @grey14        (CKEditor's own .cke_top grey)
+     --tt-group-bg     #ffffff  white          (CKEditor's own .cke_toolgroup)
      --tt-embed-bg     #eeeeee  @grey14        (@default-panel-background-colour)
      --tt-outline-line #cccccc  @grey12
      --tt-outline-flash #fee188 @yellow        (the admin's highlight yellow)
@@ -36,7 +38,8 @@
 	--tt-muted:#777;
 	--tt-border:#ccc;
 	--tt-border-soft:#ddd;
-	--tt-chrome-bg:#f7f7f7;
+	--tt-chrome-bg:#eeeeee;
+	--tt-group-bg:#ffffff;
 	--tt-btn-fg:#333;
 	--tt-btn-hover-bg:#e9e9e9;
 	--tt-active-bg:#f0f7fc;
@@ -70,12 +73,32 @@
    editorFrame.js measures and sets the height. `display:block` kills the inline
    baseline gap under it; the width is the container's. */
 .tiptap-editor-frame{display:block;width:100%;border:0;background:transparent}
-.tiptap-toolbar{border-bottom:1px solid var(--tt-border-soft);padding:4px 6px;background:var(--tt-chrome-bg);display:flex;flex-wrap:wrap;gap:2px;align-items:center}
-.tiptap-toolbar-group{display:inline-flex;gap:1px;margin-right:6px}
-.tiptap-toolbar-sep{display:inline-block;width:1px;height:18px;background:var(--tt-border);margin:0 4px}
+/* The toolbar is a GREY tray of WHITE GROUPED BLOCKS, which is how CKEditor's own
+   toolbar reads and the thing a Preside author recognises. The numbers are lifted
+   from the bootstrapck skin as computed in the browser: .cke_top is #eee with
+   3px top padding, and .cke_toolgroup is white, 1px #ddd, 4px radius, 2px padding,
+   `margin:0 6px 3px 0`. Groups own their spacing, so the toolbar itself has no
+   flex `gap` - one source of the "two separators" look was a gap AND a margin AND
+   a drawn separator all landing between the same pair of buttons. */
+.tiptap-toolbar{border-bottom:1px solid var(--tt-border-soft);padding:3px 6px 0;background:var(--tt-chrome-bg);display:flex;flex-wrap:wrap;align-items:center}
+.tiptap-toolbar-group{
+	display:inline-flex;align-items:center;gap:1px;
+	margin:0 6px 3px 0;padding:2px;
+	background:var(--tt-group-bg);border:1px solid var(--tt-border-soft);border-radius:4px
+}
+/* A separator inside a group. Centred by the group's own align-items rather than a
+   magic top margin, so it lines up whatever height the row happens to be - and
+   renderNames() drops any that end up leading, trailing or doubled once unknown
+   buttons have been skipped (tidySeparators), since a rule against the group's own
+   border is exactly the "double line" that read as a mistake. */
+.tiptap-toolbar-sep{display:inline-block;width:1px;height:16px;background:var(--tt-border-soft);margin:0 3px}
 /* Pushed to the far right of the toolbar row (holds the light/dark toggle). */
 .tiptap-toolbar-right{margin-left:auto;margin-right:0}
-.tiptap-btn{min-width:26px;height:26px;padding:0 6px;border:1px solid transparent;background:none;border-radius:3px;cursor:pointer;font-size:13px;line-height:24px;color:var(--tt-btn-fg);display:inline-flex;align-items:center;justify-content:center}
+/* Button metrics follow CKEditor's (.cke_button computes to a 16px icon in 2px/4px
+   padding, radius 2) so a group of ours is the same size as a group of theirs -
+   which is also what makes the same toolbar config wrap into the same number of
+   rows. The floating bubbles deliberately keep their own larger 24px buttons. */
+.tiptap-btn{min-width:24px;height:22px;padding:0 4px;border:1px solid transparent;background:none;border-radius:2px;cursor:pointer;font-size:12px;line-height:1;color:var(--tt-btn-fg);display:inline-flex;align-items:center;justify-content:center}
 .tiptap-btn svg{width:16px;height:16px;display:block;pointer-events:none}
 .tiptap-btn:hover{background-color:var(--tt-btn-hover-bg);border-color:var(--tt-border-soft)}
 .tiptap-btn.is-active{background:var(--tt-active-bg);border-color:var(--tt-active-border);color:var(--tt-active-fg)}
@@ -237,9 +260,135 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .preside-anchor-foot{text-align:right;margin-top:14px}
 .preside-anchor-foot button{padding:6px 14px;margin-left:8px;border:1px solid #ccc;border-radius:3px;cursor:pointer}
 .preside-anchor-foot .pa-ok{background:#4c8fbd;color:#fff;border-color:#4c8fbd}
-.tiptap-dropdown{position:relative;display:inline-block;margin:0 2px}
-.tiptap-dropdown-trigger{min-width:104px;display:inline-flex;justify-content:space-between;align-items:center;gap:8px}
-.tiptap-dropdown-trigger .caret{font-size:10px;color:#888}
+
+/* ---- Modal dialogs (src/dialog.js) --------------------------------------------
+   Find and Replace (src/findReplace.js) and Insert Special Character
+   (src/specialChar.js). Body-portalled like the pickers, so - as with the picker
+   and anchor overlays - they are OUTSIDE the container's `--tt-*` scope and stay
+   light on purpose; the admin is light-only and a dialog over the site page in
+   Modern inline mode must not go dark because the OS is.
+
+   THE DIALOG DECLARES ITS OWN TYPOGRAPHY, AND THAT IS NOT COSMETIC TIDYING.
+   Living on <body> means the HOST page styles it: the Preside admin is bootstrap
+   + Ace, whose `legend` is 21px with a bottom border, whose `label` has its own
+   weight, and - the one that made the first version look ragged - form controls
+   DO NOT INHERIT FONT AT ALL, so an input or button with only a font-size set
+   renders in the UA's Arial 13.33px next to panel text in the page's own family.
+   Hence: one family/size/line-height on the panel, `font:inherit` on every
+   control inside it, and the fieldset/legend defaults neutralised.
+
+   ONE TYPE SCALE for both dialogs - 14px semibold title, 13px body/controls,
+   12px status and secondary previews. If you add a row here, use those three;
+   the only deliberately larger type is the special-character glyphs, which are
+   the content. */
+.tiptap-dialog-overlay{position:fixed;inset:0;background:rgba(0,0,0,.25);z-index:calc(var(--tt-z-base,1040) + 1060);display:flex;align-items:flex-start;justify-content:center;padding:48px 16px 16px}
+.tiptap-dialog{
+	font-family:"Open Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,Helvetica,sans-serif;
+	font-size:13px;line-height:20px;font-weight:400;font-style:normal;
+	letter-spacing:normal;text-transform:none;text-align:left;
+	color:#333;background:#fff;
+	border-radius:4px;box-shadow:0 8px 28px rgba(0,0,0,.28);
+	max-width:calc(100vw - 32px);max-height:calc(100vh - 64px);
+	display:flex;flex-direction:column;overflow:hidden
+}
+/* Form controls do not inherit font, and the host page has opinions about the
+   rest - so everything inside the panel is restated from the panel.
+   `:where()` keeps this at (0,1,0), i.e. the same weight as a single class: it
+   still beats the host page's element selectors, but every styled part below can
+   override it by simply coming later, without a specificity arms race. (The first
+   version of this reset used descendant selectors at (0,2,0) and silently ate the
+   title's weight and the character grid's glyph size.) */
+.tiptap-dialog :where(input,button,select,textarea,label,legend,fieldset,span,div){
+	font-family:inherit;font-size:inherit;line-height:inherit;font-weight:inherit;
+	letter-spacing:inherit;text-transform:none;color:inherit;box-sizing:border-box
+}
+.tiptap-dialog :where(fieldset){min-width:0;margin:0;padding:0;border:0}
+.tiptap-dialog :where(legend){display:block;width:auto;margin:0;padding:0;border:0;float:none}
+.tiptap-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-bottom:1px solid #e3e3e3;background:#f7f7f7}
+.tiptap-dialog-title{font-size:14px;font-weight:600}
+.tiptap-dialog-x{width:24px;height:24px;flex:none;padding:0;border:0;border-radius:3px;background:none;color:#777;cursor:pointer;font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center}
+.tiptap-dialog-x:hover{background:#e9e9e9;color:#333}
+.tiptap-dialog-tabs{display:flex;gap:4px;padding:10px 16px 0;background:#f7f7f7;border-bottom:1px solid #e3e3e3}
+.tiptap-dialog-tab{padding:6px 14px;margin-bottom:-1px;border:1px solid transparent;border-bottom-color:transparent;border-radius:3px 3px 0 0;background:none;color:#555;cursor:pointer}
+.tiptap-dialog-tab:hover{color:#333;background:#efefef}
+.tiptap-dialog-tab.is-active{background:#fff;border-color:#e3e3e3;border-bottom-color:#fff;color:#333;font-weight:600}
+.tiptap-dialog-body{padding:16px;overflow:auto}
+/* Empty until something is reported, but it holds its line so the buttons do not
+   jump when a message appears. */
+.tiptap-dialog-status{padding:0 16px;min-height:20px;font-size:12px;color:#1b6aaa}
+.tiptap-dialog-foot{display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:12px 16px;border-top:1px solid #e3e3e3;background:#f7f7f7}
+.tiptap-dialog-btn{height:30px;padding:0 14px;border:1px solid #ccc;border-radius:3px;background:#fff;color:#333;cursor:pointer;white-space:nowrap}
+.tiptap-dialog-btn:hover{background:#f0f0f0;border-color:#bbb}
+.tiptap-dialog-btn.is-primary{background:#4c8fbd;border-color:#4c8fbd;color:#fff;font-weight:600}
+.tiptap-dialog-btn.is-primary:hover{background:#3f7ca6;border-color:#3f7ca6}
+.tiptap-dialog-btn:focus-visible,.tiptap-dialog-x:focus-visible,.tiptap-dialog-tab:focus-visible{outline:2px solid #93cbf9;outline-offset:1px}
+.tiptap-dialog-row{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.tiptap-dialog-label{flex:none;width:92px;color:#555}
+.tiptap-dialog-input{flex:1 1 auto;min-width:0;height:30px;padding:0 8px;border:1px solid #ccc;border-radius:3px;background:#fff}
+.tiptap-dialog-input:focus{border-color:#93cbf9;outline:none;box-shadow:0 0 0 2px rgba(147,203,249,.4)}
+
+/* Find/Replace: the replace row only belongs to the Replace tab. The body's
+   markup stays static across tabs (that is what keeps the two tabs' values in
+   step - CKEditor had to copy them across by hand), so the tab drives visibility
+   from the panel's data-tab. */
+.tiptap-find-dialog{width:440px}
+.tiptap-find-dialog[data-tab="find"] .tiptap-dialog-row-replace{display:none}
+.tiptap-find-options{margin:14px 0 0;padding:10px 12px 12px;border:1px solid #e3e3e3;border-radius:3px}
+.tiptap-find-options legend{padding:0 5px;color:#777;font-size:12px}
+.tiptap-find-option{display:flex;align-items:center;gap:7px;padding:2px 0;cursor:pointer}
+.tiptap-find-option input{width:14px;height:14px;margin:0;flex:none}
+
+/* The current match, as a decoration inside the editable. Colours are CKEditor's
+   own config.find_highlight ({ "background-color": "#004", color: "#fff" }). */
+.tiptap-find-match{background-color:#004;color:#fff}
+
+/* Special characters: CKEditor's 17-column grid, plus its two preview panes. The
+   glyphs are the one place larger type belongs - they ARE the content. */
+.tiptap-specialchar-dialog{width:620px}
+.tiptap-specialchar-wrap{display:flex;gap:16px;align-items:flex-start}
+.tiptap-specialchar-grid{display:grid;gap:3px;flex:1 1 auto;min-width:0}
+.tiptap-specialchar-cell{
+	height:26px;padding:0;border:1px solid #e3e3e3;border-radius:2px;background:#fafafa;cursor:pointer;
+	font-size:15px;line-height:24px;color:#333;
+	display:flex;align-items:center;justify-content:center;overflow:hidden
+}
+.tiptap-specialchar-cell:hover,.tiptap-specialchar-cell:focus{background:#f0f7fc;border-color:#93cbf9;color:#1b6aaa;outline:none}
+.tiptap-specialchar-preview{flex:none;width:84px;text-align:center}
+.tiptap-specialchar-big{height:56px;border:1px solid #e3e3e3;border-radius:2px;background:#fafafa;font-size:30px;line-height:54px}
+.tiptap-specialchar-html{
+	margin-top:6px;padding:3px 4px;border:1px solid #e3e3e3;border-radius:2px;background:#fafafa;
+	font-size:12px;color:#777;white-space:nowrap;overflow:hidden;text-overflow:ellipsis
+}
+
+/* FLEX, NOT INLINE-BLOCK, and that is a height bug fix rather than a preference.
+   As an inline-block the wrapper opened an INLINE formatting context, so its
+   trigger sat on a text baseline against the strut of the wrapper's own font -
+   and where the trigger's baseline falls depends on what is inside it. A trigger
+   with a text label (Format/Styles) puts its baseline mid-button and fitted in
+   22px; a trigger holding only boxes (the Table picker's svg, the Align picker's
+   icon span) has its baseline SYNTHESIZED at its bottom edge, so the strut's
+   descent was added below it and the wrapper measured 23px. One pixel, but it
+   made those two GROUPS a pixel taller than every other group in the tray and
+   shifted their buttons half a pixel up - the "the custom buttons are taller"
+   report. A flex container has no strut, so every wrapper is exactly its
+   trigger's height whatever it contains. */
+.tiptap-dropdown{position:relative;display:inline-flex;align-items:center;margin:0 2px}
+/* Inside a white group block the trigger IS the block, as CKEditor's combo is -
+   so it carries no border of its own (that would draw a second box inside the
+   group's). Text metrics follow .cke_combo_text: 12px, #474747-ish, padded left. */
+.tiptap-dropdown-trigger{min-width:104px;display:inline-flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:0 6px 0 8px}
+/* THE CARET IS `tiptap-caret`, NOT `caret`, AND IS DRAWN AS A BORDER TRIANGLE.
+   `caret` is a BOOTSTRAP class (and an Ace one): in the admin, bootstrap's own
+   `.caret` rule drew its border triangle on top of the glyph we were printing, so
+   every dropdown showed TWO arrows stacked. The toolbar lives in the light DOM
+   (unlike the dialogs' shadow root), so bare class names that a theme might own
+   are a real hazard - namespace anything new here the same way. */
+.tiptap-caret{
+	width:0;height:0;flex:none;
+	border-left:4px solid transparent;border-right:4px solid transparent;
+	border-top:4px solid currentColor;opacity:.6
+}
+.tiptap-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tiptap-dropdown-menu{position:absolute;top:100%;left:0;margin-top:3px;min-width:190px;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:4px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:1200;padding:4px 0;display:none;max-height:360px;overflow:auto}
 .tiptap-dropdown-menu.open{display:block}
 .tiptap-dropdown-item{padding:5px 14px;cursor:pointer;color:var(--tt-fg);line-height:1.25;white-space:nowrap}
@@ -314,7 +463,7 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-align-picker .tiptap-btn[data-cmd=Align]{gap:1px;padding:0 3px}
 .tiptap-align-icon{display:inline-flex}
 .tiptap-align-icon svg{width:16px;height:16px;display:block;pointer-events:none}
-.tiptap-align-picker .caret{font-size:9px;color:var(--tt-muted);line-height:1}
+.tiptap-align-picker .tiptap-caret{opacity:.5}
 .tiptap-align-menu{min-width:0;padding:3px;display:none}
 .tiptap-align-menu.open{display:flex;gap:1px}
 .tiptap-align-item{height:24px;min-width:24px}
@@ -346,7 +495,77 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Items render as real h1..h6/p/pre so browser defaults + injected content CSS style them. */
 .tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
 .tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
-.tiptap-source{width:100%;min-height:220px;border:0;outline:none;font-family:monospace;font-size:12px;padding:8px;box-sizing:border-box;background:var(--tt-bg);color:var(--tt-fg)}
+/* ---- Source view (src/sourceView.js) ----------------------------------------
+   A transparent <textarea> over a highlighted <pre>. THE SHARED SELECTOR BELOW IS
+   LOAD-BEARING: every property that affects where a glyph lands - family, size,
+   line-height, letter-spacing, padding, wrapping, tab-size, box-sizing - must be
+   identical in both layers, or the paint drifts off the text it is painting. Add
+   any new metric there, never to one of them.
+
+   The view soft-wraps and has no line-number gutter on purpose: an image or widget
+   token is one line hundreds of characters long, so wrapping beats a horizontal
+   scrollbar - and numbering wrapped lines correctly means measuring every soft
+   break, where a gutter that mis-counts is worse than none. */
+/* The mount's padding is for the CONTENT - the left inset is the block drag
+   gutter's room (.tiptap-gutter-1/-2, padding-left 28/48px). The source view has no
+   rail and no blocks to grab, so it takes the full box and its layers' own 10/12px
+   is the only inset. The frame-root form is repeated here to MATCH the gutter rule's
+   (0,3,0): `.tiptap-editor-doc.tiptap-gutter-2 .tiptap-editor-mount` outranks a bare
+   `.tiptap-editor-mount.is-source`, so the plain version alone lost and the code
+   stayed indented by a gutter it does not have. */
+.tiptap-editor-doc .tiptap-editor-mount.is-source,
+.tiptap-inline > .tiptap-editor-mount.is-source,
+.tiptap-editor-mount.is-source{padding:0}
+.tiptap-source-wrap{position:relative;width:100%;height:220px;min-height:180px;background:var(--tt-bg)}
+/* While the source is up the outline rail would navigate headings in a document
+   that is not on screen, so it is hidden (the other content-glued chrome cannot
+   appear - it all hangs off the hidden editable). */
+.tiptap-editor-container.is-source .tiptap-outline{display:none}
+.tiptap-source,.tiptap-source-hl{
+	margin:0;border:0;width:100%;height:100%;box-sizing:border-box;padding:10px 12px;
+	font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+	font-size:12px;line-height:1.55;letter-spacing:normal;tab-size:4;-moz-tab-size:4;
+	white-space:pre-wrap;overflow-wrap:break-word;word-break:normal
+}
+.tiptap-source-hl{position:absolute;inset:0;overflow:hidden;pointer-events:none;color:var(--tt-fg);background:none}
+/* The paint layer is a DIV, not a <pre> - see the note in src/sourceView.js. Our own
+   `.tiptap-editor-mount pre` code-block rule is (0,1,1) and would beat it, and a
+   field's content stylesheet styling `pre` is completely ordinary; either one
+   changing its font or padding would slide the highlight off the text. */
+/* The text is transparent and only the CARET keeps a colour: what you read is the
+   painted layer underneath, pixel-aligned with it. `background:none` matters as
+   much - an opaque textarea would simply hide the paint. */
+.tiptap-source{
+	position:relative;display:block;resize:none;outline:none;background:none;overflow:auto;
+	color:transparent;caret-color:var(--tt-fg);-webkit-text-fill-color:transparent
+}
+.tiptap-source::selection{background:var(--tt-active-border);color:transparent}
+/* Palette from the admin colours (Preside-CMS lessglobals/colours.less), same rule
+   as everywhere else in this file - no invented hex values:
+     tag      #1b6aaa @blue-darker      attr     #c96338 @clay-brown
+     value    #629b58 @green-darker     comment  #999999 @grey9
+     punct    #888888 @grey8            decl     #777777 @grey7
+   A Preside {{...}} token is the one thing here that is neither markup nor text, so
+   it reads as a chip rather than a fourth colour - and it is drawn with the
+   --tt-active-* pair, which already has a dark value, so it needs no override. */
+.tt-src-tag{color:#1b6aaa}
+.tt-src-attr{color:#c96338}
+.tt-src-val{color:#629b58}
+.tt-src-punct{color:#888888}
+.tt-src-comment{color:#999999;font-style:italic}
+.tt-src-decl{color:#777777}
+.tt-src-token{color:var(--tt-active-fg);background:var(--tt-active-bg);border-radius:2px}
+/* Dark: the admin is light-only, so these are ours - the same hues, lifted for a
+   dark surface, exactly as the variable overrides at the bottom of this file are.
+   The prefix is the bare `.tiptap-dark` because the class lands on whichever root
+   can reach the mount: the FRAME's <html> for a boxed editor (theme.js mirrors it
+   across the document boundary), the container in Modern inline mode. */
+.tiptap-dark .tt-src-tag{color:#79b0d6}
+.tiptap-dark .tt-src-attr{color:#e0a06a}
+.tiptap-dark .tt-src-val{color:#a8c98f}
+.tiptap-dark .tt-src-punct{color:#8b9096}
+.tiptap-dark .tt-src-comment{color:#7f858c}
+.tiptap-dark .tt-src-decl{color:#9a9a9a}
 /* These four used to carry a `.tiptap-editor-container` prefix purely for
    SPECIFICITY - (0,2,1), to sit above the (0,2,0) isolation reset. The reset is
    gone, and the prefix had become actively WRONG: inside the editing frame there
@@ -384,6 +603,30 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-footer{display:flex;gap:14px;align-items:center;min-height:34px;border-top:1px solid var(--tt-border-soft);background:var(--tt-chrome-bg);padding:2px 6px 2px 10px;font-size:11px;line-height:1.6;color:var(--tt-muted);border-radius:0 0 3px 3px}
 .tiptap-footer .tiptap-footer-right{margin-left:auto;display:inline-flex;align-items:center;gap:2px}
 .tiptap-editor-container.is-maximized .tiptap-footer{border-radius:0}
+
+/* ---- Manual resize grip (src/resize.js) --------------------------------------
+   CKEditor's `.cke_resizer`: a 10px CSS triangle in the bottom-right corner of the
+   bottom bar, drawn with the border trick (dashed transparent sides, one solid
+   edge) rather than the ◢ glyph its skin falls back to - the same reasoning as the
+   dropdown caret, which a theme's own `.caret` rule was able to double up. The
+   cursor states which axis is live, and `touch-action:none` is what lets a touch
+   drag reach the pointer handlers at all. */
+.tiptap-resizer{
+	width:0;height:0;flex:none;overflow:hidden;font-size:0;
+	border-width:10px 10px 0 0;border-style:dashed solid dashed dashed;
+	border-color:transparent var(--tt-muted) transparent transparent;
+	cursor:se-resize;touch-action:none;opacity:.6;margin-left:4px;align-self:flex-end;
+	margin-bottom:1px
+}
+.tiptap-resizer:hover,.tiptap-resizer:focus-visible{opacity:1;outline:none}
+.tiptap-resizer.is-vertical{cursor:ns-resize}
+.tiptap-resizer.is-horizontal{cursor:ew-resize}
+/* A field with `wordcount:false` has no footer to sit in, so the grip floats in the
+   container's own corner - the same place the author reaches for. */
+.tiptap-resizer.is-floating{position:absolute;right:2px;bottom:2px;margin:0}
+/* Maximized, the editor IS the viewport - there is nothing to resize (CKEditor
+   hides its resizer on the maximize event for the same reason). */
+.tiptap-editor-container.is-maximized .tiptap-resizer{display:none}
 
 /* ---- Document outline navigator (src/outline.js) ----------------------------
    Collapsed rail of heading markers pinned to the right edge of the container,
@@ -448,19 +691,24 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Live WxH readout, only written to during a drag. */
 .tiptap-image-size{position:absolute;bottom:6px;right:6px;padding:1px 6px;border-radius:3px;background:rgba(0,0,0,.66);color:#fff;font-size:11px;line-height:1.6;font-family:ui-monospace,Menlo,monospace;pointer-events:none;white-space:nowrap}
 .tiptap-image-size:empty{display:none}
-/* Sits above the image, out of the way of the top handles. Anchored to the image's
-   LEFT edge (not centred on it) and never wrapping, so a narrow image still gets the
-   full control set; src/imageTools.js placeBubble() then nudges `left` to keep it
-   inside the editable - centring it would clip half the buttons off the editor's
-   left border on any small or left-floated image. */
-.tiptap-image-bubble{position:absolute;bottom:100%;left:0;transform:translateY(-8px);display:none;align-items:center;gap:1px;padding:3px 4px;white-space:nowrap;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:5px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:4}
-/* Flipped below the image - see placeBubble() in src/imageTools.js. An image at
-   the top of the editable has no room above it, and a bubble drawn there lands on
-   the toolbar (or outside the mount) with none of its buttons reachable. */
-.tiptap-image-bubble.is-below{top:100%;bottom:auto;transform:translateY(8px)}
-.img-placeholder.is-selected .tiptap-image-bubble{display:flex}
-.img-placeholder.is-resizing .tiptap-image-bubble{display:none}
-.tiptap-image-bubble .tiptap-btn{height:24px;min-width:24px}
+/* THE BUBBLE CHROME IS SHARED BY ALL THREE EMBEDS: the image's full set
+   (align/size/edit/remove) and the widget/attachment Edit+Remove pair are the same
+   floating toolbar, drawn and placed by the same code (src/embedBubble.js). Only the
+   image-specific extras below key off .tiptap-image-bubble.
+
+   It sits above the embed, out of the way of the image's top handles. Anchored to the
+   embed's LEFT edge (not centred on it) and never wrapping, so a narrow embed still
+   gets the full control set; placeBubble() then nudges `left` to keep it inside the
+   editable - centring it would clip half the buttons off the editor's left border on
+   any small or left-floated one. */
+.tiptap-embed-bubble{position:absolute;bottom:100%;left:0;transform:translateY(-8px);display:none;align-items:center;gap:1px;padding:3px 4px;white-space:nowrap;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:5px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:4}
+/* Flipped below the embed - see placeBubble() in src/embedBubble.js. One at the top
+   of the editable has no room above it, and a bubble drawn there lands on the toolbar
+   (or outside the mount) with none of its buttons reachable. */
+.tiptap-embed-bubble.is-below{top:100%;bottom:auto;transform:translateY(8px)}
+.is-selected > .tiptap-embed-frame > .tiptap-embed-bubble{display:flex}
+.img-placeholder.is-resizing .tiptap-embed-bubble{display:none}
+.tiptap-embed-bubble .tiptap-btn{height:24px;min-width:24px}
 .tiptap-image-bubble .tiptap-image-preset{font-size:11px;padding:0 5px}
 .tiptap-image-bubble .tiptap-btn.is-busy{opacity:.5;pointer-events:none}
 /* Stale-preview affordance: shown whenever the token's geometry differs from what
@@ -494,13 +742,21 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    (contentsCss/stylesheets) are authored for a light page, so any explicit colour
    they set still wins inside the editable - that is intentional: what you see is
    what the site will render. */
-.tiptap-editor-container.tiptap-dark{
+/* DECLARED FOR BOTH DOCUMENTS, exactly as the light block above is. This used to
+   be `.tiptap-editor-container.tiptap-dark` alone, which CANNOT match inside the
+   editing frame - the class is mirrored onto the frame's own <html> (theme.js), and
+   a container selector has no meaning in there. So every --tt-* variable stayed at
+   its LIGHT value inside the frame: dark mode drew a dark surface (the container,
+   behind a transparent frame) under BLACK content text, with light table borders,
+   light embed placeholders and a light selected-cell highlight. */
+.tiptap-editor-container.tiptap-dark,.tiptap-editor-doc.tiptap-dark{
 	--tt-bg:#1f2126;
 	--tt-fg:#e6e6e6;
 	--tt-muted:#9a9a9a;
 	--tt-border:#3a3d44;
 	--tt-border-soft:#33363c;
-	--tt-chrome-bg:#282b31;
+	--tt-chrome-bg:#22242a;
+	--tt-group-bg:#2b2e35;
 	--tt-btn-fg:#d8d8d8;
 	--tt-btn-hover-bg:#35383f;
 	--tt-active-bg:#2c4a63;
@@ -521,14 +777,13 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 	--tt-content-fg:#e6e6e6;
 	color-scheme:dark
 }
-.tiptap-editor-container.tiptap-dark .tiptap-editor-mount{color:var(--tt-fg)}
-.tiptap-editor-container.tiptap-dark .tiptap-editor-mount .loading{color:#8d8d8d}
-.tiptap-editor-container.tiptap-dark .tiptap-editor-mount .error{color:#ff9c9c;border-color:#6d3b3b}
-.tiptap-editor-container.tiptap-dark .tiptap-dropdown-trigger .caret{color:#9a9a9a}
-.tiptap-editor-container.tiptap-dark .tiptap-editor-mount pre{background:#15171a}
+.tiptap-dark .tiptap-editor-mount{color:var(--tt-fg)}
+.tiptap-dark .tiptap-editor-mount .loading{color:#8d8d8d}
+.tiptap-dark .tiptap-editor-mount .error{color:#ff9c9c;border-color:#6d3b3b}
+.tiptap-dark .tiptap-editor-mount pre{background:#15171a}
 /* Recolour the widget-placeholder glyph for the dark surface (the stroke colour is
    baked into the data-URI, so the whole background shorthand is restated). */
-.tiptap-editor-container.tiptap-dark .tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b0b0b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat}
+.tiptap-dark .tiptap-editor-mount .widget-placeholder{background:var(--tt-embed-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23b0b0b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h3a1 1 0 0 0 1 -1v-1a2 2 0 0 1 4 0v1a1 1 0 0 0 1 1h3a1 1 0 0 1 1 1v3a1 1 0 0 0 1 1h1a2 2 0 0 1 0 4h-1a1 1 0 0 0 -1 1v3a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-1a2 2 0 0 0 -4 0v1a1 1 0 0 1 -1 1h-3a1 1 0 0 1 -1 -1v-3a1 1 0 0 1 1 -1h1a2 2 0 0 0 0 -4h-1a1 1 0 0 1 -1 -1z'/%3E%3C/svg%3E") 6px center/14px 14px no-repeat}
 
 /* ================================================================================
    MODERN INLINE MODE (frontend only - src/inlineMode.js / src/editModeSwitch.js)
@@ -628,7 +883,9 @@ body.frontend-editing-modern .content-editor-editor-container.edit-active .conte
    pointer-events off so the invisible pill cannot swallow clicks. */
 .tiptap-selection-bubble{opacity:1;transition:opacity .3s ease}
 .tiptap-selection-bubble.is-idle{opacity:0;pointer-events:none}
-.tiptap-selection-bubble .tiptap-toolbar-group{margin-right:0}
+/* The bubble is one floating pill, so its group carries none of the toolbar's
+   block chrome (a white box inside the white bubble). */
+.tiptap-selection-bubble .tiptap-toolbar-group{margin:0;padding:0;background:none;border:0}
 .tiptap-selection-bubble .tiptap-btn{height:24px;min-width:24px}
 /* Deliberately LIGHT always (no prefers-color-scheme block): the bubble only
    exists in Modern inline mode, where the editing surface is the site page -

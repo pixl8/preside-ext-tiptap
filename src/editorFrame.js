@@ -50,29 +50,11 @@
  * (verified in chromium, webkit and firefox).
  */
 
-// Our own stylesheet, as loaded in the host page. It is copied INTO the frame -
-// the editable's functional CSS, the embed/node-view chrome and the `--tt-*`
-// variables all have to be there. Injected as a <style> with the sheet's own
-// cssText rather than a <link> so it applies SYNCHRONOUSLY: the auto-height pass
-// measures immediately after mount, and a <link> would still be loading.
-function ownStyleText() {
-	const sheets = document.styleSheets;
-	for ( let i = 0; i < sheets.length; i++ ) {
-		const href = sheets[ i ].href || "";
-		if ( !/tiptap(\.[A-Z0-9]+)?\.min\.css|tiptap\.css/i.test( href ) ) { continue; }
-		try {
-			const rules = sheets[ i ].cssRules;
-			let out = "";
-			for ( let r = 0; r < rules.length; r++ ) { out += rules[ r ].cssText; }
-			if ( out ) { return { css: out, href: href }; }
-		} catch ( e ) {
-			return { css: "", href: href };   // unreadable (cross-origin) - fall back to the link
-		}
-	}
-	return { css: "", href: "" };
-}
-
-let ownStyle = null;   // resolved once per page
+// Our own stylesheet goes INTO the frame - the editable's functional CSS, the
+// embed/node-view chrome and the `--tt-*` variables all have to be in there.
+// Shared with the dialog shell's shadow root (src/ownStyle.js), which needs the
+// same trick for the same reason: a stylesheet in the page cannot reach either.
+import { injectOwnStyle } from "./ownStyle.js";
 
 /**
  * Create the editing frame inside `container`.
@@ -94,8 +76,6 @@ export function createFrame( container, opts ) {
 	const doc = frame.contentDocument;
 	if ( !doc ) { throw new Error( "tiptap: iframe document unavailable" ); }
 
-	if ( !ownStyle ) { ownStyle = ownStyleText(); }
-
 	doc.open();
 	doc.write(
 		  '<!doctype html><html class="tiptap-editor-doc"><head><meta charset="utf-8">'
@@ -113,18 +93,9 @@ export function createFrame( container, opts ) {
 	);
 	doc.close();
 
-	// Our editor CSS, synchronously.
-	if ( ownStyle.css ) {
-		const style = doc.createElement( "style" );
-		style.setAttribute( "data-tiptap-own", "1" );
-		style.textContent = ownStyle.css;
-		doc.head.appendChild( style );
-	} else if ( ownStyle.href ) {
-		const link = doc.createElement( "link" );
-		link.rel = "stylesheet";
-		link.href = ownStyle.href;
-		doc.head.appendChild( link );
-	}
+	// Our editor CSS, synchronously (see src/ownStyle.js for why it is cssText and
+	// not a <link>).
+	injectOwnStyle( doc.head, doc );
 
 	const mount = doc.createElement( "div" );
 	mount.className = "tiptap-editor-mount";

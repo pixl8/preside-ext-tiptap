@@ -33,6 +33,11 @@ import { t } from "./i18n.js";
 var EXCLUDE = [
 	  "Maximize", "Source", "Undo", "Redo", "Theme", "DarkMode"
 	, "HorizontalRule", "Table", "ImagePicker", "AttachmentPicker", "Widgets"
+	// Find / Replace act on the whole DOCUMENT and open a modal over the page, so
+	// they belong to the persistent chrome, not to a bubble that exists to act on
+	// the selection it is pointing at. SpecialChar stays: it inserts at the caret,
+	// which is exactly the bubble's own context.
+	, "Find", "Replace"
 ];
 
 var SHOW_DELAY = 150; // let a drag-selection settle before flashing chrome at it

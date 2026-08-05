@@ -21,6 +21,7 @@
 import { Node } from "@tiptap/core";
 import { openPickerModal, postForm } from "../presidePickerModal.js";
 import { attachImageTools } from "../imageTools.js";
+import { attachEmbedBubble } from "../embedBubble.js";
 import { focusEditable } from "../editorFocus.js";
 import { t } from "../i18n.js";
 
@@ -73,6 +74,10 @@ function makeEmbedNode( opts, deps ) {
 				// presideImage only, and only when editable and not opted out
 				// (defaultConfigs.imageTools = false).
 				, imageTools    : !!( opts.resizable && deps.imageTools !== false && editor.isEditable )
+				// The edit/remove bubble for the OTHER two embeds, under the same
+				// opt-out: a field that turned embed chrome off should not sprout a
+				// different flavour of it.
+				, embedBubble   : !!( !opts.resizable && deps.imageTools !== false && editor.isEditable )
 			} );
 		},
 
@@ -128,6 +133,32 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 		} );
 	}
 
+	// LINKS INSIDE A PREVIEW DO NOT NAVIGATE WHILE THE EDITOR IS OPEN.
+	//
+	// The previews are real server-rendered HTML: an attachment renders as an
+	// `<a href>` to the asset, so clicking the paperclip icon or its filename
+	// DOWNLOADED the file - from inside the editor, where the click was meant to
+	// select the embed so it could be edited or removed. (An image with a link is the
+	// same shape of problem.) Selecting the node already worked, because the
+	// select-me handler below `preventDefault()`s the mousedown - but a mousedown
+	// preventDefault does not stop the anchor's own click activation, which is what
+	// navigates.
+	//
+	// Capture phase, so it lands before anything in the rendered markup, and it
+	// covers `auxclick` too (a middle click opens the download in a new tab) and
+	// keyboard activation, which fires a click of its own. Nothing is neutered
+	// outside the editor: node views only exist while the editor does, so once
+	// editing ends - Classic closing, or Modern re-rendering the region from the
+	// server - the links are the page's own again and work normally.
+	if ( edit && edit.editor ) {
+		const noNavigate = function( e ) {
+			const a = e.target && e.target.closest ? e.target.closest( "a" ) : null;
+			if ( a && dom.contains( a ) ) { e.preventDefault(); e.stopPropagation(); }
+		};
+		dom.addEventListener( "click", noNavigate, true );
+		dom.addEventListener( "auxclick", noNavigate, true );
+	}
+
 	// A SINGLE click selects the whole node, so an embed gets the selected-border
 	// state rather than a text selection painted across its preview. These are atom
 	// nodes with contenteditable=false, but their previews are server-rendered HTML
@@ -168,7 +199,12 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 			} );
 	}
 
-	const tools = edit.imageTools ? attachImageTools( {
+	// Images get the full tool set (drag-resize, alignment, sizes, edit, remove).
+	// Widgets and attachments have no geometry to offer, so they get the SAME bubble
+	// with just Edit and Remove - same chrome, same placement, shared code
+	// (src/embedBubble.js). Both expose the identical hook shape, so everything below
+	// treats them the same.
+	let tools = edit.imageTools ? attachImageTools( {
 		  dom          : dom
 		, frame        : frame
 		, preview      : preview
@@ -179,6 +215,20 @@ function makePreviewDom( node, opts, buildAjaxLink, edit ) {
 		, refresh      : loadPreview
 		, openPicker   : openPicker
 	} ) : null;
+
+	// `edit.embedBubble` is false for a read-only editor and when the site turns the
+	// image tools off (defaultConfigs.imageTools) - a field that opted out of embed
+	// chrome should not sprout a different flavour of it.
+	if ( !edit.imageTools && edit.embedBubble ) {
+		tools = attachEmbedBubble( {
+			  dom       : dom
+			, frame     : frame
+			, node      : node
+			, editor    : edit.editor
+			, getPos    : edit.getPos
+			, openPicker: openPicker
+		} );
+	}
 
 	loadPreview();
 

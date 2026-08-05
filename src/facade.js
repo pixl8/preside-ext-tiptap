@@ -28,6 +28,7 @@ import { imageToolsEnabled } from "./imageTools.js";
 import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
 import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
+import { createResizer, resizeEnabled } from "./resize.js";
 import { createFrame, containerOf } from "./editorFrame.js";
 import { fitFrontendEditor } from "./frontendFit.js";
 import { resolveInlineMount } from "./inlineMode.js";
@@ -418,14 +419,24 @@ import { t } from "./i18n.js";
 			// light/dark toggle right-aligned on the same row.
 			// Opt out per-site/per-field with defaultConfigs.wordcount = false.
 			var wantsTheme = toolbarInfo.themeEnabled && !toolbarInfo.themeRendered;
+			// Manual resize grip - CKEditor's `resize` plugin (src/resize.js). It is the
+			// bottom bar's right-hand corner, so it goes in the footer's right-hand slot
+			// beside the light/dark toggle; a field with no footer gets it floating in
+			// the container's own corner instead (`.is-floating`), which is where the
+			// author reaches for it either way.
+			var resizer = resizeEnabled( cfg ) ? createResizer( container, frameApi, cfg ) : null;
 			if ( cfg.defaultConfigs.wordcount !== false ) {
-				container.appendChild( buildFooter( tiptap, wantsTheme ) );
+				container.appendChild( buildFooter( tiptap, wantsTheme, resizer ) );
 			} else if ( wantsTheme ) {
 				// No footer to host it - fall back to the far right of the toolbar.
 				var right = document.createElement( "span" );
 				right.className = "tiptap-toolbar-group tiptap-toolbar-right";
 				right.appendChild( renderThemeToggle() );
 				toolbarEl.appendChild( right );
+			}
+			if ( resizer && !resizer.parentNode ) {
+				resizer.classList.add( "is-floating" );
+				container.appendChild( resizer );
 			}
 		}
 
@@ -563,7 +574,7 @@ import { t } from "./i18n.js";
 	// false ) refreshes it too).
 	var READING_WORDS_PER_MINUTE = 225;
 
-	function buildFooter( tiptap, withThemeToggle ) {
+	function buildFooter( tiptap, withThemeToggle, resizer ) {
 		var footer = document.createElement( "div" );
 		footer.className = "tiptap-footer";
 
@@ -577,13 +588,15 @@ import { t } from "./i18n.js";
 		footer.appendChild( charsEl );
 		footer.appendChild( readingEl );
 
-		// Right-aligned (margin-left:auto in the css) light/dark toggle.
-		if ( withThemeToggle ) {
-			var themeWrap = document.createElement( "span" );
-			themeWrap.className = "tiptap-footer-right";
-			themeWrap.appendChild( renderThemeToggle() );
-			footer.appendChild( themeWrap );
-		}
+		// Right-aligned (margin-left:auto in the css) slot holding the light/dark
+		// toggle and the resize grip. Always created, even when it ends up empty, so
+		// there is exactly ONE auto margin in the row - two would split the free space
+		// between them and park the toggle in the middle of the footer.
+		var rightWrap = document.createElement( "span" );
+		rightWrap.className = "tiptap-footer-right";
+		if ( withThemeToggle ) { rightWrap.appendChild( renderThemeToggle() ); }
+		if ( resizer ) { rightWrap.appendChild( resizer ); }
+		footer.appendChild( rightWrap );
 
 		function refresh() {
 			var doc   = tiptap.state.doc;

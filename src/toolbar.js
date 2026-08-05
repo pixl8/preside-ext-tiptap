@@ -8,14 +8,17 @@
  * (Widgets/ImagePicker/AttachmentPicker/PresideLink/Unlink) are registered by
  * their extensions' commands.
  */
-import { tokenize, detokenize } from "./tokens.js";
 import { ICONS } from "./icons.js";
+import { toggleSource } from "./sourceView.js";
 import { focusEditable } from "./editorFocus.js";
 import { getContentSelectors } from "./presideStyles.js";
 import { themeEnabled, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, isMaximized } from "./maximize.js";
 import { t } from "./i18n.js";
 import { containerOf } from "./editorFrame.js";
+import { openFindReplace } from "./findReplace.js";
+import { openSpecialChar } from "./specialChar.js";
+import { setBidi, currentDir } from "./bidi.js";
 
 // containerOf(), not closest(): the editable is in the editing IFRAME, so a
 // same-document closest() from view.dom finds nothing (see editorFrame.js).
@@ -41,12 +44,26 @@ export const COMMANDS = {
 	, JustifyRight  : { label: "≡", run: e => e.chain().focus().setTextAlign( "right" ).run(),   active: e => e.isActive( { textAlign: "right" } ) }
 	, JustifyBlock  : { label: "≡", run: e => e.chain().focus().setTextAlign( "justify" ).run(), active: e => e.isActive( { textAlign: "justify" } ) }
 	, HorizontalRule: { label: "―", run: e => e.chain().focus().setHorizontalRule().run() }
+	// Insert Special Character - a modal grid of characters (src/specialChar.js).
+	// The field config reaches it for `defaultConfigs.specialChars`, so this runner
+	// is the one that needs more than the editor; renderNames passes cfg through.
+	, SpecialChar   : { label: "Ω", run: ( e, cfg ) => { openSpecialChar( e, cfg ); return true; } }
+	// Text direction. CKEditor wrote a `dir` attribute on the block and dropped any
+	// inline `direction:` style; the active state is the COMPUTED direction, which
+	// is why LTR reads as on in an untouched LTR field - see src/bidi.js.
+	, BidiLtr       : { label: "⇥", run: e => setBidi( e, "ltr" ), active: e => currentDir( e ) === "ltr" }
+	, BidiRtl       : { label: "⇤", run: e => setBidi( e, "rtl" ), active: e => currentDir( e ) === "rtl" }
 	// Table is rendered as a grid-size picker (renderTable), not a plain button —
 	// `run` is the keyboard/fallback path and the picker's default size.
 	, Table         : { label: "▦", run: e => e.chain().focus().insertTable( { rows: 3, cols: 3, withHeaderRow: true } ).run(), active: e => e.isActive( "table" ) }
 	, RemoveFormat  : { label: "Tx", run: e => e.chain().focus().unsetAllMarks().clearNodes().run() }
 	, Undo          : { label: "↶", run: e => e.chain().focus().undo().run() }
 	, Redo          : { label: "↷", run: e => e.chain().focus().redo().run() }
+	// Find / Replace: TWO buttons, ONE dialog, opened on the tab that matches the
+	// button - which is exactly what CKEditor's find plugin registered
+	// (`dialogCommand( "find", { tabId: "replace" } )`). See src/findReplace.js.
+	, Find          : { label: "⌕", run: e => { openFindReplace( e, "find" ); return true; } }
+	, Replace       : { label: "⇄", run: e => { openFindReplace( e, "replace" ); return true; } }
 	, Maximize      : { label: "⛶", run: e => toggleMaximize( container( e ), e ), active: e => isMaximized( container( e ) ) }
 	, PresideLink      : { run: e => e.commands.openPresideLinkPicker(), active: e => e.isActive( "presideLink" ) }
 	, PresideUnlink    : { run: e => e.chain().focus().unsetPresideLink().run() }
@@ -135,7 +152,7 @@ export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
 		// until the next edit.
 		btn.addEventListener( "click", function( ev ) {
 			ev.preventDefault();
-			cmd.run( focusEditable( editor ) );
+			cmd.run( focusEditable( editor ), cfg );
 			updaters.forEach( function( u ) { u(); } );
 		} );
 		groupEl.appendChild( btn );
@@ -143,7 +160,32 @@ export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
 		if ( cmd.active ) { updaters.push( function() { btn.classList.toggle( "is-active", !!cmd.active( editor ) ); } ); }
 	} );
 
+	tidySeparators( groupEl );
+
 	return { themeRendered: themeRendered };
+}
+
+/**
+ * A separator only means anything BETWEEN two controls, so drop the ones that end
+ * up leading, trailing or doubled.
+ *
+ * It has to run AFTER rendering rather than filter the name list, because what
+ * actually renders is not knowable up front: unknown/unavailable button names are
+ * skipped, and the four Justify* names collapse into one dropdown - so a config
+ * like "Cut,Copy,-,Undo" (Cut/Copy have no analogue) left the separator leading its
+ * group. Against the group's own border that read as a doubled line, which is
+ * exactly what looked broken.
+ */
+function tidySeparators( groupEl ) {
+	function isSep( el ) { return el && el.classList && el.classList.contains( "tiptap-toolbar-sep" ); }
+
+	let prevWasSep = true;   // the group's own edge counts as a separator
+	Array.prototype.slice.call( groupEl.children ).forEach( function( el ) {
+		if ( !isSep( el ) ) { prevWasSep = false; return; }
+		if ( prevWasSep ) { el.remove(); return; }
+		prevWasSep = true;
+	} );
+	while ( isSep( groupEl.lastElementChild ) ) { groupEl.lastElementChild.remove(); }
 }
 
 export function buildToolbar( el, editor, parsedToolbar, cfg ) {
@@ -187,8 +229,13 @@ function renderFormat( editor, updaters, cfg ) {
 	trigger.type = "button";
 	trigger.className = "tiptap-btn tiptap-dropdown-trigger";
 	trigger.setAttribute( "data-cmd", "Format" );
-	trigger.innerHTML = '<span class="lbl"></span><span class="caret">&#9662;</span>';
-	trigger.querySelector( ".lbl" ).textContent = t( "toolbar.format" );
+	// `tiptap-caret`/`tiptap-lbl`, never the bare `caret`/`lbl`: those are BOOTSTRAP
+	// and Ace class names, and in the admin bootstrap's own `.caret` rule drew its
+	// border triangle on top of ours - every dropdown showed two stacked arrows. The
+	// caret itself is drawn in CSS (see .tiptap-caret) rather than printed as a
+	// glyph, so there is nothing for a theme to double up.
+	trigger.innerHTML = '<span class="tiptap-lbl"></span><span class="tiptap-caret" aria-hidden="true"></span>';
+	trigger.querySelector( ".tiptap-lbl" ).textContent = t( "toolbar.format" );
 
 	const menu = document.createElement( "div" );
 	menu.className = "tiptap-dropdown-menu";
@@ -224,7 +271,7 @@ function renderFormat( editor, updaters, cfg ) {
 
 	updaters.push( function() {
 		const v = currentFormat( editor );
-		trigger.querySelector( ".lbl" ).textContent = FORMAT_TAGS.indexOf( v ) !== -1 ? t( "format." + v ) : t( "toolbar.format" );
+		trigger.querySelector( ".tiptap-lbl" ).textContent = FORMAT_TAGS.indexOf( v ) !== -1 ? t( "format." + v ) : t( "toolbar.format" );
 		Array.prototype.forEach.call( menu.children, function( el ) {
 			el.classList.toggle( "active", el.classList.contains( "fmt-" + v ) );
 		} );
@@ -292,8 +339,8 @@ function renderAlign( editor, updaters, names ) {
 	const iconEl = document.createElement( "span" );
 	iconEl.className = "tiptap-align-icon";
 	const caret = document.createElement( "span" );
-	caret.className = "caret";
-	caret.innerHTML = "&#9662;";
+	caret.className = "tiptap-caret";   // never bare `caret` - see renderFormat
+	caret.setAttribute( "aria-hidden", "true" );
 	trigger.appendChild( iconEl );
 	trigger.appendChild( caret );
 
@@ -623,8 +670,13 @@ function renderStyles( editor, updaters, cfg ) {
 	trigger.type = "button";
 	trigger.className = "tiptap-btn tiptap-dropdown-trigger";
 	trigger.setAttribute( "data-cmd", "Styles" );
-	trigger.innerHTML = '<span class="lbl"></span><span class="caret">&#9662;</span>';
-	trigger.querySelector( ".lbl" ).textContent = t( "toolbar.styles" );
+	// `tiptap-caret`/`tiptap-lbl`, never the bare `caret`/`lbl`: those are BOOTSTRAP
+	// and Ace class names, and in the admin bootstrap's own `.caret` rule drew its
+	// border triangle on top of ours - every dropdown showed two stacked arrows. The
+	// caret itself is drawn in CSS (see .tiptap-caret) rather than printed as a
+	// glyph, so there is nothing for a theme to double up.
+	trigger.innerHTML = '<span class="tiptap-lbl"></span><span class="tiptap-caret" aria-hidden="true"></span>';
+	trigger.querySelector( ".tiptap-lbl" ).textContent = t( "toolbar.styles" );
 
 	const menu = document.createElement( "div" );
 	menu.className = "tiptap-dropdown-menu";
@@ -681,27 +733,9 @@ function renderSource( editor ) {
 	btn.setAttribute( "data-cmd", "Source" );
 	btn.addEventListener( "click", function( ev ) {
 		ev.preventDefault();
-		const mount = editor.view.dom.parentNode; // .tiptap-editor-mount
-		if ( !mount.__srcTa ) {
-			// Created in the MOUNT's own document: for a boxed editor that is the
-			// editing frame, not this one. Appending a host-created node would be
-			// auto-adopted, but it would also be built with the wrong realm's
-			// prototypes - and the frame is where its stylesheet and the editor's
-			// key isolation live.
-			const ta = mount.ownerDocument.createElement( "textarea" );
-			ta.className = "tiptap-source";
-			ta.value = tokenize( editor.getHTML() );
-			editor.view.dom.style.display = "none";
-			mount.appendChild( ta );
-			mount.__srcTa = ta;
-			btn.classList.add( "is-active" );
-		} else {
-			editor.commands.setContent( detokenize( mount.__srcTa.value ) );
-			mount.__srcTa.remove();
-			mount.__srcTa = null;
-			editor.view.dom.style.display = "";
-			btn.classList.remove( "is-active" );
-		}
+		// The view itself is src/sourceView.js: CKEditor's own layout, highlighted,
+		// and display-only (it never rewrites the stored markup).
+		btn.classList.toggle( "is-active", toggleSource( editor ) );
 	} );
 	return btn;
 }
