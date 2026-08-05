@@ -105,14 +105,36 @@
 
    The exclusion list keeps the reset off elements that are CHROME rather than
    content - ProseMirror's own (gapcursor, separator), our node-view frames and
-   placeholders - so their (often low-specificity) rules are not in the contest at
-   all. Their DESCENDANTS are still reverted: server-rendered preview HTML is
-   content and the admin's `img`/`table` rules must not reach it either.
+   placeholders.
+
+   OUR OWN CHROME IS EXCLUDED SUBTREE AND ALL, not just element-deep. The image
+   tools (src/imageTools.js) are the one piece of
+   chrome that lives INSIDE the editable, and reverting their descendants stripped
+   every icon in the alignment/size/edit/remove bubble: `.tiptap-btn svg` is
+   (0,1,1) and loses to this reset, so the icons dropped to a 0x0 box, and revert
+   also discards an SVG's `stroke="currentColor"`/`fill="none"` presentation
+   attributes (they too are author origin). Six blank buttons.
+
+   The subtree exclusion is written `:not(:where(.ProseMirror [class*=tiptap-]) *)`
+   and the `.ProseMirror` in it is NOT decoration: `[class*=tiptap-]` on its own
+   also matches the container and the MOUNT, which are ancestors of every content
+   element there is, so the unqualified form switches the whole reset off (it did -
+   T19's `*{box-sizing}` / `ul{padding-left}` / `p{letter-spacing}` leak
+   assertions catch exactly that).
+
+   The re-inclusion of `.tiptap-embed-preview *` is what keeps that narrow: the
+   server-rendered preview HTML is CONTENT, so the admin's `img`/`table` rules
+   must not reach it either - and the preview sits inside `.tiptap-embed-frame`,
+   which the subtree exclusion would otherwise cover. Descendants of the OTHER
+   excluded lists are deliberately still reverted: `[class*=ProseMirror]` matches
+   `ProseMirror-selectednode`, which ProseMirror puts on real content nodes as the
+   selection moves, so exempting its subtree would restyle content on selection.
 
    Modern inline mode is deliberately EXCLUDED (.tiptap-inline): there the
    editable IS the site page and must keep inheriting the theme's own styles. */
 :where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror,
-:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror *:not(:where([class*=tiptap-],[class*=ProseMirror],[class*=placeholder],[class*=preside-])),
+:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror *:not(:where([class*=tiptap-],[class*=ProseMirror],[class*=placeholder],[class*=preside-])):not(:where(.ProseMirror [class*=tiptap-]) *),
+:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror :where(.tiptap-embed-preview) *,
 .tiptap-fmt-preview,
 .tiptap-fmt-preview *{all:revert}
 /* ...then put a baseline back, since UA defaults alone mean Times New Roman at
@@ -132,15 +154,30 @@
    actually needs to FUNCTION are restated here, at (0,2,0) later in the file.
    `white-space:break-spaces` is the load-bearing one: without it the browser
    collapses runs of spaces as you type them. Keep this in step with
-   prosemirror-view's stylesheet on upgrade. */
+   prosemirror-view's stylesheet on upgrade.
+
+   `-webkit-user-modify` is the OTHER load-bearing one, and it is not
+   prosemirror's - it is the BROWSER's. WebKit implements the `contenteditable`
+   attribute by mapping it to `-webkit-user-modify:read-write` (plus the two
+   editing whitespace hints below) as a PRESENTATIONAL HINT, and presentational
+   hints sit at the bottom of the AUTHOR origin - so `all:revert` above threw it
+   away and the editable became READ-ONLY: no caret, no typing, text still
+   selectable. Blink applies the same mapping below the author origin, which is
+   why this only ever showed in Safari and not in the harness.
+
+   It is restated in BOTH directions because the property INHERITS: with only the
+   read-write line, an embed's own `contenteditable=false` (also a reverted-away
+   hint) would inherit read-write from the editable and its preview HTML would
+   become editable. Hence the same three selectors as the white-space set. */
 .tiptap-editor-mount .ProseMirror{
 	outline:none;min-height:60px;
 	position:relative;
 	white-space:break-spaces;overflow-wrap:break-word;
-	font-variant-ligatures:none;font-feature-settings:"liga" 0
+	font-variant-ligatures:none;font-feature-settings:"liga" 0;
+	-webkit-user-modify:read-write;-webkit-line-break:after-white-space;-webkit-nbsp-mode:space
 }
-.tiptap-editor-mount .ProseMirror [contenteditable=false]{white-space:normal}
-.tiptap-editor-mount .ProseMirror [contenteditable=false] [contenteditable=true]{white-space:pre-wrap}
+.tiptap-editor-mount .ProseMirror [contenteditable=false]{white-space:normal;-webkit-user-modify:read-only}
+.tiptap-editor-mount .ProseMirror [contenteditable=false] [contenteditable=true]{white-space:pre-wrap;-webkit-user-modify:read-write}
 .tiptap-editor-mount .ProseMirror-hideselection *{caret-color:transparent}
 .tiptap-editor-mount .ProseMirror p{margin:0 0 .6em}
 /* Maximized: the container is portalled to <body> first (see src/maximize.js) so
@@ -422,6 +459,10 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    inside the editable - centring it would clip half the buttons off the editor's
    left border on any small or left-floated image. */
 .tiptap-image-bubble{position:absolute;bottom:100%;left:0;transform:translateY(-8px);display:none;align-items:center;gap:1px;padding:3px 4px;white-space:nowrap;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:5px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:4}
+/* Flipped below the image - see placeBubble() in src/imageTools.js. An image at
+   the top of the editable has no room above it, and a bubble drawn there lands on
+   the toolbar (or outside the mount) with none of its buttons reachable. */
+.tiptap-image-bubble.is-below{top:100%;bottom:auto;transform:translateY(8px)}
 .img-placeholder.is-selected .tiptap-image-bubble{display:flex}
 .img-placeholder.is-resizing .tiptap-image-bubble{display:none}
 .tiptap-image-bubble .tiptap-btn{height:24px;min-width:24px}

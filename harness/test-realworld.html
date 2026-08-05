@@ -966,6 +966,59 @@
 					return td && getComputedStyle( td ).boxSizing === "border-box";
 				} )() );
 
+			// 5b. ...including chrome that lives INSIDE the editable AND HAS ITS OWN
+			//     SUBTREE. The image bubble (src/imageTools.js) is the only such
+			//     chrome, and while the bubble's own elements were excluded from the
+			//     reset, their descendants were not: `.tiptap-btn svg` is (0,1,1) and
+			//     lost, so all six icons collapsed to a 0x0 box, and `revert` also
+			//     discarded the SVGs' own stroke="currentColor" / fill="none"
+			//     presentation attributes (author origin too). Six blank buttons.
+			//     Measured on the markup shape - a real image node view would need the
+			//     async preview render, and the bug was purely in the selector.
+			check( "T19 icon chrome INSIDE the editable survives the reset (image bubble)",
+				( function() {
+					var probe = document.createElement( "span" );
+					probe.className = "tiptap-embed-frame";
+					probe.innerHTML = '<span class="tiptap-image-bubble" style="display:flex">'
+						+ '<button type="button" class="tiptap-btn tiptap-image-align">'
+						+ '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"'
+						+ ' stroke="currentColor" stroke-width="2"><path d="M4 6l16 0"/></svg>'
+						+ '</button></span>';
+					pm.appendChild( probe );
+					var svg = probe.querySelector( "svg" );
+					var box = svg.getBoundingClientRect();
+					var st  = getComputedStyle( svg ).stroke;
+					probe.parentNode.removeChild( probe );
+					return Math.round( box.width ) === 16 && Math.round( box.height ) === 16
+					    && st !== "none";
+				} )() );
+
+			// 6. THE EDITABLE MUST STILL BE EDITABLE. WebKit implements the
+			//    `contenteditable` attribute by mapping it to
+			//    `-webkit-user-modify:read-write` as a PRESENTATIONAL HINT, and those
+			//    sit at the bottom of the AUTHOR origin - so `all:revert` reverted it
+			//    away and the editable went read-only in Safari: no caret, no typing,
+			//    text still selectable. Blink applies the same mapping below the author
+			//    origin, so this assertion only ever fails in WebKit - which is exactly
+			//    why it is here. isContentEditable is the engine's own answer.
+			ed.commands.setContent( "<p>para</p>" );
+			check( "T19 the editable is still editable after the reset (webkit user-modify)",
+				pm.isContentEditable === true, String( pm.isContentEditable ) );
+			ed.commands.insertContent( "typed" );
+			check( "T19 ...and text can actually be inserted into it",
+				/typed/.test( pm.textContent ), pm.textContent );
+
+			// 7. `-webkit-user-modify` INHERITS, so restating read-write on the
+			//    editable must be paired with read-only on the embeds - otherwise the
+			//    server-rendered preview HTML inside a contenteditable=false node view
+			//    becomes editable.
+			check( "T19 a contenteditable=false node view stays non-editable",
+				( function() {
+					ed.commands.setContent( '<div contenteditable="false" class="img-placeholder">x</div>' );
+					var el = pm.querySelector( "[contenteditable=false]" );
+					return !el || el.isContentEditable === false;
+				} )() );
+
 			ed.commands.setContent( before );
 			check( "T19 none of it changed the stored content", CKEDITOR.instances.t3.getData() === before,
 				CKEDITOR.instances.t3.getData() );

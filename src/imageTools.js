@@ -377,9 +377,25 @@ export function attachImageTools( ctx ) {
 	// Keep the whole bubble inside the editable. It is anchored to the image's left
 	// edge and is wider than a small image, so without this the buttons run off the
 	// editor's border (and on a right-floated image, off the other side).
+	//
+	// Vertically it prefers to sit ABOVE the image and flips BELOW it when there is
+	// no room - an image at the top of the editable otherwise put the bubble over
+	// the toolbar, or outside the mount entirely, with none of its buttons
+	// reachable. The room is measured against the VISIBLE part of the mount (its
+	// intersection with the viewport), the same way the table bubble and the
+	// Modern-mode selection bubble do it: inline the mount is page-height, so the
+	// raw rect would answer the wrong question.
 	function placeBubble() {
 		if ( !selected ) { return; }
+		bubble.classList.remove( "is-below" );
 		bubble.style.left = "0px";
+
+		const mount = editor.view.dom.closest( ".tiptap-editor-mount" );
+		const mRect = ( mount || editor.view.dom ).getBoundingClientRect();
+		const fRect = ctx.frame.getBoundingClientRect();
+		if ( fRect.top - Math.max( mRect.top, 0 ) < bubble.offsetHeight + 8 ) {
+			bubble.classList.add( "is-below" );
+		}
 
 		const bounds = editor.view.dom.getBoundingClientRect();
 		const box    = bubble.getBoundingClientRect();

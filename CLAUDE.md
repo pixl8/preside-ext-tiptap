@@ -415,6 +415,12 @@ Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
 - The bubble is anchored to the image's **left** edge and then nudged by
   `placeBubble()` to stay inside the editable; centring it on the image clipped
   half its buttons off the editor border on any small or left-floated image.
+  Vertically it prefers **above** the image and **flips below** (`.is-below`) when
+  there is no room — an image at the top of a field otherwise put the bubble on
+  the toolbar or outside the mount, with none of its buttons reachable. The room
+  is measured against the **mount∩viewport** band, as the table bubble and the
+  Modern selection bubble do: inline the mount is page-height, so the raw rect
+  answers the wrong question.
 - Clicking the refresh button **also selects** the node, and so does starting a
   drag: the button covers the middle of the image, so a click aimed at the image
   lands there instead, and that must not be a dead end.
@@ -731,6 +737,38 @@ about the **editable only** — `getData()` is untouched by any of it.
    - Four content rules (`table`, `td`/`th`, `th`, `pre`) carry a
      `.tiptap-editor-container` prefix **purely for specificity**, to sit above
      the reset.
+   - **`-webkit-user-modify:read-write` is restated on the editable, and this is
+     load-bearing, not tidiness.** WebKit implements the `contenteditable`
+     *attribute* by mapping it to that property as a **presentational hint**, and
+     presentational hints sit at the bottom of the **author** origin — so
+     `all:revert` reverted it away and **the editable went read-only in Safari:
+     no caret, no typing, text still selectable**. Blink applies the same mapping
+     below the author origin, which is why nothing showed in Chrome or in the
+     harness until it was run under WebKit. Because the property **inherits**, it
+     is restated in both directions (read-only on `[contenteditable=false]`,
+     read-write on a `true` nested in a `false`) — the same three selectors as the
+     `white-space` set — or an embed's preview HTML becomes editable. WebKit's two
+     other editing hints (`-webkit-line-break:after-white-space`,
+     `-webkit-nbsp-mode:space`) go back for the same reason. Asserted by T19 via
+     `isContentEditable`, which is the engine's own answer.
+   - **Our chrome is excluded from the reset SUBTREE AND ALL**
+     (`:not(:where(.ProseMirror [class*=tiptap-]) *)`), because element-deep was
+     not enough: the image bubble is the one piece of chrome that lives *inside*
+     the editable, and reverting its descendants dropped all six of its icons to
+     a 0×0 box (`.tiptap-btn svg` is `(0,1,1)` and loses) while also discarding
+     the SVGs' `stroke="currentColor"`/`fill="none"` — presentation attributes
+     are author origin too.
+     - **The `.ProseMirror` in that selector is not decoration**: bare
+       `[class*=tiptap-]` also matches the container and the **mount**, which are
+       ancestors of every content element there is, so the unqualified form turns
+       the whole reset off.
+     - `.tiptap-embed-preview *` is then **re-included** in the reset: the
+       server-rendered preview HTML is content, and it sits inside
+       `.tiptap-embed-frame`, which the subtree exclusion would otherwise cover.
+     - Descendants of the other excluded lists stay reverted on purpose —
+       `[class*=ProseMirror]` matches `ProseMirror-selectednode`, which lands on
+       real content nodes as the selection moves, so exempting its subtree would
+       restyle content on selection.
    - prosemirror-view injects its editable CSS at `.ProseMirror` `(0,1,0)`, which
      the reset outranks, so the properties the editor needs to *function* are
      restated after it — `white-space:break-spaces` above all (without it the

@@ -70,7 +70,13 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
     assertions check the content stylesheet's `body` font reaches the editable,
     that its `rem` sizes rebase off 16px rather than the admin root, that admin
     element rules do not leak in, and that our own chrome inside the editable
-    survives the reset,
+    survives the reset **subtree and all** (icon sizes/stroke in the image
+    bubble) — plus that **the editable is still editable**
+    (`isContentEditable`, text actually insertable, `contenteditable=false` node
+    views still not editable): WebKit maps the `contenteditable` attribute to
+    `-webkit-user-modify` as a presentational hint, which `all:revert` reverts
+    away, so **run this page under WebKit as well as Chromium** — Blink cannot
+    see that class of bug,
   - the **opt-out contract** for the chrome this extension adds (`outline`,
     `darkMode`, `wordcount`): site-wide via
     `settings.ckeditor.defaults.defaultConfigs` (as `cfrequest`), per field via
