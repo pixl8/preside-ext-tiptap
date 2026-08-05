@@ -17,6 +17,7 @@
  * and undo restores exactly (both covered in test-realworld.html).
  */
 import { ICONS } from "./icons.js";
+import { surfaceOf } from "./editorFrame.js";
 import { t } from "./i18n.js";
 
 // Opt out per site/field, matching the wordcount / outline / tableTools opt-outs.
@@ -44,6 +45,14 @@ export function dragHandleEnabled( cfg ) {
 export function createDragHandle( editor, container, mount, withInsert, opts ) {
 	const fixed = !!( opts && opts.fixed );
 
+	// `mount` is the editing FRAME for a boxed editor, the mount div inline. The
+	// rail stays in the HOST document (it has to escape the frame's clip to sit in
+	// the gutter), so every block rect measured inside the frame is translated with
+	// toHost(), and the content's scroller is the frame's own document.
+	const surface = surfaceOf( mount );
+	// Where the visible editor box is, in host coordinates.
+	const boxRect = function() { return surface.box(); };
+
 	// The gutter only exists when this chrome does, so opting out leaves the
 	// editable's padding exactly as it was. Its width depends on how many controls
 	// are actually rendered - see the gutter classes in the css.
@@ -59,8 +68,12 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		try { interiorGutter = mount.getBoundingClientRect().left < GUTTER_NEED; } catch ( e ) {}
 	}
 	if ( !fixed || interiorGutter ) {
-		container.classList.add( "tiptap-has-draghandle" );
-		container.classList.add( withInsert ? "tiptap-gutter-2" : "tiptap-gutter-1" );
+		// The gutter is padding on the MOUNT, which for a framed editor is in the
+		// frame's document - a class on the container cannot select it. Put the
+		// classes on whichever root can: the frame's <html>, else the container.
+		const gutterRoot = surface.isFrame ? surface.doc.documentElement : container;
+		gutterRoot.classList.add( "tiptap-has-draghandle" );
+		gutterRoot.classList.add( withInsert ? "tiptap-gutter-2" : "tiptap-gutter-1" );
 	}
 
 	// One wrapper for both controls so they move together and share the hover
@@ -145,7 +158,9 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 			if ( found ) { return; }
 			const dom = editor.view.nodeDOM( offset );
 			if ( !dom || !dom.getBoundingClientRect ) { return; }
-			const rect = dom.getBoundingClientRect();
+			// Host coordinates: `y` comes from a mousemove on the container, in the
+			// host document, while the block's own box is frame-relative.
+			const rect = surface.toHost( dom.getBoundingClientRect() );
 			if ( y >= rect.top - 2 && y <= rect.bottom + 2 ) {
 				found = { node: node, offset: offset, dom: dom, rect: rect };
 			}
@@ -161,7 +176,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 
 	function show( block ) {
 		const cRect = container.getBoundingClientRect();
-		const mRect = mount.getBoundingClientRect();
+		const mRect = boxRect();
 
 		// The VISIBLE part of the mount - its intersection with the viewport. In
 		// the admin the capped mount is normally fully on screen (no change);
@@ -233,7 +248,8 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 
 	container.addEventListener( "mousemove", onMove );
 	container.addEventListener( "mouseleave", onLeave );
-	mount.addEventListener( "scroll", hide, { passive: true } );
+	// A frame scrolls its own document, so the listener goes through the surface.
+	const offContentScroll = surface.onScroll( hide );
 	if ( fixed ) {
 		rail.addEventListener( "mouseleave", onRailLeave );
 		window.addEventListener( "scroll", onWinScroll, { passive: true, capture: true } );
@@ -338,16 +354,16 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 	}
 
 	function autoScroll( x, y ) {
-		const mRect = mount.getBoundingClientRect();
+		const mRect = boxRect();
 		// Ignore positions nowhere near the editor column - dragging sideways over
 		// unrelated page chrome must not scroll anything.
 		if ( x < mRect.left - 80 || x > mRect.right + 40 ) { return; }
 
-		if ( mount.scrollHeight > mount.clientHeight + 1 ) {
+		if ( surface.canScroll() ) {
 			const vTop    = Math.max( mRect.top, 0 );
 			const vBottom = Math.min( mRect.bottom, window.innerHeight );
-			if ( y < vTop + SCROLL_ZONE )         { mount.scrollTop -= scrollSpeed( y - vTop ); }
-			else if ( y > vBottom - SCROLL_ZONE ) { mount.scrollTop += scrollSpeed( vBottom - y ); }
+			if ( y < vTop + SCROLL_ZONE )         { surface.scrollTo( surface.scrollTop() - scrollSpeed( y - vTop ) ); }
+			else if ( y > vBottom - SCROLL_ZONE ) { surface.scrollTo( surface.scrollTop() + scrollSpeed( vBottom - y ) ); }
 		}
 		// The window scrolls too when the editor overflows the viewport (inline
 		// mode, or a tall uncapped admin field).
@@ -359,7 +375,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 		const pmDom = editor.view.dom;
 		if ( pmDom.contains( e.target ) ) { return; }   // ProseMirror already sees it
 
-		const mRect = mount.getBoundingClientRect();
+		const mRect = boxRect();
 		const vTop    = Math.max( mRect.top, 0 );
 		const vBottom = Math.min( mRect.bottom, window.innerHeight );
 		// The forwarding band: the gutter / rail column left of the content
@@ -403,7 +419,7 @@ export function createDragHandle( editor, container, mount, withInsert, opts ) {
 	editor.on( "destroy", function() {
 		container.removeEventListener( "mousemove", onMove );
 		container.removeEventListener( "mouseleave", onLeave );
-		mount.removeEventListener( "scroll", hide );
+		offContentScroll();
 		document.removeEventListener( "dragover", onDocDragOver, true );
 		document.removeEventListener( "drop", onDocDrop, true );
 		if ( fixed ) {

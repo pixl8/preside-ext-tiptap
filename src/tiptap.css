@@ -25,7 +25,12 @@
    The dark theme has no admin equivalent (the admin is light-only), so its
    overrides at the bottom of this file are ours - kept as muted versions of the
    same hues. */
-.tiptap-editor-container{
+/* The variables are declared for BOTH documents. `.tiptap-editor-doc` is the
+   frame's own <html> (src/editorFrame.js): the editable and the chrome glued to it
+   (embeds, image tools, drag gutter, table bubble) live in there, and a custom
+   property declared on the container cannot cross a document boundary. The
+   container-only properties (border, position) stay below, on the container. */
+.tiptap-editor-container,.tiptap-editor-doc{
 	--tt-bg:#fff;
 	--tt-fg:#222;
 	--tt-muted:#777;
@@ -55,10 +60,16 @@
 	--tt-content-size:13px;
 	--tt-content-line:1.6;
 	--tt-content-fg:#333;
+}
+.tiptap-editor-container{
 	/* position: the outline navigator is absolutely positioned against it. */
 	position:relative;
 	border:1px solid var(--tt-border);border-radius:3px;background:var(--tt-bg);color:var(--tt-fg)
 }
+/* The frame itself. A replaced element, so it does not grow with its content -
+   editorFrame.js measures and sets the height. `display:block` kills the inline
+   baseline gap under it; the width is the container's. */
+.tiptap-editor-frame{display:block;width:100%;border:0;background:transparent}
 .tiptap-toolbar{border-bottom:1px solid var(--tt-border-soft);padding:4px 6px;background:var(--tt-chrome-bg);display:flex;flex-wrap:wrap;gap:2px;align-items:center}
 .tiptap-toolbar-group{display:inline-flex;gap:1px;margin-right:6px}
 .tiptap-toolbar-sep{display:inline-block;width:1px;height:18px;background:var(--tt-border);margin:0 4px}
@@ -69,79 +80,32 @@
 .tiptap-btn:hover{background-color:var(--tt-btn-hover-bg);border-color:var(--tt-border-soft)}
 .tiptap-btn.is-active{background:var(--tt-active-bg);border-color:var(--tt-active-border);color:var(--tt-active-fg)}
 .tiptap-theme-toggle{border-radius:50%;width:26px;min-width:26px;padding:0}
-/* ---- ADMIN / PAGE STYLE ISOLATION -------------------------------------------
-   CKEditor edited inside an <iframe>, so the admin's own CSS could not reach the
-   content: the editable started from browser defaults plus whatever contentsCss
-   the field named. Tiptap edits in the page DOM, so without this the admin's
-   `body{font-family;font-size}`, its element rules (h1..h6, p, ul, table, img)
-   and `*{box-sizing:border-box}` all apply to the content, and combine with -
-   or beat - the site's own content styles.
+/* ---- CONTENT BASELINE (the frame's only typography) -------------------------
+   THERE IS NO ISOLATION RESET HERE ANY MORE, and that is the point of the
+   editing frame (src/editorFrame.js). There used to be an `all:revert` wall on
+   the editable plus a (0,2,0) specificity contract ordering it against the
+   admin's CSS. It could not work, for a reason no ordering fixes: a reset at
+   (0,2,0) is beaten by any admin/theme rule at (0,2,1) or above and by ANY
+   `!important`, both of which real admin stylesheets contain. It also cost us a
+   Safari outage - reverting `all` discards the presentational hint WebKit maps
+   `contenteditable` onto, so the editable went read-only.
 
-   The fix is `all:revert`, which drops every AUTHOR declaration for these
-   elements back to the user-agent origin - i.e. exactly what an iframe gave us -
-   applied to the editable, its whole subtree, and the Format/Styles previews.
-   Inherited properties resolve normally inside the subtree (revert falls back to
-   the inherited value where the UA sheet says nothing), so this is a wall around
-   the editable, not a per-element flattening.
+   The editable is now in its own document, where the admin's CSS is not present
+   at all. Nothing needs walling out, so nothing is.
 
-   THE SPECIFICITY OF THESE TWO RULES IS A CONTRACT - it is what orders the reset
-   against everything that has to beat it, and it is exactly (0,2,0):
+   The PREVIEWS still need the wall: `.tiptap-fmt-preview` is toolbar chrome in
+   the HOST document (the Format/Styles dropdowns render each item in the real
+   content styles, as CKEditor did), so it sits in the admin's cascade and cannot
+   be moved into the frame. Same `all:revert`, now only where it is both needed
+   and harmless - a preview is decorative. src/presideStyles.js injects a scoped
+   copy of the content CSS for it.
 
-     admin / theme CSS   loses    - its element rules (`p`, `ul`, `h2`, `*`) are
-                                    (0,0,x), and inheritance has no specificity
-                                    contest at all once the root is reverted
-     this reset          (0,2,0)
-     our own chrome      wins     - either (0,2,1)+ or (0,2,0) LATER in this file
-     content CSS         wins     - src/presideStyles.js scopes it to
-                                    `.tiptap-editor-mount .ProseMirror <sel>`,
-                                    (0,2,1)+, and injects it into <head> after us
-
-   Hence the `:where()` wrappers: they restrict WHAT matches without adding
-   specificity, so the container/inline qualification and the exclusion list below
-   are free. A cascade layer would have been tidier, but layered author styles
-   lose to ALL unlayered ones - including the admin's, i.e. the exact rules this
-   has to beat. Do not "simplify" it back into a layer, and do not add or drop a
-   class from these selectors without re-reading the table above.
-
-   The exclusion list keeps the reset off elements that are CHROME rather than
-   content - ProseMirror's own (gapcursor, separator), our node-view frames and
-   placeholders.
-
-   OUR OWN CHROME IS EXCLUDED SUBTREE AND ALL, not just element-deep. The image
-   tools (src/imageTools.js) are the one piece of
-   chrome that lives INSIDE the editable, and reverting their descendants stripped
-   every icon in the alignment/size/edit/remove bubble: `.tiptap-btn svg` is
-   (0,1,1) and loses to this reset, so the icons dropped to a 0x0 box, and revert
-   also discards an SVG's `stroke="currentColor"`/`fill="none"` presentation
-   attributes (they too are author origin). Six blank buttons.
-
-   The subtree exclusion is written `:not(:where(.ProseMirror [class*=tiptap-]) *)`
-   and the `.ProseMirror` in it is NOT decoration: `[class*=tiptap-]` on its own
-   also matches the container and the MOUNT, which are ancestors of every content
-   element there is, so the unqualified form switches the whole reset off (it did -
-   T19's `*{box-sizing}` / `ul{padding-left}` / `p{letter-spacing}` leak
-   assertions catch exactly that).
-
-   The re-inclusion of `.tiptap-embed-preview *` is what keeps that narrow: the
-   server-rendered preview HTML is CONTENT, so the admin's `img`/`table` rules
-   must not reach it either - and the preview sits inside `.tiptap-embed-frame`,
-   which the subtree exclusion would otherwise cover. Descendants of the OTHER
-   excluded lists are deliberately still reverted: `[class*=ProseMirror]` matches
-   `ProseMirror-selectednode`, which ProseMirror puts on real content nodes as the
-   selection moves, so exempting its subtree would restyle content on selection.
-
-   Modern inline mode is deliberately EXCLUDED (.tiptap-inline): there the
-   editable IS the site page and must keep inheriting the theme's own styles. */
-:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror,
-:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror *:not(:where([class*=tiptap-],[class*=ProseMirror],[class*=placeholder],[class*=preside-])):not(:where(.ProseMirror [class*=tiptap-]) *),
-:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror :where(.tiptap-embed-preview) *,
+   The baseline typography applies ONLY to the previews: an unstyled EDITABLE is
+   deliberately raw browser defaults now, exactly like CKEditor's iframe with no
+   contentsCss - "only the styles we explicitly inject" - so a field's own content
+   stylesheet is the single source of its appearance. */
 .tiptap-fmt-preview,
 .tiptap-fmt-preview *{all:revert}
-/* ...then put a baseline back, since UA defaults alone mean Times New Roman at
-   16px. These are CKEditor's contents.css values (--tt-content-* above), and they
-   sit at the same (0,2,0) as the reset - so a field's content stylesheet, being
-   more specific, overrides them. */
-:where(.tiptap-editor-container:not(.tiptap-inline)) .tiptap-editor-mount .ProseMirror,
 .tiptap-fmt-preview{
 	font-family:var(--tt-content-font);
 	font-size:var(--tt-content-size);
@@ -149,43 +113,40 @@
 	color:var(--tt-content-fg)
 }
 .tiptap-editor-mount{padding:8px 10px}
-/* prosemirror-view injects its own editable CSS at `.ProseMirror` (0,1,0), which
-   the isolation reset above outranks - so the handful of properties the editor
-   actually needs to FUNCTION are restated here, at (0,2,0) later in the file.
-   `white-space:break-spaces` is the load-bearing one: without it the browser
-   collapses runs of spaces as you type them. Keep this in step with
-   prosemirror-view's stylesheet on upgrade.
+/* prosemirror-view injects its own editable CSS into `view.root`, which for the
+   editing frame IS the frame's document - so it now applies normally and there is
+   nothing to restate. What is left here is layout, not content:
 
-   `-webkit-user-modify` is the OTHER load-bearing one, and it is not
-   prosemirror's - it is the BROWSER's. WebKit implements the `contenteditable`
-   attribute by mapping it to `-webkit-user-modify:read-write` (plus the two
-   editing whitespace hints below) as a PRESENTATIONAL HINT, and presentational
-   hints sit at the bottom of the AUTHOR origin - so `all:revert` above threw it
-   away and the editable became READ-ONLY: no caret, no typing, text still
-   selectable. Blink applies the same mapping below the author origin, which is
-   why this only ever showed in Safari and not in the harness.
+   The `-webkit-user-modify` / `-webkit-line-break` / `-webkit-nbsp-mode` triplet
+   that used to live here is GONE with the reset that made it necessary. WebKit
+   maps `contenteditable` onto those as presentational hints; only `all:revert`
+   could throw them away, and there is no longer an `all:revert` in the editable's
+   cascade. (Keep that in mind before ever reintroducing one - it cost a release.)
 
-   It is restated in BOTH directions because the property INHERITS: with only the
-   read-write line, an embed's own `contenteditable=false` (also a reverted-away
-   hint) would inherit read-write from the editable and its preview HTML would
-   become editable. Hence the same three selectors as the white-space set. */
+   `p{margin:0 0 .6em}` is gone too, and deliberately: it was a CONTENT opinion at
+   (0,2,1), which beat a site's own `p{margin}` at (0,0,1). In the frame an
+   unstyled field is now raw browser defaults, and a styled one is the site's
+   stylesheet alone - and in Modern inline mode that rule had been quietly
+   overriding the theme's paragraph spacing on the real page. */
 .tiptap-editor-mount .ProseMirror{
 	outline:none;min-height:60px;
 	position:relative;
-	white-space:break-spaces;overflow-wrap:break-word;
-	font-variant-ligatures:none;font-feature-settings:"liga" 0;
-	-webkit-user-modify:read-write;-webkit-line-break:after-white-space;-webkit-nbsp-mode:space
+	white-space:break-spaces;overflow-wrap:break-word
 }
-.tiptap-editor-mount .ProseMirror [contenteditable=false]{white-space:normal;-webkit-user-modify:read-only}
-.tiptap-editor-mount .ProseMirror [contenteditable=false] [contenteditable=true]{white-space:pre-wrap;-webkit-user-modify:read-write}
+.tiptap-editor-mount .ProseMirror [contenteditable=false]{white-space:normal}
+.tiptap-editor-mount .ProseMirror [contenteditable=false] [contenteditable=true]{white-space:pre-wrap}
 .tiptap-editor-mount .ProseMirror-hideselection *{caret-color:transparent}
-.tiptap-editor-mount .ProseMirror p{margin:0 0 .6em}
 /* Maximized: the container is portalled to <body> first (see src/maximize.js) so
    it escapes any ancestor stacking context / containing block - on the front end
    it lives inside a fixed, max-width, z-index:100 wrapper. z-index sits above the
    frontend admin toolbar (103) but below the picker/anchor overlays (2000/2100).
    `width` is !important because the field's data-width is an inline style. */
 .tiptap-editor-container.is-maximized{position:fixed;inset:0;width:auto!important;height:auto!important;max-width:none;z-index:calc(var(--tt-z-base,1040) + 10);border:0;border-radius:0;display:flex;flex-direction:column;background:var(--tt-bg)}
+/* Maximized, the FRAME is the flex child that takes the remaining height (the
+   mount is inside it, in the other document, and cannot be a flex child of the
+   container). Its own document scrolls. The mount rule stays for Modern inline
+   mode, which has no frame. */
+.tiptap-editor-container.is-maximized .tiptap-editor-frame{flex:1;min-height:0;height:auto!important;max-height:none!important}
 .tiptap-editor-container.is-maximized .tiptap-editor-mount{flex:1;min-height:0;max-height:none!important;overflow-y:auto}
 html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Frontend (in-page) editors render inside core's `.content-editor-editor-container`
@@ -264,8 +225,11 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 /* Gutter width tracks how many controls are actually rendered: "+" plus grip, or
    the grip alone when the slash menu is off (the "+" only types a "/", so it
    would be useless without it). */
-.tiptap-gutter-1 .tiptap-editor-mount{padding-left:28px}
-.tiptap-gutter-2 .tiptap-editor-mount{padding-left:48px}
+/* Also keyed off the FRAME's own root (`html.tiptap-editor-doc.tiptap-gutter-*`):
+   the mount lives in the frame's document, so a class on the container cannot
+   select it. dragHandle.js sets the class on whichever root can reach the mount. */
+.tiptap-gutter-1 .tiptap-editor-mount,.tiptap-editor-doc.tiptap-gutter-1 .tiptap-editor-mount{padding-left:28px}
+.tiptap-gutter-2 .tiptap-editor-mount,.tiptap-editor-doc.tiptap-gutter-2 .tiptap-editor-mount{padding-left:48px}
 .tiptap-block-gutter{position:absolute;left:4px;display:none;align-items:center;gap:1px}
 .tiptap-block-gutter.is-visible{display:inline-flex}
 .tiptap-block-gutter button{

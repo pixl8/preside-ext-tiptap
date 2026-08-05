@@ -21,6 +21,7 @@
 import { ICONS } from "./icons.js";
 import { COMMANDS } from "./toolbar.js";
 import { t } from "./i18n.js";
+import { pageRect, frameOf } from "./editorFrame.js";
 
 // Opt out per site/field, matching the wordcount / outline / tableTools opt-outs.
 export function slashMenuEnabled( cfg ) {
@@ -96,6 +97,29 @@ function widgetItems( cfg ) {
 	} );
 }
 
+/**
+ * Caret geometry -> host coordinates.
+ *
+ * The popup is body-portalled in the HOST document (it has to escape a capped
+ * field's clipping), but the caret is measured by ProseMirror INSIDE the editing
+ * frame, where 0,0 is the frame's own top-left. Without this the menu opened at
+ * the top-left of the admin page instead of at the caret.
+ *
+ * `clientRect` arrives from @tiptap/suggestion as a FUNCTION (it is re-read on
+ * scroll), so the wrapper has to stay a function.
+ */
+function toHostRect( editor, rect ) {
+	return pageRect( frameOf( editor.view.dom ), rect );
+}
+
+function hostRectOf( editor, clientRect ) {
+	if ( typeof clientRect !== "function" ) { return toHostRect( editor, clientRect ); }
+	return function() {
+		const r = clientRect();
+		return r ? toHostRect( editor, r ) : r;
+	};
+}
+
 function itemsFor( cfg ) {
 	const items = [];
 	baseItems().forEach( function( it ) {
@@ -164,7 +188,8 @@ export function createSlashMenu( T, cfg ) {
 				let query = "", active = 0, list = [];
 
 				function currentRect() {
-					try { return editor.view.coordsAtPos( editor.state.selection.from ); } catch ( e ) { return null; }
+					try { return toHostRect( editor, editor.view.coordsAtPos( editor.state.selection.from ) ); }
+					catch ( e ) { return null; }
 				}
 				function paint() {
 					popup.render( list, active, pick );
@@ -253,12 +278,12 @@ export function createSlashMenu( T, cfg ) {
 
 					return {
 						  onStart: function( props ) {
-							list = props.items; active = 0; cmd = props.command; rect = props.clientRect;
+							list = props.items; active = 0; cmd = props.command; rect = hostRectOf( editor, props.clientRect );
 							popup.open();
 							paint();
 						}
 						, onUpdate: function( props ) {
-							list = props.items; cmd = props.command; rect = props.clientRect;
+							list = props.items; cmd = props.command; rect = hostRectOf( editor, props.clientRect );
 							if ( active >= list.length ) { active = 0; }
 							paint();
 						}

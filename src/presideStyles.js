@@ -2,37 +2,62 @@
  * Content stylesheet handling (the CKEditor `contentsCss` / Preside `stylesheets`
  * equivalent).
  *
- * CKEditor renders content inside an <iframe>, so it can load the site/app content
- * CSS there without affecting the admin chrome. Tiptap edits in the page DOM, so we
- * fetch each stylesheet and re-inject it with every selector SCOPED to the editor
- * mount (`.tiptap-editor-mount .ProseMirror`). This gives WYSIWYG fidelity without
- * the app CSS bleeding into the admin UI.
+ * THE EDITABLE GETS THE STYLESHEET UNMODIFIED, as a plain <link> inside the
+ * editing iframe (src/editorFrame.js) - exactly what CKEditor did. No scoping, no
+ * selector rewriting, no unit rebasing. That is the whole point of the frame:
+ * `html`/`:root`/`body` selectors match because the frame HAS an html and a body,
+ * `rem` resolves against the frame's own root, and `vw`/media queries resolve
+ * against the frame's own box.
  *
- * Uses the browser CSSOM to parse robustly (handles @media/@supports/@font-face);
- * falls back to an unscoped <link> only if the stylesheet can't be fetched (e.g.
- * cross-origin without CORS).
+ * The TRANSFORMED path below survives for ONE consumer: the Format/Styles
+ * dropdown previews (`.tiptap-fmt-preview`), which are toolbar chrome in the HOST
+ * document and cannot be inside the frame. They are decorative - a preview that
+ * is slightly off is a cosmetic issue, where the editable being off was a
+ * fidelity bug - but the transforms are still needed to get them close:
  *
- * Two things the iframe gave for free and scoping has to reproduce:
+ *  1. `html` / `:root` / `body` selectors are mapped ONTO the preview element.
+ *     A site sets its content font with `body{font-family}`; scoped naively as a
+ *     descendant that matches nothing, because there is no <body> in a preview.
+ *  2. `rem` is rebased to px. The host admin root is `html{font-size:10px}`
+ *     (Ace/bootstrap), not the 16px the frame has, so a rem-based preview came
+ *     out at 62.5% of its size. Nothing in CSS can rebase rem for a subtree -
+ *     not scoping, not shadow DOM; only a separate document can, which is
+ *     precisely why the editable is in one and the preview still needs this.
  *
- *  1. `html` / `:root` / `body` selectors ARE the editable. In CKEditor the
- *     iframe's <body> was the editing surface, so a content stylesheet's
- *     `body{font-family:...}` - how nearly every site sets its content font -
- *     styled the content. Scoped naively as a DESCENDANT it matches nothing:
- *     there is no <body> inside the editable. That was the "the body font is the
- *     admin's, but it picked up my heading font" symptom. scopeSelector() maps
- *     those tokens ONTO the scope instead.
- *  2. `rem` resolves against the DOCUMENT root, which in the Preside admin is
- *     `html{font-size:10px}` (Ace/bootstrap), not the 16px an iframe with no
- *     html rule had. Nothing in CSS can rebase rem for a subtree - not scoping,
- *     not shadow DOM - so rem lengths are converted to px at injection time
- *     against the base the sheet itself would have had in the iframe: its own
- *     `html`/`:root` font-size if it declares one, else 16px.
+ * Uses the browser CSSOM to parse robustly (handles @media/@supports/@font-face).
+ * If a sheet can't be fetched (cross-origin without CORS) the previews simply go
+ * unstyled - the editable is unaffected either way, since its <link> does not
+ * depend on us being able to read the bytes.
  */
 
-// Apply content CSS to the editing surface AND to the Format/Styles dropdown
-// previews, so menu items render in the real content styles (e.g. a green H2)
-// exactly like CKEditor.
-const SCOPES = [ ".tiptap-editor-mount .ProseMirror", ".tiptap-fmt-preview" ];
+// The transformed copy is for the dropdown previews ONLY - the editable is served
+// by an unmodified <link> in the frame (injectFrameStyles below).
+const SCOPES = [ ".tiptap-fmt-preview" ];
+
+/**
+ * The editable's copy: the sheet as the site wrote it, in the frame's own head.
+ *
+ * Deliberately a <link> and not a fetched-and-inlined <style>: it keeps the
+ * bytes byte-identical, it shares the browser cache with the site itself, and it
+ * works cross-origin. The frame's auto-height re-measures on load, since a late
+ * stylesheet changes the content height.
+ */
+export function injectFrameStyles( doc, stylesheetsCsv, onLoad ) {
+	if ( !doc || !stylesheetsCsv ) { return; }
+	urlList( stylesheetsCsv ).forEach( function( url ) {
+		if ( doc.querySelector( 'link[data-preside-content-css="' + cssAttr( url ) + '"]' ) ) { return; }
+		const link = doc.createElement( "link" );
+		link.rel = "stylesheet";
+		link.href = url;
+		link.setAttribute( "data-preside-content-css", url );
+		if ( onLoad ) { link.addEventListener( "load", onLoad ); }
+		doc.head.appendChild( link );
+	} );
+}
+
+function urlList( csv ) {
+	return String( csv ).split( "," ).map( s => s.trim() ).filter( Boolean );
+}
 
 // Raw selectors harvested from the fetched content stylesheets — the Styles
 // dropdown (CKEditor stylesheetParser equivalent) filters these against
@@ -52,9 +77,11 @@ function collectSelectors( rules ) {
 	}
 }
 
+// The preview copy. Failure is silent by design: the editable has its own
+// unmodified <link> in the frame and does not depend on this succeeding.
 export function applyContentStyles( stylesheetsCsv ) {
 	if ( !stylesheetsCsv ) { return; }
-	const urls = String( stylesheetsCsv ).split( "," ).map( s => s.trim() ).filter( Boolean );
+	const urls = urlList( stylesheetsCsv );
 
 	urls.forEach( function( url ) {
 		if ( document.querySelector( 'style[data-preside-content-css="' + cssAttr( url ) + '"]' ) ) { return; } // already injected
@@ -68,13 +95,13 @@ export function applyContentStyles( stylesheetsCsv ) {
 				document.head.appendChild( style );
 			} )
 			.catch( function() {
-				// Fallback: load unscoped (may bleed, but better than no styling).
-				if ( document.querySelector( 'link[data-preside-content-css="' + cssAttr( url ) + '"]' ) ) { return; }
-				const link = document.createElement( "link" );
-				link.rel = "stylesheet";
-				link.href = url;
-				link.setAttribute( "data-preside-content-css", url );
-				document.head.appendChild( link );
+				// Previews go unstyled. There used to be an "unscoped <link>" fallback
+				// here, on the reasoning that bleeding beat no styling - but it dumped a
+				// whole site stylesheet into the ADMIN's head, restyling the admin UI
+				// itself. The editable no longer depends on this path at all (it has its
+				// own unmodified <link> inside the frame), so the only thing the
+				// fallback could still buy is a styled dropdown preview, which is not
+				// worth that.
 			} );
 	} );
 }

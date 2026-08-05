@@ -33,6 +33,7 @@
  *  - Opt out per site/field with `defaultConfigs.outline = false`.
  */
 import { t } from "./i18n.js";
+import { surfaceOf } from "./editorFrame.js";
 
 const MAX_LEVEL = 6;
 
@@ -199,6 +200,12 @@ function createFlash( tiptap ) {
  * position:fixed.
  */
 export function createOutline( tiptap, mount, opts ) {
+	// `mount` is the editing FRAME for a boxed editor, the mount div in Modern
+	// inline mode. The rail is HOST chrome on the container either way, so heading
+	// geometry (measured inside the frame) is translated with toHost(), and the
+	// scroller is the frame's own document rather than the element - an <iframe>
+	// never fires a scroll event itself.
+	const surface = surfaceOf( mount );
 	const fixed = !!( opts && opts.fixed );
 
 	const wrap = document.createElement( "div" );
@@ -242,13 +249,13 @@ export function createOutline( tiptap, mount, opts ) {
 		// scroll it directly rather than letting scrollIntoView() drag the
 		// surrounding admin page around with it.
 		if ( isMountScrollable() ) {
-			const delta = el.getBoundingClientRect().top - mount.getBoundingClientRect().top;
-			const top   = Math.max( 0, mount.scrollTop + delta - 8 );
-			if ( typeof mount.scrollTo === "function" ) {
-				mount.scrollTo( { top: top, behavior: "smooth" } );
-			} else {
-				mount.scrollTop = top;
-			}
+			// Both rects in the CONTENT's own space: inside a frame the heading and
+			// the scrollport share it, so no translation is wanted here.
+			const portTop = surface.isFrame
+				? 0                                        // the frame's viewport origin
+				: mount.getBoundingClientRect().top;
+			const delta = el.getBoundingClientRect().top - portTop;
+			surface.scrollTo( Math.max( 0, surface.scrollTop() + delta - 8 ), true );
 			return;
 		}
 
@@ -267,14 +274,16 @@ export function createOutline( tiptap, mount, opts ) {
 		}
 	}
 
+	// "On screen" means on the USER's screen, so a heading inside a frame is judged
+	// by where the frame puts it in the host viewport.
 	function isVisibleInViewport( el ) {
-		const box    = el.getBoundingClientRect();
+		const box    = surface.toHost( el.getBoundingClientRect() );
 		const height = window.innerHeight || document.documentElement.clientHeight || 0;
 		return box.top >= 0 && box.bottom <= height;
 	}
 
 	function isMountScrollable() {
-		return !!mount && ( mount.scrollHeight - mount.clientHeight > 4 );
+		return surface.canScroll();
 	}
 
 	// How many headings the outline can show, measured off the EDITABLE (the band
@@ -289,7 +298,7 @@ export function createOutline( tiptap, mount, opts ) {
 	function capacity() {
 		const box = fixed
 			? Math.max( 0, ( window.innerHeight || 0 ) - 140 ) // clear of the admin toolbar + margins
-			: ( ( mount && mount.clientHeight ) || ( wrap.parentNode && wrap.parentNode.clientHeight ) || 0 );
+			: ( ( surface.box() && surface.box().height ) || ( wrap.parentNode && wrap.parentNode.clientHeight ) || 0 );
 		if ( !box ) { return items.length || 1; }
 		return Math.max( 1, Math.min(
 			  Math.floor( ( box - RAIL_MARGIN ) / ROW_HEIGHT )
@@ -310,9 +319,12 @@ export function createOutline( tiptap, mount, opts ) {
 			panel.style.maxHeight = Math.max( 120, ( window.innerHeight || 600 ) - 160 ) + "px";
 			return;
 		}
-		if ( !mount || !mount.clientHeight ) { return; }
-		wrap.style.top = ( mount.offsetTop + ( mount.clientHeight / 2 ) ) + "px";
-		panel.style.maxHeight = Math.max( 120, mount.clientHeight - 8 ) + "px";
+		// offsetTop/clientHeight of the FRAME - it is a normal element in the host
+		// document, so the rail still centres on the editable's box exactly as it did
+		// when the mount was one.
+		if ( !mount || !mount.offsetHeight ) { return; }
+		wrap.style.top = ( mount.offsetTop + ( mount.offsetHeight / 2 ) ) + "px";
+		panel.style.maxHeight = Math.max( 120, mount.offsetHeight - 8 ) + "px";
 	}
 
 	/**
@@ -383,7 +395,10 @@ export function createOutline( tiptap, mount, opts ) {
 	// Driven by scroll position when there is something to scroll (the heading
 	// last passed), and by the caret otherwise.
 	function activeFromScroll() {
-		const line = ( isMountScrollable() ? mount.getBoundingClientRect().top : 0 ) + ACTIVE_OFFSET;
+		// The comparison line and the headings must be in the SAME space. Inside a
+		// frame both are already frame-relative, so the scrollport origin is 0.
+		const port = ( !isMountScrollable() || surface.isFrame ) ? 0 : mount.getBoundingClientRect().top;
+		const line = port + ACTIVE_OFFSET;
 		let found = -1;
 		for ( let i = 0; i < items.length; i++ ) {
 			const el = headingDom( tiptap, items[ i ].pos );
@@ -454,10 +469,11 @@ export function createOutline( tiptap, mount, opts ) {
 			syncActive( true );
 		} );
 	}
-	const scrollTargets = mount ? [ mount, window ] : [ window ];
-	scrollTargets.forEach( function( target ) {
-		target.addEventListener( "scroll", onScroll, { passive: true } );
-	} );
+	// The content's own scroller (the frame's document, or a capped mount inline)
+	// AND the host window - a short field grows with its content, so the admin page
+	// is what moves it past the reader.
+	const offContentScroll = surface.onScroll( onScroll );
+	window.addEventListener( "scroll", onScroll, { passive: true } );
 
 	// ---- Open / close -----------------------------------------------------
 	// Tap/click on the rail pins the panel open (touch devices have no hover);
@@ -482,7 +498,8 @@ export function createOutline( tiptap, mount, opts ) {
 
 	tiptap.on( "destroy", function() {
 		unpin();
-		scrollTargets.forEach( function( target ) { target.removeEventListener( "scroll", onScroll ); } );
+		offContentScroll();
+		window.removeEventListener( "scroll", onScroll );
 	} );
 
 	render();

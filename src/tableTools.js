@@ -21,6 +21,7 @@
  */
 import { ICONS } from "./icons.js";
 import { t } from "./i18n.js";
+import { surfaceOf } from "./editorFrame.js";
 
 // Opt out per site/field, matching the wordcount / outline / imageTools opt-outs.
 export function tableToolsEnabled( cfg ) {
@@ -59,6 +60,11 @@ const BUTTONS = [
  * Returns the bubble element (already appended to `container`).
  */
 export function createTableTools( editor, container, mount ) {
+	// `mount` is the editing FRAME for a boxed editor and the mount div in Modern
+	// inline mode; surfaceOf() hides the difference. The bubble itself stays in the
+	// HOST document on the container, so table geometry - measured inside the frame
+	// - is translated with toHost().
+	const surface = surfaceOf( mount );
 	const bubble = document.createElement( "div" );
 	bubble.className = "tiptap-table-bubble";
 	bubble.setAttribute( "role", "toolbar" );
@@ -127,8 +133,8 @@ export function createTableTools( editor, container, mount ) {
 
 	function place( table ) {
 		const cRect = container.getBoundingClientRect();
-		const tRect = table.getBoundingClientRect();
-		const mRect = mount.getBoundingClientRect();
+		const tRect = surface.toHost( table.getBoundingClientRect() );
+		const mRect = surface.box();
 
 		// Clamp against the VISIBLE part of the mount - its intersection with the
 		// viewport. In the admin the capped-height mount is normally fully on
@@ -198,12 +204,14 @@ export function createTableTools( editor, container, mount ) {
 	editor.on( "transaction",     schedule );
 	editor.on( "focus",           schedule );
 	editor.on( "blur",            schedule );
-	mount.addEventListener( "scroll", schedule, { passive: true } );
+	// A frame scrolls its own DOCUMENT - `iframe.addEventListener("scroll")` never
+	// fires - so the listener goes through the surface.
+	const offScroll = surface.onScroll( schedule );
 	window.addEventListener( "scroll", schedule, { passive: true } );
 	window.addEventListener( "resize", schedule );
 
 	editor.on( "destroy", function() {
-		mount.removeEventListener( "scroll", schedule );
+		offScroll();
 		window.removeEventListener( "scroll", schedule );
 		window.removeEventListener( "resize", schedule );
 	} );

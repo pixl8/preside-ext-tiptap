@@ -24,29 +24,41 @@ export function isMaximized( container ) {
 	return !!( container && container.classList.contains( MAX_CLASS ) );
 }
 
-function mountOf( container ) {
-	return container.querySelector( ".tiptap-editor-mount" );
+// What carries the height: the editing FRAME for a boxed editor, or the mount
+// itself in Modern inline mode (which has no frame - the editable is the page).
+// `container.querySelector(".tiptap-editor-mount")` no longer finds a framed
+// editor's mount at all: it is in the frame's document.
+function heightBoxOf( container ) {
+	return container.querySelector( "iframe.tiptap-editor-frame" )
+	    || container.querySelector( ".tiptap-editor-mount" );
 }
 
 export function enterMaximize( container ) {
 	if ( !container || isMaximized( container ) ) { return; }
 
-	var mount       = mountOf( container );
+	var box         = heightBoxOf( container );
 	var placeholder = document.createComment( "tiptap-maximized" );
 
 	container.parentNode.insertBefore( placeholder, container );
 	container._ttMaximizeState = {
 		  placeholder : placeholder
 		, width       : container.style.width
-		, maxHeight   : mount ? mount.style.maxHeight : ""
-		, overflowY   : mount ? mount.style.overflowY : ""
+		, maxHeight   : box ? box.style.maxHeight : ""
+		, overflowY   : box ? box.style.overflowY : ""
+		, height      : box ? box.style.height : ""
 		, scrollTop   : window.pageYOffset || document.documentElement.scrollTop || 0
 	};
 
 	// Inline width/max-height come from the field's width/maxHeight config and
 	// would otherwise win over the maximized layout.
 	container.style.width = "";
-	if ( mount ) { mount.style.maxHeight = ""; mount.style.overflowY = "auto"; }
+	if ( box ) {
+		box.style.maxHeight = ""; box.style.overflowY = "auto";
+		// The frame's auto-height fitter must stand down while the flex layout owns
+		// the height, or it fights it back to the content height every edit.
+		box.__ttFlex = true;
+		box.style.height = "";
+	}
 
 	document.body.appendChild( container );
 	container.classList.add( MAX_CLASS );
@@ -63,10 +75,14 @@ export function exitMaximize( container ) {
 	if ( state ) {
 		container.style.width = state.width;
 
-		var mount = mountOf( container );
-		if ( mount ) {
-			mount.style.maxHeight = state.maxHeight;
-			mount.style.overflowY = state.overflowY;
+		var box = heightBoxOf( container );
+		if ( box ) {
+			box.style.maxHeight = state.maxHeight;
+			box.style.overflowY = state.overflowY;
+			box.__ttFlex = false;
+			box.style.height = state.height;
+			// Re-measure: the content reflowed at full-viewport width while maximized.
+			if ( typeof box.__ttRefit === "function" ) { box.__ttRefit(); }
 		}
 
 		if ( state.placeholder && state.placeholder.parentNode ) {

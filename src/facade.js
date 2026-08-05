@@ -17,7 +17,7 @@
  */
 import { buildToolbar } from "./toolbar.js";
 import { tokenize, detokenize } from "./tokens.js";
-import { applyContentStyles } from "./presideStyles.js";
+import { applyContentStyles, injectFrameStyles } from "./presideStyles.js";
 import { normalizeOutput } from "./normalize.js";
 import { createPasteTransform } from "./pasteFilter.js";
 import { getCustomConfig, prefetchCustomConfig } from "./customConfig.js";
@@ -28,6 +28,7 @@ import { imageToolsEnabled } from "./imageTools.js";
 import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
 import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
+import { createFrame } from "./editorFrame.js";
 import { fitFrontendEditor } from "./frontendFit.js";
 import { resolveInlineMount } from "./inlineMode.js";
 import { initEditModeSwitch } from "./editModeSwitch.js";
@@ -207,6 +208,10 @@ import { t } from "./i18n.js";
 			this._cleanups = null;
 		}
 		try { this._t.destroy(); } catch ( e ) {}
+		// The frame holds a ResizeObserver on its own document - dropping the
+		// container would orphan it (and the observer keeps the frame's document
+		// alive), so it is torn down explicitly.
+		if ( this._frame ) { try { this._frame.destroy(); } catch ( e ) {} this._frame = null; }
 		// Destroying while maximized would leave <html> scroll-locked and the
 		// restore placeholder orphaned in the page.
 		if ( this._container ) { exitMaximize( this._container ); }
@@ -255,14 +260,13 @@ import { t } from "./i18n.js";
 
 		var toolbarEl = document.createElement( "div" );
 		toolbarEl.className = "tiptap-toolbar";
-		var mount = document.createElement( "div" );
-		mount.className = "tiptap-editor-mount";
 		if ( !isInline ) { container.appendChild( toolbarEl ); }
-		container.appendChild( mount );
 
 		// Honour the user's stored light/dark preference from the first paint (the
 		// toolbar's toggle then flips it for every editor on the page - see theme.js).
 		// Inline editors stay light: the editable IS the site page.
+		// Read BEFORE the frame is built, so the frame's root is stamped with the
+		// right theme on its first paint too.
 		if ( !isInline ) { applyTheme( container ); }
 
 		ta.style.display = "none";
@@ -272,6 +276,25 @@ import { t } from "./i18n.js";
 		} else {
 			ta.parentNode.insertBefore( container, ta.nextSibling );
 		}
+
+		// The editable goes in an IFRAME (see src/editorFrame.js for why: rem, vw and
+		// isolation, none of which CSS can deliver) - EXCEPT in Modern inline mode,
+		// where the editable IS the site page and must inherit the theme.
+		//
+		// This has to happen AFTER the container is in the document: an iframe has no
+		// contentDocument until it is attached.
+		var frameApi = isInline ? null : createFrame( container, { title: cfg.label || "" } );
+		var mount    = frameApi ? frameApi.mount : document.createElement( "div" );
+		if ( !frameApi ) {
+			mount.className = "tiptap-editor-mount";
+			container.appendChild( mount );
+		}
+		this._frame = frameApi;
+		// What the host-side chrome (outline rail, table bubble, drag gutter) treats
+		// as "the editing surface": the FRAME for a boxed editor - it is a normal
+		// element in this document and its rect is the visible editor box - and the
+		// mount div in Modern inline mode. See surfaceOf() in editorFrame.js.
+		var surfaceEl = frameApi ? frameApi.frame : mount;
 
 		// CKEditor's editable lived in an iframe, so keystrokes never reached the
 		// admin document. Tiptap edits inline, and Preside's admin hotkeys
@@ -293,8 +316,11 @@ import { t } from "./i18n.js";
 		// Inline: the PAGE is the scroller and the content owns its own size -
 		// height caps and a fixed width belong to the boxed editor only.
 		if ( !isInline ) {
-			if ( minHeight > 0 ) { mount.style.minHeight = minHeight + "px"; }
-			if ( maxHeight > 0 ) { mount.style.maxHeight = maxHeight + "px"; mount.style.overflowY = "auto"; }
+			// The frame is a replaced element and does not grow with its content, so
+			// the height is measured and applied (editorFrame.js). Below maxHeight it
+			// tracks the content; at it, the frame's own document scrolls - which is
+			// what CKEditor's iframe did.
+			frameApi.setHeights( minHeight, maxHeight );
 			if ( cfg.width && cfg.width !== "auto" ) {
 				container.style.width = String( cfg.width ).match( /^\d+$/ ) ? cfg.width + "px" : cfg.width;
 			}
@@ -368,14 +394,14 @@ import { t } from "./i18n.js";
 		// page is the scroller there, so the rail must not scroll away with it.
 		// Opt out per-site/per-field with defaultConfigs.outline = false.
 		if ( outlineEnabled( cfg ) ) {
-			container.appendChild( createOutline( tiptap, mount, { fixed: isInline } ) );
+			container.appendChild( createOutline( tiptap, surfaceEl, { fixed: isInline } ) );
 		}
 
 		// Table bubble toolbar: row/column/cell controls over the table the caret
 		// is in (chrome only - see src/tableTools.js).
 		// Opt out per-site/per-field with defaultConfigs.tableTools = false.
 		if ( tableToolsEnabled( cfg ) ) {
-			createTableTools( tiptap, container, mount );
+			createTableTools( tiptap, container, surfaceEl );
 		}
 
 		// Block drag handle: hover a block to get a grip in the left gutter
@@ -387,14 +413,21 @@ import { t } from "./i18n.js";
 		// site's page flow, where a gutter carved out of the theme's layout is one
 		// overflow:hidden ancestor away from being clipped into invisibility.
 		if ( dragHandleEnabled( cfg ) ) {
-			createDragHandle( tiptap, container, mount, slashMenuEnabled( cfg ), { fixed: isInline } );
+			createDragHandle( tiptap, container, surfaceEl, slashMenuEnabled( cfg ), { fixed: isInline } );
 		}
 
-		// contentsCss / stylesheets: load the app content CSS, scoped to the editor.
+		// contentsCss / stylesheets. The editable gets the sheet UNMODIFIED, in the
+		// frame's own head - that is the fidelity fix (see editorFrame.js). The
+		// transformed/scoped copy is injected into the host head for the
+		// Format/Styles dropdown PREVIEWS only, which are toolbar chrome and cannot
+		// live in the frame.
 		// Not inline: the editable sits in the real page and inherits the site's
 		// CSS directly - injecting the admin-configured content CSS again would
 		// double-apply or fight it.
-		if ( !isInline ) { applyContentStyles( cfg.stylesheets ); }
+		if ( !isInline ) {
+			injectFrameStyles( frameApi.doc, cfg.stylesheets, frameApi.refit );
+			applyContentStyles( cfg.stylesheets );
+		}
 
 		// Teardown registry, run FIRST in destroy() - everything here wrote outside
 		// the container (CSS vars on <html>, body-portalled elements, the inline

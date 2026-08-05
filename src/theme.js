@@ -29,7 +29,19 @@ export function getTheme() {
 // Called for every editor as it mounts, so a stored preference applies without
 // the user having to toggle again.
 export function applyTheme( container, mode ) {
-	container.classList.toggle( DARK_CLASS, ( mode || getTheme() ) === "dark" );
+	const dark = ( mode || getTheme() ) === "dark";
+	container.classList.toggle( DARK_CLASS, dark );
+
+	// The editable lives in an iframe (src/editorFrame.js), and a class on the
+	// container cannot reach into another document - so the frame's own root
+	// carries a copy of the flag. Same reason the `--tt-*` variables are declared
+	// for `.tiptap-editor-doc` as well as the container.
+	const frame = container.querySelector( "iframe.tiptap-editor-frame" );
+	try {
+		if ( frame && frame.contentDocument ) {
+			frame.contentDocument.documentElement.classList.toggle( DARK_CLASS, dark );
+		}
+	} catch ( e ) {}
 }
 
 export function setTheme( mode ) {
