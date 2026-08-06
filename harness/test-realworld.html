@@ -163,8 +163,15 @@
 		     <pre> whose whitespace is significant, an entity, and a Preside token. -->
 		<div class="fixture"><h3>T26 — source view: CKEditor's layout, highlighted, display-only</h3>
 			<textarea name="t26" class="richeditor"
-				data-toolbar="Source,Maximize|Bold"><h1>Title</h1><p>Hello <strong>bold</strong> text</p><ul><li>one</li><li>two</li></ul><pre><code>  keep
+				data-toolbar="Source,Maximize|Bold"><h1>Title</h1><p>Hello <strong>bold</strong> text</p><ul><li>one</li><li>two</li></ul><ol><li>parent<ol><li>child</li></ol></li></ol><pre><code>  keep
    this</code></pre>{{widget:news:{"limit":3}:widget}}<p>two &amp; three</p></textarea>
+		</div>
+		<!-- T28: list normalisation. The <p> ListItem's `paragraph block*` schema puts
+		     in every <li> is an editing artifact, not stored markup - except where
+		     storing it bare would not survive a reload. Its own field, because these
+		     checks setData/getData repeatedly. -->
+		<div class="fixture"><h3>T28 — lists: the schema's &lt;p&gt; in and out of storage</h3>
+			<textarea name="t28" class="richeditor" data-toolbar="Bold|NumberedList,BulletedList"><p>x</p></textarea>
 		</div>
 		<!-- T25: the manual resize grip (CKEditor's `resize` plugin). Three fields:
 		     the default (vertical), one opting out, and one allowing both axes. -->
@@ -1926,6 +1933,31 @@
 				check( "T26 <pre> content is left byte-for-byte alone",
 					text.indexOf( "  keep\n   this" ) > -1, JSON.stringify( text ) );
 
+				// THE VIEW SHOWS THE STORED MARKUP, NOT TIPTAP'S INTERNAL HTML. It used to
+				// build from `tokenize( getHTML() )`, which put the schema's <p> inside
+				// every <li> on screen - a wrapper normalize.js does not persist. The
+				// nested item is the case that made this visible from two directions at
+				// once: its <p> WAS being stored (the bug), and its siblings' were not.
+				check( "T26 no <li> in the source view carries the schema's <p> wrapper",
+					text.indexOf( "<li><p>" ) === -1 && !/<li>\s*\n?\s*<p>/.test( text ), JSON.stringify( text ) );
+				check( "T26 a sublist's parent item shows its text bare, as it is stored",
+					/<li>\s*parent\s*<ol>/.test( text ), JSON.stringify( text ) );
+				// Formatting aside, every byte on screen is a byte getData() would store.
+				// Undo the layout and it must match exactly: the formatter only ever
+				// INSERTS newlines and tabs at block boundaries, and never breaks inline
+				// content across lines, so stripping them all is lossless - EXCEPT inside
+				// <pre>, where whitespace is content. So <pre> is held out, less the one
+				// newline the formatter adds after its open tag (which every HTML parser
+				// drops, and which is why it is allowed to add it at all).
+				var pres  = [];
+				var flat  = text.replace( /<pre[\s\S]*?<\/pre>/g, function( m ) {
+					pres.push( m.replace( /^(<pre[^>]*>)\n/, "$1" ) );
+					return "@@PRE" + ( pres.length - 1 ) + "@@";
+				} );
+				flat = flat.replace( /\n+\t*/g, "" ).replace( /@@PRE(\d+)@@/g, function( _, i ) { return pres[ +i ]; } );
+				check( "T26 the view is the stored markup, formatting aside",
+					flat === original, flat + "\n  !==  \n" + original );
+
 				// The paint layer has to render the SAME characters at the SAME metrics as
 				// the textarea over it, or the highlight slides off the text.
 				check( "T26 the highlight layer paints exactly the text in the textarea",
@@ -2010,6 +2042,56 @@
 					}, 120 );
 				}, 120 );
 			} );
+		}
+
+		// ---- T28: list normalisation ----------------------------------------
+		// ListItem is `paragraph block*`, so ProseMirror wraps every item's text in a
+		// <p> while editing. normalize.js unwraps it on the way out so an existing
+		// CKEditor-authored corpus does not churn - INCLUDING on an item that also
+		// holds a sublist, which the old length test missed. The exception is the
+		// empty wrapper: see the comment on the rule, and the stability check below.
+		function listNormaliseChecks() {
+			var inst = CKEDITOR.instances.t28;
+			function trip( html ) { inst.setData( html ); return inst.getData(); }
+
+			check( "T28 a flat list item stores no <p> wrapper",
+				trip( "<ul><li>one</li><li>two</li></ul>" ) === "<ul><li>one</li><li>two</li></ul>",
+				trip( "<ul><li>one</li><li>two</li></ul>" ) );
+
+			// The reported bug: an item holding a sublist kept its wrapper, because it
+			// has two element children and the rule only unwrapped an only child.
+			var nested = trip( "<ul><li>parent<ul><li>child</li><li>sibling</li></ul></li><li>after</li></ul>" );
+			check( "T28 a sublist's parent item stores its text bare, as CKEditor did",
+				nested === "<ul><li>parent<ul><li>child</li><li>sibling</li></ul></li><li>after</li></ul>", nested );
+			check( "T28 ...and that survives a save/reload cycle unchanged",
+				trip( nested ) === nested, trip( nested ) );
+
+			// Deeper nesting is the same rule applied at each level.
+			var deep = trip( "<ul><li>a<ul><li>b<ol><li>c</li></ol></li></ul></li></ul>" );
+			check( "T28 nesting is unwrapped at every level",
+				deep === "<ul><li>a<ul><li>b<ol><li>c</li></ol></li></ul></li></ul>", deep );
+
+			// THE EMPTY WRAPPER IS DELIBERATELY KEPT. CKEditor stored `<li><ol>…</ol></li>`
+			// for an unlabelled sublist parent, but our parser cannot read that back - a
+			// leading <ol> does not satisfy `paragraph block*`, so the item SPLITS into
+			// two sibling lists and the nesting is lost. Round-trip stability beats byte
+			// fidelity here, so the noise stays. If this ever starts failing because the
+			// parser learned the shape, unwrap it too and delete this note.
+			var bare = trip( "<ol><li><p></p><ol><li>sub</li></ol></li></ol>" );
+			check( "T28 an EMPTY leading wrapper is kept, so the nesting reloads",
+				bare === "<ol><li><p></p><ol><li>sub</li></ol></li></ol>", bare );
+			check( "T28 ...and it is stable across a save/reload cycle",
+				trip( bare ) === bare, trip( bare ) );
+
+			// The wrapper is only ever dropped where it carries nothing: a genuinely
+			// multi-paragraph item keeps both, or its text would run together on one
+			// line, and an attributed <p> is never touched at all.
+			var multi = trip( "<ul><li><p>a</p><p>b</p></li></ul>" );
+			check( "T28 a multi-paragraph item keeps both wrappers",
+				multi === "<ul><li><p>a</p><p>b</p></li></ul>", multi );
+			var classed = trip( '<ul><li><p class="lead">a</p><ul><li>b</li></ul></li></ul>' );
+			check( "T28 an attributed <p> is left wrapped even beside a sublist",
+				classed === '<ul><li><p class="lead">a</p><ul><li>b</li></ul></li></ul>', classed );
 		}
 
 		// ---- T27: an embed's links do not navigate while the editor is open --
@@ -2301,6 +2383,7 @@
 				isolationChecks();
 				specialCharChecks();
 				bidiChecks();
+				listNormaliseChecks();
 				// Both of these end in deferred assertions (the table bubble's, and the
 				// undo-grouping delay), so the summary has to wait rather than render
 				// mid-run.

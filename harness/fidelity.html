@@ -44,6 +44,19 @@
 	var FRAGMENTS = [
 		  { name: "headings + inline", html: '<h2>Title</h2><p>Some <strong>bold</strong>, <em>italic</em>, <u>underline</u>, <s>strike</s> text.</p>' }
 		, { name: "lists", html: '<ul><li>one</li><li>two</li></ul><ol><li>a</li><li>b</li></ol>' }
+		// Nested lists. The first list is the reported bug: ListItem is
+		// `paragraph block*`, so Tiptap wraps the parent item's text in a <p> that
+		// normalize.js's length test used to leave in place, persisting
+		// `<li><p>parent</p><ul>…</ul></li>` where CKEditor stored it bare. It now
+		// matches CKEditor semantically.
+		//
+		// The second list is an UNLABELLED sublist parent, and it is here as a
+		// DOCUMENTED DIVERGENCE rather than a target: CKEditor's `<li><ol>` cannot
+		// satisfy `paragraph block*`, so our parser splits the item into two sibling
+		// lists on the way in and the nesting is lost. That is an input-side
+		// limitation, not something the normaliser can reach - and it is why the
+		// normaliser keeps the empty <p> on the way out (see T28).
+		, { name: "nested lists", html: '<ul><li>parent<ul><li>child</li><li>sibling</li></ul></li><li>after</li></ul><ol><li><ol><li>bare parent</li></ol></li></ol>' }
 		, { name: "link tokens", html: '<p>A <a href="{{link:PAGE-1:link}}">page</a>, an <a href="{{asset:AID:asset}}">asset</a>, and an <a href="https://x.com" target="_blank" rel="nofollow">external</a>.</p>' }
 		, { name: "image token", html: '<p>{{image:%7B%22asset%22%3A%22A1%22%7D:image}}</p>' }
 		, { name: "widget token", html: '<p>{{widget:mywidget:%7B%22n%22%3A2%7D:widget}}</p>' }

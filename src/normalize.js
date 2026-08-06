@@ -6,7 +6,8 @@
  * Handles the *structural* divergences (not cosmetic whitespace, which the browser
  * renders identically):
  *   - unwrap a single attribute-less <p> inside <li>/<td>/<th>/<blockquote>
- *     (StarterKit wraps block content in <p>; CKEditor stores it bare)
+ *     (StarterKit wraps block content in <p>; CKEditor stores it bare), including
+ *     the leading one on a list item that also holds a sublist
  *   - slim Tiptap table markup (drop the table's min-width style and default
  *     colspan/rowspan="1"; keep a <colgroup> ONLY when a column has an explicit
  *     width, since that is what makes a resized column render on the site)
@@ -24,11 +25,42 @@ export function normalizeOutput( html, opts ) {
 	root.innerHTML = html;
 
 	// Unwrap single, attribute-less <p> inside block containers.
+	//
+	// A LIST ITEM HOLDING A SUBLIST COUNTS AS "SINGLE" TOO, and that is not a
+	// loosening of the rule - it is the same rule applied to the shape CKEditor
+	// actually stored. Tiptap gives `<li><p>parent</p><ul>…</ul></li>`, so the item
+	// has two element children and the length test alone left the wrapper in place;
+	// CKEditor stored `<li>parent<ul>…</ul></li>`.
+	//
+	// BUT ONLY WHEN THAT LEADING <p> HAS CONTENT, and this is the one rule here that
+	// is NOT about matching CKEditor - it is about surviving a reload, which beats
+	// byte-fidelity when the two disagree. An unlabelled sublist parent gives
+	// `<li><p></p><ol>…</ol></li>`, whose wrapper really is pure noise and which
+	// CKEditor really did store bare. Store it bare and it does not come back: our
+	// ListItem is `paragraph block*`, so a leading <ol> cannot satisfy it and the
+	// parser SPLITS the item into two sibling lists, losing the nesting. Measured
+	// both ways - `<li>parent<ul>` round-trips stably, `<li><ol>` does not. So the
+	// empty one keeps a wrapper that reloads, and we accept the noise.
+	//
+	// (The same parser divergence means raw CKEditor `<li><ol>` markup is already
+	// restructured on the way IN, before this function ever sees it. That is a
+	// separate, pre-existing input-side issue and cannot be fixed from here.)
+	//
+	// A GENUINELY multi-paragraph item is still left alone: only a LEADING <p> whose
+	// every remaining sibling is a list qualifies, so `<li><p>a</p><p>b</p></li>`
+	// keeps both wrappers and no text is silently run together.
 	root.querySelectorAll( "li, td, th, blockquote" ).forEach( function( el ) {
 		const kids = elementChildren( el );
-		if ( kids.length === 1 && kids[ 0 ].tagName === "P" && kids[ 0 ].attributes.length === 0 ) {
-			unwrap( kids[ 0 ] );
-		}
+		if ( !kids.length ) { return; }
+
+		const first = kids[ 0 ];
+		if ( first.tagName !== "P" || first.attributes.length !== 0 ) { return; }
+
+		const only = kids.length === 1;
+		const leadingInList = el.tagName === "LI" && hasContent( first )
+		                   && kids.slice( 1 ).every( isList );
+
+		if ( only || leadingInList ) { unwrap( first ); }
 	} );
 
 	// Slim tables.
@@ -99,6 +131,14 @@ export function normalizeOutput( html, opts ) {
 
 function isFalse( v ) {
 	return v === false || v === "false" || v === 0;
+}
+
+function isList( el ) {
+	return el.tagName === "UL" || el.tagName === "OL";
+}
+
+function hasContent( el ) {
+	return el.textContent.trim() !== "" || !!el.firstElementChild;
 }
 
 function elementChildren( el ) {

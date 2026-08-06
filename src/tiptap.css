@@ -202,6 +202,36 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .content-editor-editor-container .tiptap-editor-frame{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .content-editor-editor-container .tiptap-editor-mount{max-height:max(240px,calc(100vh - 290px - var(--tt-frontend-offset,0px)))!important}
 .tiptap-editor-mount .ProseMirror a{color:var(--tt-accent);text-decoration:underline}
+/* Neutralise the <p> ProseMirror puts inside every <li>.
+
+   The stored markup does not have it (normalize.js unwraps it, sublists included),
+   but the SCHEMA requires it while editing - ListItem is `paragraph block*`, which
+   is what makes sublists and multi-paragraph items possible at all. So the wrapper
+   exists only in the editable, where the site's content CSS has no reason to expect
+   it: with the `all:revert` wall gone an unstyled field gets the UA's
+   `p{margin:1em 0}` and every list item reads double-spaced against CKEditor, and a
+   styled one can add padding, a background or a border meant for real paragraphs.
+   `display:contents` removes the box entirely rather than just its margins, so all
+   of that goes at once.
+
+   TWO THINGS ARE LOAD-BEARING:
+   - `:only-of-type`. A genuinely multi-paragraph item still stores two <p>s (the
+     normaliser deliberately keeps them), and `display:contents` on both would run
+     their text together on ONE LINE with no break at all. This matches the
+     artifact - one <p>, with or without a sublist beside it - and leaves real
+     multi-paragraph items as the stacked blocks they are.
+   - Everything is in `:where()`, so the whole rule is (0,0,0). It still beats the UA
+     sheet (an author sheet always does, at any specificity) but loses to ANY site
+     rule that sets `display` on that <p>, which is exactly when we should defer.
+     That is the same discipline that keeps `p{margin:0 0 .6em}` out of this file.
+   The `.tiptap-editor-mount` scope is not optional: in Modern inline mode the
+   editable IS the site page and this stylesheet is loaded there, so an unscoped
+   `li>p` rule would restyle the whole theme.
+
+   Legacy rows authored before the normaliser fix still carry the <p> in the DB, and
+   we cannot reach the site's own stylesheet - the same one-liner has to go in the
+   theme for those. Any such row that gets opened and saved comes back clean. */
+:where(.tiptap-editor-mount li)>:where(p:only-of-type){display:contents}
 /* All three embeds are BLOCK nodes in the schema, so their DOM must be
    block-level too - as `inline-block` they shared a line, and two widgets in a row
    sat side by side instead of stacking. `width:fit-content` keeps the shrink-wrap

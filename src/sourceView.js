@@ -41,7 +41,29 @@
  * being reformatted away.
  */
 import { tokenize, detokenize } from "./tokens.js";
+import { normalizeOutput } from "./normalize.js";
 import { containerOf } from "./editorFrame.js";
+
+/**
+ * The markup the view shows and compares against: EXACTLY what getData() would
+ * store, normaliser included.
+ *
+ * It used to be `tokenize( getHTML() )` - Tiptap's INTERNAL html - which is not what
+ * this view claims to show. The visible difference was the schema's <p> inside every
+ * <li>: normalize.js unwraps it, so a flat list is stored bare, but the source view
+ * displayed all of them and made a wrapper that mostly is not persisted look like it
+ * always is.
+ *
+ * Passing the real enterMode/autoParagraph options (rather than only the structural
+ * ones) is safe for the data even though those branches restructure top-level
+ * paragraphs: re-parsing the normalised form on an edited close can change the
+ * DOCUMENT's shape, but each of those branches is a fixed point of getData() - a
+ * br-mode field stores "a<br />b" whether the doc holds two paragraphs or one with a
+ * <br> in it - so the stored bytes come out the same either way. Asserted in T26.
+ */
+function storedHtml( editor ) {
+	return normalizeOutput( tokenize( editor.getHTML() ), editor.__ttNormalize || {} );
+}
 
 // Block-level element names: the ones allowed to start a new line. Anything else is
 // inline and is emitted inside its parent's line, untouched.
@@ -276,7 +298,7 @@ export function toggleSource( editor ) {
 	if ( mount.__srcView ) { closeSource( editor ); return false; }
 
 	const doc  = mount.ownerDocument;
-	const html = tokenize( editor.getHTML() );
+	const html = storedHtml( editor );
 
 	// Reuse the text the user left here if the document has not moved on, so their
 	// own line breaks survive a toggle instead of being reformatted away.
@@ -401,7 +423,7 @@ export function closeSource( editor ) {
 	// stale text is dropped. It can differ from what the doc holds (the parser
 	// straightens up invalid nesting), and that is harmless: closing without a change
 	// writes nothing, so the doc keeps its own version either way.
-	try { editor.__ttSource = { html: tokenize( editor.getHTML() ), text: value }; }
+	try { editor.__ttSource = { html: storedHtml( editor ), text: value }; }
 	catch ( e ) { editor.__ttSource = null; }
 }
 

@@ -1116,6 +1116,57 @@ the rules are exact:
   serialisation contract; the drag itself was verified with a real Playwright
   mouse.
 
+## Lists: the schema's `<p>` inside every `<li>`
+
+Tiptap's `ListItem` is `content: 'paragraph block*'`, so ProseMirror wraps every
+item's text in a `<p>` while editing. CKEditor stored `<li>text</li>`. **The schema
+is not the place to fix that** — `content: 'inline*'`/`'text*'` breaks sublists
+outright and `prosemirror-schema-list`'s split/lift/wrap commands all assume block
+content, so Enter, Tab, Outdent and the drag grip's NodeSelection would each need
+overriding. The wrapper is handled at the two boundaries instead: stripped on the
+way out, and made invisible while editing.
+
+- **`normalize.js` unwraps a leading attribute-less `<p>` when the item's every
+  remaining element sibling is a list**, as well as the only-child case that was
+  always handled. Without the list clause `<li><p>parent</p><ul>…</ul></li>` was
+  persisted — the item has two element children, so the length test alone missed it,
+  and that was the reported bug.
+- **The EMPTY wrapper is deliberately KEPT, and this is the one rule here that is not
+  about matching CKEditor.** An unlabelled sublist parent gives
+  `<li><p></p><ol>…</ol></li>`, and CKEditor genuinely stored that bare — but store
+  it bare and *it does not come back*: a leading `<ol>` cannot satisfy
+  `paragraph block*`, so the parser **splits the item into two sibling lists and the
+  nesting is lost**. Round-trip stability beats byte fidelity when the two disagree,
+  so the noise stays. Measured both ways (T28), which is the only reason we know.
+- **The same parser divergence bites raw CKEditor markup on the way IN**, before the
+  normaliser is ever reached: a legacy `<li><ol>` sublist parent is restructured into
+  two lists on load, so opening and saving such a record changes its shape. That is a
+  pre-existing input-side limitation, unreachable from `normalize.js`, and it is
+  logged as a documented divergence in the fidelity matrix's "nested lists" row
+  rather than papered over. Fixing it means teaching the parser the shape (a schema
+  or `parseHTML` change), at which point the empty wrapper can be unwrapped too.
+- A genuinely multi-paragraph item keeps **both** wrappers, and an attributed `<p>`
+  is never touched — the usual no-silent-loss rule.
+- **The editable neutralises the wrapper with `display:contents`, not `margin:0`**:
+  it removes the box entirely, so padding, backgrounds and borders a content sheet
+  meant for real paragraphs go with the margins. Two things are load-bearing.
+  `:only-of-type` — `display:contents` on a genuinely multi-paragraph item would run
+  its text together on ONE LINE with no break, so the rule matches the artifact
+  (one `<p>`, sublist beside it or not) and leaves real ones stacked. And the whole
+  selector is in `:where()`, i.e. `(0,0,0)` — it beats the UA sheet (an author sheet
+  always does, at any specificity) but loses to any site rule that sets `display` on
+  that `<p>`, the same discipline that keeps `p{margin:0 0 .6em}` out of the file.
+  The `.tiptap-editor-mount` scope is **not optional**: in Modern inline mode the
+  editable IS the site page and this stylesheet is loaded there, so an unscoped
+  `li>p` rule would restyle the whole theme.
+- **Legacy rows still carry the `<p>` in the database** and the extension cannot
+  reach the site's own stylesheet, so the same one-liner has to go in the theme for
+  those. Any such row that gets opened and saved comes back clean.
+
+Tests: **T28** (flat/nested/deep unwrapping, the kept empty wrapper, and a
+save/reload cycle asserted stable for both), the fidelity matrix's **"nested lists"**
+fragment, and **T26**'s source-view assertions.
+
 ## Source view (src/sourceView.js)
 
 The `Source` button shows the stored markup **laid out the way CKEditor's does and
@@ -1123,11 +1174,26 @@ syntax highlighted** — but where CKEditor's readability came from its *output
 writer* (its `getData()` genuinely contains those newlines and tabs), **ours is
 display-only**. That is the whole constraint, and everything here follows from it.
 
+- **What it shows is `getData()`'s output — the STORED markup, normaliser included**
+  (`storedHtml()`). It used to build from `tokenize( getHTML() )`, i.e. Tiptap's
+  *internal* html, which is not what the button claims to show: the visible symptom
+  was the schema's `<p>` inside every `<li>` (see the list section below), a wrapper
+  `normalize.js` mostly does not persist, so the view made a flat list look as though
+  it stored one. The normaliser options come off `editor.__ttNormalize`, stashed by
+  the facade's `CompatInstance` because this module holds only the Tiptap editor and
+  has no other route to the CKEditor-shaped config — **keep the two in step.**
+  Passing the real `enterMode`/`autoParagraph` (not just the structural options) is
+  safe for the data even though those branches restructure top-level paragraphs:
+  each is a **fixed point** of `getData()` (a `br`-mode field stores `a<br />b`
+  whether the doc holds two paragraphs or one with a `<br>` in it), so an edited
+  close can change the document's shape without changing the stored bytes.
 - **The formatter only INSERTS newlines and tabs at block boundaries.** Every other
   byte is emitted from the scanner token's own `raw` text — nothing is
   re-serialised, no attribute rewritten, no quote style normalised. So the formatter
   cannot invent a difference, which is what lets the editor trust the text it gets
   back. `getData()` is unchanged and the fidelity matrix numbers are identical.
+  T26 asserts the inverse directly: strip the inserted newlines/tabs (holding `<pre>`
+  out) and the text is byte-identical to `getData()`.
 - **Closing with the text unchanged does not touch the document at all** — not even a
   `setContent()` with identical html. So open-then-close is a no-op for `getData()`
   *and* for the form's dirty state. (It used to re-parse on every close.)
@@ -1193,7 +1259,8 @@ exactly the textarea's text at identical metrics; token/tag/attr highlighting;
 the rail hidden and restored; the box does not change height; `Tab` inserts a tab;
 **open-then-close is byte-identical**; an edit applies and ONLY the edit, with the
 `{{widget}}` token, `<pre>` whitespace and `&amp;` all surviving; re-open keeps the
-user's layout).
+user's layout; **the text is `getData()`'s markup with the layout undone**, and no
+`<li>` on screen carries the schema's `<p>`).
 
 ## Find / Replace, special characters, text direction
 

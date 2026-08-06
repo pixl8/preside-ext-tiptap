@@ -137,6 +137,15 @@ import { t } from "./i18n.js";
 		this._handlers   = {};
 		this.initialdata = "";
 
+		// The normaliser options, stashed where a module holding only the Tiptap
+		// editor can reach them: the Source view has to render the STORED markup, and
+		// it has no route back to the CKEditor-shaped config otherwise. Keep this in
+		// step with getData() below - the whole point is that the two agree.
+		tiptap.__ttNormalize = {
+			  autoParagraph: this.config.autoParagraph
+			, enterMode    : this.config.enterMode
+		};
+
 		var self = this;
 		tiptap.on( "update", function() {
 			self._sync();
