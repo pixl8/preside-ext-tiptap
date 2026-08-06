@@ -27,12 +27,14 @@
    The dark theme has no admin equivalent (the admin is light-only), so its
    overrides at the bottom of this file are ours - kept as muted versions of the
    same hues. */
-/* The variables are declared for BOTH documents. `.tiptap-editor-doc` is the
-   frame's own <html> (src/editorFrame.js): the editable and the chrome glued to it
-   (embeds, image tools, drag gutter, table bubble) live in there, and a custom
-   property declared on the container cannot cross a document boundary. The
-   container-only properties (border, position) stay below, on the container. */
-.tiptap-editor-container,.tiptap-editor-doc{
+/* The variables are declared for EVERY document that renders our chrome, because a
+   custom property declared on the container cannot cross a document boundary.
+   `.tiptap-editor-doc` is the editing frame's own <html> (src/editorFrame.js),
+   where the editable and the chrome glued to it live (embeds, image tools, drag
+   gutter, table bubble); `.tiptap-combo-doc` is the Format/Styles panel frame's
+   (src/comboPanel.js). The container-only properties (border, position) stay
+   below, on the container. */
+.tiptap-editor-container,.tiptap-editor-doc,.tiptap-combo-doc,.tiptap-combo-panel{
 	--tt-bg:#fff;
 	--tt-fg:#222;
 	--tt-muted:#777;
@@ -116,25 +118,16 @@
    The editable is now in its own document, where the admin's CSS is not present
    at all. Nothing needs walling out, so nothing is.
 
-   The PREVIEWS still need the wall: `.tiptap-fmt-preview` is toolbar chrome in
-   the HOST document (the Format/Styles dropdowns render each item in the real
-   content styles, as CKEditor did), so it sits in the admin's cascade and cannot
-   be moved into the frame. Same `all:revert`, now only where it is both needed
-   and harmless - a preview is decorative. src/presideStyles.js injects a scoped
-   copy of the content CSS for it.
+   THE DROPDOWN PREVIEWS DO NOT NEED A WALL EITHER, for the same reason: they moved
+   into a document of their own too (src/comboPanel.js). They used to be chrome in
+   the HOST document with a scoped, rewritten copy of the content CSS behind an
+   `all:revert` of their own, and that reset was itself the bug - at (0,1,1) it beat
+   any content rule of lower specificity, so a `:where()`d or `@layer`ed rule never
+   reached the preview, while an admin rule at (0,2,2) reached it regardless. An
+   unstyled preview is now raw browser defaults plus the site's own sheet, exactly
+   like an unstyled editable.
 
-   The baseline typography applies ONLY to the previews: an unstyled EDITABLE is
-   deliberately raw browser defaults now, exactly like CKEditor's iframe with no
-   contentsCss - "only the styles we explicitly inject" - so a field's own content
-   stylesheet is the single source of its appearance. */
-.tiptap-fmt-preview,
-.tiptap-fmt-preview *{all:revert}
-.tiptap-fmt-preview{
-	font-family:var(--tt-content-font);
-	font-size:var(--tt-content-size);
-	line-height:var(--tt-content-line);
-	color:var(--tt-content-fg)
-}
+   DO NOT REINTRODUCE `all: revert` ANYWHERE. */
 .tiptap-editor-mount{padding:8px 10px}
 /* prosemirror-view injects its own editable CSS into `view.root`, which for the
    editing frame IS the frame's document - so it now applies normally and there is
@@ -373,9 +366,24 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    report. A flex container has no strut, so every wrapper is exactly its
    trigger's height whatever it contains. */
 .tiptap-dropdown{position:relative;display:inline-flex;align-items:center;margin:0 2px}
-/* Inside a white group block the trigger IS the block, as CKEditor's combo is -
-   so it carries no border of its own (that would draw a second box inside the
-   group's). Text metrics follow .cke_combo_text: 12px, #474747-ish, padded left. */
+/* A COMBO IS ITS OWN BLOCK, NOT A CONTROL INSIDE A GROUP.
+   CKEditor's richCombo constructor sets `canGroup:!1`, so its toolbar renderer
+   CLOSES any open .cke_toolgroup and emits the combo outside it - a combo is never
+   inside a group there. The visible box is .cke_combo_button, whose metrics these
+   mirror: `margin:0 6px 5px 0; border:1px solid #ddd; border-radius:4px`, matching
+   .cke_toolgroup's own `margin:0 6px 3px 0` + same border + same radius. So Styles
+   and Format read as two distinct pills wherever a config puts them, which is the
+   whole point: sharing one group block put them 5px apart with no border between,
+   and they read as a single merged control.
+   Only Format/Styles get this (see COMBO_NAMES) - the Table and Align triggers were
+   plain buttons in CKEditor and stay inside their group. */
+.tiptap-combo{
+	margin:0 6px 3px 0;padding:2px;
+	background:var(--tt-group-bg);border:1px solid var(--tt-border-soft);border-radius:4px
+}
+/* The trigger IS the block's content, so it carries no border of its own (that
+   would draw a second box inside the combo's).
+   Text metrics follow .cke_combo_text: 12px, #474747-ish, padded left. */
 .tiptap-dropdown-trigger{min-width:104px;display:inline-flex;justify-content:space-between;align-items:center;gap:8px;font-size:12px;padding:0 6px 0 8px}
 /* THE CARET IS `tiptap-caret`, NOT `caret`, AND IS DRAWN AS A BORDER TRIANGLE.
    `caret` is a BOOTSTRAP class (and an Ace one): in the admin, bootstrap's own
@@ -391,10 +399,45 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
 .tiptap-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tiptap-dropdown-menu{position:absolute;top:100%;left:0;margin-top:3px;min-width:190px;background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:4px;box-shadow:0 4px 16px var(--tt-menu-shadow);z-index:1200;padding:4px 0;display:none;max-height:360px;overflow:auto}
 .tiptap-dropdown-menu.open{display:block}
+/* THE FORMAT/STYLES PANEL IS AN IFRAME (see src/comboPanel.js): the only way an
+   entry can preview in the site's own content CSS, since that sheet has to arrive
+   byte-unmodified, in a document with its own root, out of reach of the admin's
+   stylesheets. The panel chrome is on this HOST; the list inside the frame reuses
+   .tiptap-dropdown-item / -group, which our own sheet supplies in there too.
+   Body-portalled and `fixed`, like the slash menu and the picker overlays, so a
+   capped-height or overflow:hidden field cannot clip it. It shares the slash
+   menu's rung on the --tt-z-base ladder - never a literal z-index (see the ladder
+   note above). */
+.tiptap-combo-panel{
+	position:fixed;top:0;left:0;display:none;
+	z-index:calc(var(--tt-z-base,1040) + 1060);
+	background:var(--tt-menu-bg);border:1px solid var(--tt-border);border-radius:4px;
+	box-shadow:0 4px 16px var(--tt-menu-shadow);padding:4px 0;overflow:hidden
+}
+.tiptap-combo-panel.is-open{display:block}
+.tiptap-combo-panel>iframe{display:block;border:0;width:190px;height:0;background:transparent}
+/* The frame's own root carries the --tt-* variables (declared for
+   .tiptap-combo-doc alongside the container and the editing frame's root), so the
+   list re-themes with everything else - a class on the host cannot cross the
+   document boundary, which is why comboPanel.syncTheme() sets it on both. */
+.tiptap-combo-list{min-width:190px}
 .tiptap-dropdown-item{padding:5px 14px;cursor:pointer;color:var(--tt-fg);line-height:1.25;white-space:nowrap}
 .tiptap-dropdown-item:hover{background:var(--tt-accent-soft)}
 .tiptap-dropdown-item.active{background:var(--tt-active-bg);color:var(--tt-active-fg)}
 .tiptap-dropdown-empty{color:var(--tt-muted);font-style:italic;cursor:default}
+/* The panel group title (richcombo's startGroup -> .cke_panel_grouptitle), with
+   that skin's own metrics: 11px bold, 6px padding, ruled off from the list. */
+.tiptap-dropdown-group{
+	font-size:11px;font-weight:700;white-space:nowrap;padding:6px 14px;
+	color:var(--tt-muted);background:var(--tt-chrome-bg);
+	border-bottom:1px solid var(--tt-border-soft)
+}
+.tiptap-dropdown-group~.tiptap-dropdown-group{border-top:1px solid var(--tt-border-soft)}
+/* stylescombo's TRISTATE_DISABLED - the combo greys out when no style applies at
+   the caret. .cke_combo_disabled uses opacity:.3 on the label and the arrow. */
+.tiptap-dropdown-trigger:disabled{cursor:default}
+.tiptap-dropdown-trigger:disabled .tiptap-lbl,
+.tiptap-dropdown-trigger:disabled .tiptap-caret{opacity:.3}
 
 /* Block drag handle (src/dragHandle.js). The gutter it sits in is added by the
    .tiptap-has-draghandle class rather than baked into .tiptap-editor-mount, so a
@@ -492,9 +535,15 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    these, so the selection has to be visible. --tt-selected is @lighter-blue. */
 .tiptap-editor-mount .selectedCell{position:relative}
 .tiptap-editor-mount .selectedCell:after{content:"";position:absolute;inset:0;background:var(--tt-selected);opacity:.28;pointer-events:none}
-/* Items render as real h1..h6/p/pre so browser defaults + injected content CSS style them. */
-.tiptap-fmt-preview>*{margin:0;padding:0;border:0;background:none}
-.tiptap-fmt-preview>pre{font-family:ui-monospace,Menlo,monospace;font-size:.9em}
+/* An entry IS a real h1..h6/p/pre/span, styled by the content CSS linked into the
+   panel frame - so the only thing we take off it is the block margin that would
+   otherwise space the list out. That is exactly what CKEditor's skin does, and no
+   more: `.cke_panel_listItem h1,...,p,pre{margin-top:0;margin-bottom:0}`.
+   Deliberately NOT zeroing padding/border/background, and not imposing a monospace
+   font on `pre`: a content sheet's `p.lead{border-left:3px solid}` is part of what
+   the author is being shown, and the whole point of the frame is that the site's
+   sheet wins in here. */
+.tiptap-fmt-preview>*{margin-top:0;margin-bottom:0}
 /* ---- Source view (src/sourceView.js) ----------------------------------------
    A transparent <textarea> over a highlighted <pre>. THE SHARED SELECTOR BELOW IS
    LOAD-BEARING: every property that affects where a glyph lands - family, size,
@@ -749,7 +798,7 @@ html.tiptap-maximized-host,html.tiptap-maximized-host body{overflow:hidden}
    its LIGHT value inside the frame: dark mode drew a dark surface (the container,
    behind a transparent frame) under BLACK content text, with light table borders,
    light embed placeholders and a light selected-cell highlight. */
-.tiptap-editor-container.tiptap-dark,.tiptap-editor-doc.tiptap-dark{
+.tiptap-editor-container.tiptap-dark,.tiptap-editor-doc.tiptap-dark,.tiptap-combo-doc.tiptap-dark,.tiptap-combo-panel.tiptap-dark{
 	--tt-bg:#1f2126;
 	--tt-fg:#e6e6e6;
 	--tt-muted:#9a9a9a;
@@ -885,7 +934,8 @@ body.frontend-editing-modern .content-editor-editor-container.edit-active .conte
 .tiptap-selection-bubble.is-idle{opacity:0;pointer-events:none}
 /* The bubble is one floating pill, so its group carries none of the toolbar's
    block chrome (a white box inside the white bubble). */
-.tiptap-selection-bubble .tiptap-toolbar-group{margin:0;padding:0;background:none;border:0}
+.tiptap-selection-bubble .tiptap-toolbar-group,
+.tiptap-selection-bubble .tiptap-combo{margin:0;padding:0;background:none;border:0}
 .tiptap-selection-bubble .tiptap-btn{height:24px;min-width:24px}
 /* Deliberately LIGHT always (no prefers-color-scheme block): the bubble only
    exists in Modern inline mode, where the editing surface is the site page -

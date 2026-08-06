@@ -56,6 +56,8 @@ preside-ext-tiptap/
     tableTools.js         table chrome: bubble toolbar (row/col/cell ops) over the caret's table
     slashMenu.js          the "/" insert menu (blocks + Preside pickers + widgets by name)
     dragHandle.js         Notion-style block grip: hover -> drag to reorder / click to select
+    comboPanel.js         the Format/Styles dropdown panel: AN IFRAME, so its entry
+                          previews are styled by the site's own unmodified content CSS
     dialog.js             modal dialog shell (head/tabs/body/buttons) IN A SHADOW ROOT
     findReplace.js        Find + Find and Replace (one dialog, two tabs) + the search engine
     specialChar.js        Insert Special Character dialog (grid + previews)
@@ -73,8 +75,8 @@ preside-ext-tiptap/
                           (creation, own-CSS injection, auto-height, surfaceOf())
     editorFocus.js        focusEditable() - take DOM focus BEFORE building a
                           command chain (a Safari-only Tiptap hazard)
-    presideStyles.js      content stylesheets: UNMODIFIED into the frame, plus a
-                          scoped copy for the Format/Styles previews only
+    presideStyles.js      content stylesheets: UNMODIFIED into a frame's head, plus
+                          harvestSelectors() - the Styles dropdown's raw input
     presideLinkSerialization.js  link href <-> {{link|asset|custom}} tokens
     presidePickerModal.js iframe picker + onDialogEvent protocol
     extensions/
@@ -764,12 +766,26 @@ overrides), so the whole tray re-themes with everything else.
   same toolbar config wrap into the same number of rows. The floating chrome (table
   bubble, image bubble, selection bubble) keeps its own larger 24px buttons - those
   are not toolbar rows.
-- **The group is the block, so a dropdown inside one carries no border of its own**
-  (that drew a second box inside the group's). The Format/Styles trigger is
-  otherwise styled to `.cke_combo_text`'s metrics.
+- **A COMBO IS ITS OWN BLOCK; ONLY Format AND Styles ARE COMBOS.**
+  `CKEDITOR.ui.richCombo`'s constructor sets `canGroup:!1`, so the toolbar renderer
+  *closes* any open `.cke_toolgroup` and emits the combo **outside** it — a combo is
+  never inside a group there. `renderNames()` therefore takes the toolbar ROW and
+  opens/closes `.tiptap-toolbar-group` spans as it walks the names (CKEditor's
+  `A ? e||(open) : e&&(close)`), so one pipe-delimited bar can render as several
+  blocks. `.tiptap-combo` carries `.cke_combo_button`'s metrics — same 1px border,
+  4px radius and 6px right margin as a group — which is what puts a visible gap
+  between adjacent dropdowns. Sharing one group block put Styles and Format 5px
+  apart with no border between them, and they read as **one merged control**; that
+  was the reported bug, and the old note here ("a dropdown inside a group carries no
+  border of its own") was a misreading of the skin.
+  **The Table and Align triggers are NOT combos** and stay inside their group:
+  CKEditor had Table as a plain button and alignment as four plain buttons.
+- **A `-` between two combos is DROPPED.** CKEditor only remembers a deferred
+  separator while a group is open (`k = e && t`), so `Styles,-,Format` renders no
+  rule; one between a *group* and a combo does survive, at row level.
 - **The selection bubble reuses `.tiptap-toolbar-group`, and explicitly zeroes the
-  block chrome**: it is one floating pill, and a white bordered box inside a white
-  pill looked like a mistake.
+  block chrome** (`.tiptap-combo` too): it is one floating pill, and a white
+  bordered box inside a white pill looked like a mistake.
 - **A separator only means something BETWEEN two controls.** `tidySeparators()` in
   `toolbar.js` drops the ones that end up leading, trailing or doubled, and it runs
   **after** rendering rather than filtering the name list - because what actually
@@ -811,6 +827,174 @@ uses the `caret`/`lbl` class names, and that **every group in a toolbar row is t
 same height with every button on one top edge** (that toolbar has both custom
 triggers, so it is the case the wrapper bug hit) with a dropdown wrapper exactly its
 trigger's height.
+
+## The Styles and Format dropdowns (CKEditor's two richcombos)
+
+Both are ports of real CKEditor 4 behaviour, and the sources are in the Preside tree
+at `system/assets/ckeditor/ckeditor.js` (minified — grep for `stylescombo`,
+`stylesheetparser`, `checkApplicable`, `CKEDITOR.ui.panel`). **Read them before
+changing any of this**; every rule below is copied, not invented.
+
+Note what Preside's own config does (`Preside-CMS/system/config/Config.cfc`
+`__setupRicheditor()`): it sets **`stylesSet = []`** *and*
+`stylesheetParser_validSelectors`, and removes neither plugin. So `styles.js` is
+never loaded and the Styles combo is fed **exclusively** by `stylesheetparser`
+scraping the editing iframe's stylesheets. Harvesting is the intended behaviour
+here, not a divergence.
+
+### Harvesting (`styleItems()` / `selectorPairs()` in `src/toolbar.js`)
+
+A faithful port of stylesheetparser's `function h`. **The order of operations is the
+whole point:**
+
+```
+join(" ") -> `, > + ~` become spaces -> strip `[attr]` -> strip `#id`
+-> strip `:pseudo`/`::pseudo` -> collapse whitespace -> SPLIT ON SPACE
+```
+
+so every **simple** selector is tested on its own against
+`stylesheetParser_validSelectors` (and *not* matched by
+`stylesheetParser_skipSelectors`, default `/(^body\.|^\.)/i`), and the pair is then
+`token.split(".")` taking `[0]` as the element and **`[1]` as the class — the first
+class only**.
+
+- **Testing the raw `selectorText` instead is what produced the reported junk.**
+  `table.table-ruled tbody tr td` matched on its `table.table-` prefix, and the whole
+  descendant tail became the class name *and* the visible label. Normalised, that
+  selector yields exactly one usable pair. T4 asserts no label contains a space,
+  combinator, pseudo, attribute or `#`, and that the two `table.table-ruled …` rules
+  dedupe to **one** entry.
+- Selectors come from **`harvestSelectors( doc )`** reading the editable's OWN
+  document — the editing frame's sheets for a boxed editor (what
+  `h( editor.document.$, … )` reads), the site page's in Modern inline mode. There is
+  no `fetch()` in this path any more.
+- Three deliberate deviations from upstream, all strictly better: we recurse into
+  `@media`/`@supports` (CKEditor reads only top-level rules, and pushes `undefined`
+  for every non-style rule), we skip non-style rules properly, and **we strip the
+  closing `]`** — CKEditor's `/\[[^\]]*/g` leaves it, so `p.lead[data-x]` became a
+  broken `p.lead]` that deduped separately from the real `p.lead`.
+- Harvested pairs and static `defaultConfigs.stylesSet` entries converge on one
+  shape (`{ name, element, attributes:{ class } }`) before filtering, as CKEditor's
+  `concat` does.
+
+### Applicability — why an entry may not be listed at all
+
+`CKEDITOR.style.prototype.checkApplicable` gates on the style's TYPE, which comes
+from two element tables in the `CKEDITOR.style` constructor
+(`this.type = a.type || ( A[c] ? BLOCK : L[c] ? OBJECT : INLINE )`):
+
+| type | test | our tags |
+|---|---|---|
+| OBJECT | `elementPath.contains( element )` | ul, ol, li, table |
+| BLOCK  | `elementPath.blockLimit.getDtd()[ element ]` | p, h1–h6, pre, div |
+| INLINE | unconditionally `true` | span, small, strong, b, em, i |
+
+`onOpen` then `hideItem`s every inapplicable entry, `hideGroup`s a type group whose
+count is 0, and **`refresh` sets the whole combo `TRISTATE_DISABLED` when nothing
+applies**.
+
+- **That is why CKEditor's Styles button greys out in a paragraph** on a site whose
+  harvested styles are all `table.*`: they are OBJECT styles and need a table in the
+  element path. The entries exist; they are never shown. Reproduced by T3c.
+- **The BLOCK test is about the SCHEMA, not about whether applying would change
+  anything.** `editor.can().setNode()` answers the schema half, but it is false for
+  the block the caret is already in — which hid `p.lead` in every paragraph. So
+  `styleApplicable()` treats an already-active node as applicable too. Same trap as
+  `can().setParagraph()` being false in a paragraph (see the selection bubble).
+- Group order is CKEditor's sort weight, `i + 1000 * ( OBJECT?1 : BLOCK?2 : 3 )` —
+  Object, then Block, then Inline, each preserving harvest order.
+- **The Styles combo's enabled state does not depend on the document alone**, so the
+  facade re-runs `buildToolbar`'s `refresh` on the content stylesheet's `load`: the
+  sheets arrive asynchronously, and without that the combo stayed greyed out until
+  the user happened to cause a transaction.
+
+### Inline styles carry a tag (`src/extensions/presideAttributes.js`)
+
+Preside's default `validSelectors` allows sixteen element prefixes and CKEditor lists
+`small/i/b/em/strong` unconditionally (INLINE), so a Bootstrap-ish site really does
+offer `small.text-muted` / `strong.text-danger`. They used to be dropped, because the
+only class-bearing mark rendered a `<span>`.
+
+- **`strong`/`b` resolve onto StarterKit's `bold`, `em`/`i` onto its `italic`**, via a
+  second `addGlobalAttributes()` entry giving those marks `class`/`style`.
+  Deliberately **not** a new mark parsing `<strong>`/`<em>`: two marks claiming one
+  tag both apply and serialise as `<strong><strong class>`.
+- **`small` is `presideInlineStyle` with a `tag` attribute** (`span`|`small`,
+  allow-listed — `tag` is parsed off the DOM, so anything goes otherwise). Its own
+  `renderHTML` returns `{}` so it never becomes a DOM attribute, which also keeps it
+  out of `HTMLAttributes` — **read it from `mark.attrs`, not `HTMLAttributes`**, or
+  every `<small>` serialises back as a `<span>`.
+- Known, documented collapse: CKEditor could tell `b.x` from `strong.x`; both are
+  `<strong class="x">` here. Not new loss — StarterKit already normalises `<b>`.
+- `dl`/`dt`/`dd` remain **unsupported**: there is no description-list node in the
+  schema at all (`src/index.js` is bare `StarterKit`, which ships none), so there is
+  nothing to apply a class to and the markup could not round-trip.
+- **Toggling a style off unsets the whole mark**, not just the class — CKEditor's
+  `onClick` calls `removeStyle`, which removes the element *and* its class.
+- An UNCLASSED `<strong>`/`<em>`/`<small>` must stay byte-identical
+  (`passthroughAttr` renders nothing when the attribute is null). That is the whole
+  safety argument for touching the schema, and T4b asserts it.
+
+### The panel is an IFRAME (`src/comboPanel.js`)
+
+Both combos register the same panel config —
+`panel:{ css:[ skin editor.css ].concat( config.contentsCss ) }` — and
+`CKEDITOR.ui.panel` does `this.isFramed = this.forceIFrame || this.css.length`, so **a
+non-empty `css` array is what makes the panel an iframe**. `getHolderElement()` writes
+`buildStyleHtml( this.css )` (one `<link>` per URL) into it, and each entry goes in as
+`style.buildPreview()` — a literal `<h1>Heading 1</h1>`. So the preview is a real
+element styled by the **byte-unmodified** site sheet, in a document with its own 16px
+root. That is the only way to get it; see "Nothing transforms content CSS any more".
+
+- Items must be created with **`panel.doc`**, never the host `document`.
+- **Built lazily, on first open**, as CKEditor's is (`createPanel()` runs from the
+  click handler and calls the combo's `init()`). It matters more here: an admin form
+  can carry several richeditor fields, so eager creation meant an iframe and a
+  stylesheet fetch per combo per field, mostly for panels never opened.
+- Body-portalled and `fixed`, on the slash menu's `--tt-z-base` rung, so a
+  capped-height or `overflow:hidden` field cannot clip it. **It renders before it
+  positions** — the height is measured from the content (a frame is a replaced
+  element), so an empty box sizes and places wrong.
+- **Being body-portalled and `fixed` costs three things a plain absolutely-positioned
+  menu got for free.** All three shipped broken once; T4c covers them.
+  1. **The `--tt-*` variables do not reach it**, because the host is outside
+     `.tiptap-editor-container` entirely — so `background:var(--tt-menu-bg)` resolved
+     to nothing and the panel rendered **fully transparent** over the page, with no
+     border or shadow either. The variables are now declared for
+     `.tiptap-combo-panel` too (the slash menu solves the same problem the other
+     way, with literal colours).
+  2. **`fixed` + placed once from the trigger's rect means it does not move.** It hung
+     in space while the admin form scrolled away underneath it. It now re-places on
+     capture-phase `scroll` (scroll does not bubble, so capture is what sees a scroll
+     in any host scroller) plus `resize`, rAF-throttled, and **closes** once the
+     trigger leaves the viewport rather than pointing at a control nobody can see.
+  3. **A mousedown in the editable never reaches the host document**, because the
+     editable is in the editing frame — so clicking back into the content left the
+     panel open on top of it. The close-on-outside-click listener is bound to the
+     host document **and** `editor.view.dom.ownerDocument`. `popoverDocs()` in
+     `toolbar.js` does the same for the Align and Table pickers, which are still
+     host-document menus and had the identical defect.
+- The `--tt-*` variables are declared for **`.tiptap-combo-doc`** as well as the
+  container and the editing frame's root, and `syncTheme()` sets `tiptap-dark` on the
+  host *and* the frame root — a class on the host cannot cross a document boundary.
+- In **Modern inline mode** the panel links the **site page's own** stylesheets: there
+  is no editing frame and the facade injects no content CSS, because the editable IS
+  the page. CKEditor had no inline mode, so there is nothing upstream to copy.
+- The panel is removed in the editor's `destroy`. Modern destroys and recreates the
+  editor on every save, so a leak here would be one `<body>` iframe per cycle — the
+  same class of bug T18 covers for the slash menu.
+- Only the block margin is taken off an entry (`.tiptap-fmt-preview>*`), matching the
+  skin's `.cke_panel_listItem h1,…{margin-top:0;margin-bottom:0}` and no more: a
+  content sheet's `p.lead{border-left:…}` is part of what the author is being shown.
+
+Tests: **T3/T4** (harvest correctness and the absence assertions, the panel being a
+frame with the sheet linked unmodified, and no content CSS in the admin document —
+the `@layer` leak regression), **T3b** (both combos as their own blocks, the dropped
+separator, the 6px gap), **T3c** (disabled in a paragraph on an object-only sheet,
+enabled inside a table), **T4b** (the inline tags: appearance, round-trip per tag, the
+`<b>`→`<strong>` collapse, no churn on unclassed marks, and removeStyle semantics).
+`harness/content-sample.css` carries the Bootstrap-shaped selectors plus a `:where()`
+rule and an `@layer` block — the shapes the old preview path provably could not style.
 
 ## Alignment dropdown
 
@@ -1246,7 +1430,9 @@ CKEditor's iframe with no `contentsCss` was; the editor imposes no content
 typography of its own (`p{margin:0 0 .6em}` went too — at `(0,2,1)` it had been
 beating sites' own `p` margins, including on the real page in Modern mode).
 
-Do not reintroduce an `all: revert` anywhere in the editable's cascade.
+Do not reintroduce an `all: revert` anywhere. There is none left in the codebase:
+the dropdown previews carried the last one, and they moved into a frame of their own
+too (see "Nothing transforms content CSS any more").
 
 ### The rules
 
@@ -1316,15 +1502,34 @@ Do not reintroduce an `all: revert` anywhere in the editable's cascade.
   must inherit the theme, and `rem`/`vw` already resolve against the site's own
   root and viewport. It is correct by construction.
 
-### What still transforms content CSS
+### Nothing transforms content CSS any more
 
-`applyContentStyles()` keeps the scope/rewrite/rem-rebase path for **one**
-consumer: the Format/Styles dropdown previews (`.tiptap-fmt-preview`), which are
-toolbar chrome in the host document and cannot move into the frame. They keep an
-`all: revert` of their own — needed there, and harmless, because a preview is
-decorative. The old "inject the sheet **unscoped** on fetch failure" fallback is
-gone: it dumped a whole site stylesheet into the admin's own `<head>`, and the
-editable no longer depends on that path succeeding.
+There used to be a second, scope/rewrite/rem-rebase path here for the Format/Styles
+dropdown previews, which were chrome in the host document. **It is gone, along with
+the last `all: revert` in the codebase, because the previews moved into a frame of
+their own too** (`src/comboPanel.js`, below). Do not reintroduce either.
+
+It could not have been made to work by patching:
+
+- **The admin's own stylesheet reached the preview.** It sat inside
+  `.tiptap-editor-container` in the admin's document, so a rule like
+  `body main .tiptap-editor-container p{text-transform:uppercase}` — (0,2,2), and
+  T19's head plants exactly that — simply won. Same fight the editable lost before
+  it moved into a frame.
+- **`.tiptap-fmt-preview *{all:revert}` was itself the bug.** At (0,1,1) it beat any
+  content rule of lower specificity, so a `:where()`d rule never reached the
+  preview; anything in an `@layer` loses to unlayered CSS at *any* specificity.
+- **`serialiseRules` had no branch for `@layer`/`@container`/`@scope`** (no legacy
+  numeric rule type), so those blocks fell through to `out += rule.cssText` and were
+  emitted **unscoped into the admin's own `<head>`** — no preview styling *and* a
+  leak that restyled the admin UI.
+- `remBase()` *guessed* the rem base from the sheet's own `:root` rule, `em` chained
+  off the admin's 10px root, `vw`/media/container queries resolved against the admin
+  viewport, and the whole path needed a same-origin `fetch()` to succeed where a
+  `<link>` does not.
+
+`presideStyles.js` now does two things only: `injectFrameStyles()` (an unmodified
+`<link>` per URL, into whichever frame asked) and `harvestSelectors( doc )`.
 
 Tests: `harness/test-realworld.html` **T19** asserts the boundary itself, that an
 admin `!important` and a higher-specificity admin rule do **not** reach the
@@ -1544,8 +1749,8 @@ refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
 - **The container is kept, chrome-less** (`.tiptap-inline`): it still carries the
   `--tt-*` variables, `position:relative`, and the key-isolation boundary that
   the table bubble / drag handle / maximize all need. No toolbar/footer, no
-  height caps, no `applyContentStyles()` (the editable IS the site page and
-  inherits its CSS). The **outline navigator stays**, in its `fixed` variant
+  height caps, and no content CSS injected (the editable IS the site page and
+  inherits its own). The **outline navigator stays**, in its `fixed` variant
   (`outline.js` `opts.fixed`): pinned to the viewport's right edge (`.is-fixed`,
   `--tt-z-base + 40` rung) with capacity measured from the viewport instead of
   the editable — the page is the scroller inline, so an editable-centred rail

@@ -51,6 +51,14 @@
 		, { name: "table", html: '<table><tbody><tr><th>h1</th><th>h2</th></tr><tr><td>a</td><td>b</td></tr></tbody></table>' }
 		, { name: "nested inline", html: '<p>text <strong>bold <em>and italic</em></strong> end</p>' }
 		, { name: "empty paragraphs", html: '<p>one</p><p></p><p>two</p>' }
+		// Class-bearing inline MARKS - the shapes a `small.text-muted` /
+		// `strong.text-danger` style from the Styles dropdown produces. `class` on
+		// bold/italic comes from presideAttributes' second addGlobalAttributes entry,
+		// and <small> from presideInlineStyle's `tag` attribute. Here to keep the
+		// no-churn guarantee honest: these are the only shapes §5 changed, and an
+		// UNCLASSED <strong>/<em>/<small> has to stay byte-identical (see "headings +
+		// inline" above, which carries the plain forms).
+		, { name: "classed inline marks", html: '<p><small class="text-muted">muted</small>, <strong class="text-danger">danger</strong>, <em class="subtle">subtle</em>, and a plain <small>small</small>.</p>' }
 	];
 
 	function ready( win ) { try { return win && win.CKEDITOR && win.CKEDITOR.instances && win.CKEDITOR.instances.content; } catch ( e ) { return null; } }

@@ -84,6 +84,28 @@
 				data-stylesheets="/content-sample.css"><p>three</p><table><tr><td>x</td></tr></table></textarea>
 		</div>
 
+		<!-- T3b: the two combos SIDE BY SIDE in one group, and a `-` between them.
+		     Untested before, and it is the case the reported "no gap between Styles
+		     and Format" bug lived in: as controls inside one group block they sat 5px
+		     apart with no border between and read as a single merged control. Each is
+		     canGroup:false in CKEditor, so each must render as its own block - and the
+		     separator between two combos is DROPPED (CKEditor's `k = e && t`). -->
+		<div class="fixture"><h3>T3b — Styles + Format adjacent (combo blocks, dropped separator)</h3>
+			<textarea name="t3b" class="richeditor"
+				data-toolbar="Bold,Italic|Styles,-,Format|Undo"
+				data-stylesheets="/content-sample.css"><p>three-b</p></textarea>
+		</div>
+
+		<!-- T3c: a sheet whose ONLY harvested styles are `table.*` - i.e. all OBJECT
+		     styles. In a paragraph none of them is applicable, so stylescombo's
+		     `refresh` disables the whole combo. This is exactly the reported
+		     screenshot: CKEditor's Styles button greyed out in a paragraph. -->
+		<div class="fixture"><h3>T3c — object-only stylesheet → Styles disabled in a paragraph</h3>
+			<textarea name="t3c" class="richeditor"
+				data-toolbar="Bold|Styles"
+				data-stylesheets="/content-tables-only.css"><p>three-c</p><table><tr><td>y</td></tr></table></textarea>
+		</div>
+
 		<!-- T5: site-provided custom CKEditor config file (the
 		     settings.ckeditor.defaults.configFile / per-field customConfig contract).
 		     custom-config-fixture.js mirrors the stock core file's plugin boilerplate
@@ -378,15 +400,63 @@
 				offRow.length === 0, offRow.join( ", " ) );
 			check( "T2 every button in a row shares one top edge",
 				offTop.length === 0, offTop.join( ", " ) );
-			// ...and the wrapper adds nothing of its own around either custom trigger.
+			// ...and a dropdown wrapper that sits INSIDE a group (the Align and Table
+			// pickers - both plain buttons in CKEditor, so both stay grouped) adds
+			// nothing of its own around its trigger. This is the flex-vs-inline-block
+			// bug: as an inline-block the wrapper opened an inline formatting context
+			// and a trigger holding only boxes got a synthesized baseline, making those
+			// two groups a pixel taller than every other block in the tray.
+			// A Format/Styles combo is deliberately EXCLUDED: it is canGroup:false, so
+			// it is its own block and legitimately carries that block's border+padding.
 			var wrapBad = [];
-			$( ".tiptap-editor-container .tiptap-dropdown" ).each( function() {
+			$( ".tiptap-editor-container .tiptap-dropdown" ).not( ".tiptap-combo" ).each( function() {
 				var t = this.querySelector( ".tiptap-btn" );
 				if ( t && Math.round( this.getBoundingClientRect().height ) !== Math.round( t.getBoundingClientRect().height ) ) {
 					wrapBad.push( this.className + " " + this.getBoundingClientRect().height );
 				}
 			} );
-			check( "T2 a dropdown wrapper is exactly its trigger's height", wrapBad.length === 0, wrapBad.join( ", " ) );
+			check( "T2 a grouped dropdown wrapper is exactly its trigger's height", wrapBad.length === 0, wrapBad.join( ", " ) );
+
+			// ---- Combos are their own blocks (CKEditor's canGroup:false) ---------
+			// T3b's toolbar is `Bold,Italic|Styles,-,Format|Undo`, so it must render
+			// FOUR top-level blocks: a group, two standalone combos, a group.
+			var $row3b = toolbarOf( "t3b" );
+			var kinds  = $row3b.children().map( function() {
+				return this.classList.contains( "tiptap-combo" ) ? "combo"
+					: this.classList.contains( "tiptap-toolbar-group" ) ? "group"
+					: this.classList.contains( "tiptap-toolbar-sep" ) ? "sep" : this.className;
+			} ).get();
+			check( "T3b Styles and Format each render as their own block, outside any group",
+				kinds.join( "," ) === "group,combo,combo,group", kinds.join( "," ) );
+			// `k = e && t`: CKEditor only remembers a deferred separator while a group is
+			// open, so one between two combos is discarded.
+			check( "T3b the `-` between two combos is dropped",
+				$row3b.children( ".tiptap-toolbar-sep" ).length === 0 );
+			// The gap is real, and it is CKEditor's: .cke_combo_button's `margin:0 6px..`
+			// matching .cke_toolgroup's. Sharing one group block put them 5px apart with
+			// no border between - the reported "no separator gap" bug.
+			var $combos = $row3b.children( ".tiptap-combo" );
+			var gap = Math.round( $combos.eq( 1 ).offset().left - ( $combos.eq( 0 ).offset().left + $combos.eq( 0 ).outerWidth() ) );
+			check( "T3b the two combo blocks are visibly separated (6px, as CKEditor's are)",
+				gap >= 5 && gap <= 7, "gap=" + gap );
+
+			// ---- The combo greys out when no style applies (stylescombo `refresh`) --
+			// T3c's sheet harvests ONLY `table.*`, i.e. all OBJECT styles, so in a
+			// paragraph none is applicable. This is the reported screenshot.
+			var $t3c = toolbarOf( "t3c" ).find( '.tiptap-dropdown-trigger[data-cmd="Styles"]' );
+			check( "T3c Styles is disabled in a paragraph when only object styles exist",
+				$t3c.prop( "disabled" ) === true );
+			( function() {
+				var tip = CKEDITOR.instances.t3c._t, pos = null;
+				tip.state.doc.descendants( function( n, p ) {
+					if ( n.type.name === "tableCell" && pos === null ) { pos = p + 1; }
+				} );
+				tip.commands.focus();
+				tip.commands.setTextSelection( pos + 1 );
+				check( "T3c ...and enables again with the caret inside a table",
+					$t3c.prop( "disabled" ) === false );
+				tip.commands.setTextSelection( 1 );
+			} )();
 		} )();
 
 		// ---- T5: custom config file ---------------------------------------
@@ -2017,31 +2087,225 @@
 			} );
 		}
 
-		// ---- T3/T4: Styles dropdown (async - content CSS loads via fetch) --
-		function stylesMenuItems() {
-			var $tb = toolbarOf( "t3" );
-			$tb.find( ".tiptap-dropdown-trigger" ).trigger( "click" ); // build lazily
-			var items = $tb.find( ".tiptap-dropdown-menu .tiptap-fmt-preview" )
-				.map( function() { return $( this ).text(); } ).get();
-			$tb.find( ".tiptap-dropdown-trigger" ).trigger( "click" ); // close again
+		// Set by the T4c block below; needs two real scrolls and the rAF-throttled
+		// reposition between them, so it runs with the other deferred suites.
+		var comboScrollCheck = function() { return Promise.resolve(); };
+
+		// ---- T3/T4: Styles dropdown (async - the content CSS <link> loads in the
+		//      editing frame, and the entries are harvested from it) -----------
+		// The list lives in the PANEL IFRAME now (src/comboPanel.js), so it has to be
+		// read out of that document - `.tiptap-dropdown-menu` no longer exists in the
+		// host page at all.
+		function stylesPanelDoc( name ) {
+			var $tb = toolbarOf( name || "t3" );
+			var $tr = $tb.find( '.tiptap-dropdown-trigger[data-cmd="Styles"]' );
+			if ( $tr.prop( "disabled" ) ) { return null; }
+			$tr.trigger( "click" );                       // builds the panel lazily
+			var host = document.querySelector( ".tiptap-combo-panel.is-open" );
+			var doc  = host && host.querySelector( "iframe" ).contentDocument;
+			return { doc: doc, close: function() { $tr.trigger( "click" ); } };
+		}
+		function stylesMenuItems( name ) {
+			var p = stylesPanelDoc( name );
+			if ( !p || !p.doc ) { return []; }
+			var items = [].slice.call( p.doc.querySelectorAll( ".tiptap-fmt-preview" ) )
+				.map( function( el ) { return el.textContent; } );
+			p.close();
+			return items;
+		}
+		// `table.compact` is an OBJECT style, so it is only APPLICABLE - and therefore
+		// only listed - with the caret inside a table (CKEditor's checkApplicable:
+		// `path.contains( element )`). t3's content carries one.
+		function stylesMenuItemsInTable() {
+			var tip = CKEDITOR.instances.t3._t, pos = null;
+			tip.state.doc.descendants( function( n, p ) {
+				if ( n.type.name === "tableCell" && pos === null ) { pos = p + 1; }
+			} );
+			tip.commands.focus();
+			tip.commands.setTextSelection( pos + 1 );
+			var items = stylesMenuItems( "t3" );
+			tip.commands.setTextSelection( 1 );   // back to the paragraph
 			return items;
 		}
 		var tries = 0;
 		( function pollStyles() {
 			var items = stylesMenuItems();
-			var hasStylesSet = items.indexOf( "table.compact" ) > -1;
 			var hasHarvested = items.indexOf( "p.lead" ) > -1;
-			if ( ( hasStylesSet && hasHarvested ) || ++tries > 40 ) {
-				check( "T3 stylesSet append appears in Styles dropdown (table.compact)", hasStylesSet, JSON.stringify( items ) );
+			if ( hasHarvested || ++tries > 40 ) {
+				var inTable = hasHarvested ? stylesMenuItemsInTable() : [];
+				check( "T3 stylesSet append appears in Styles dropdown (table.compact, caret in a table)",
+					inTable.indexOf( "table.compact" ) > -1, JSON.stringify( inTable ) );
 				check( "T4 stylesheet-harvested selector appears (p.lead from /content-sample.css)", hasHarvested, JSON.stringify( items ) );
-				check( "T4 scoped content CSS injected (no admin bleed)", !!document.querySelector( 'style[data-preside-content-css="/content-sample.css"]' ) );
+
+				// ---- The harvest is CKEditor's stylesheetparser algorithm ----------
+				// Every one of these comes from a DESCENDANT selector in
+				// content-sample.css whose first simple selector is `element.class`.
+				// Before the port, the raw selectorText was tested and the whole
+				// descendant tail became the class name AND the visible label - the
+				// reported `table.table-striped tbody tr:nth-child(2n)` entries.
+				var junk = items.concat( inTable ).filter( function( n ) {
+					return /[\s>+~:\[\]#]/.test( n );
+				} );
+				check( "T4 no entry label carries a combinator, pseudo, attribute or space",
+					junk.length === 0, JSON.stringify( junk ) );
+				var ruled = inTable.filter( function( n ) { return n === "table.table-ruled"; } );
+				check( "T4 two `table.table-ruled ...` selectors dedupe to ONE entry",
+					ruled.length === 1, JSON.stringify( inTable ) );
+				check( "T4 descendant tails are dropped (table.table-striped, not the whole selector)",
+					inTable.indexOf( "table.table-striped" ) > -1, JSON.stringify( inTable ) );
+				check( "T4 stylesheetParser_skipSelectors drops `.btn-primary` and `body.home p`",
+					items.indexOf( "body.home" ) === -1 && !items.some( function( n ) { return /btn-primary/.test( n ); } ),
+					JSON.stringify( items ) );
+				// CKEditor's own strip regex leaves a stray `]`, giving a broken
+				// `p.lead]` that dedupes separately from the real `p.lead`.
+				check( "T4 an attribute selector does not produce a second, broken entry",
+					items.filter( function( n ) { return /^p\.lead/.test( n ); } ).length === 1, JSON.stringify( items ) );
+
+				// ---- The panel is a frame with the sheet UNMODIFIED ----------------
+				// This is what makes an entry preview in the site's own typography, and
+				// it is why the scoped/rewritten copy that used to be injected into the
+				// ADMIN's head is gone. Both halves are asserted: the link is there, and
+				// nothing landed in the host document.
+				var pd = stylesPanelDoc( "t3" );
+				var panelLinks = pd && pd.doc
+					? [].slice.call( pd.doc.querySelectorAll( "link[rel=stylesheet]" ) ).map( function( l ) { return l.getAttribute( "href" ); } )
+					: [];
+				check( "T4 the Styles panel is an IFRAME with the content sheet linked unmodified",
+					panelLinks.indexOf( "/content-sample.css" ) > -1, JSON.stringify( panelLinks ) );
+				// The `@layer` block in the fixture sheet is the specific regression: the
+				// old serialiser had no branch for it (no legacy numeric rule type), so it
+				// was emitted UNSCOPED into the admin's own <head>, restyling the admin.
+				check( "T4 no content CSS is injected into the admin document (no @layer leak)",
+					document.querySelectorAll( 'style[data-preside-content-css]' ).length === 0
+					&& !document.querySelector( 'head link[href*="content-sample.css"]' ) );
+				if ( pd ) { pd.close(); }
+
+				// ---- T4c: the panel is a body-portalled FIXED frame, so three things a
+				//      plain absolutely-positioned menu got for free have to be done by
+				//      hand here. All three were reported bugs.
+				( function() {
+					var $tr = toolbarOf( "t3b" ).find( '.tiptap-dropdown-trigger[data-cmd="Format"]' );
+					var trig = $tr[ 0 ];
+					trig.scrollIntoView( { block: "center" } );
+					$tr.trigger( "click" );
+					var host = document.querySelector( ".tiptap-combo-panel.is-open" );
+					if ( !host ) { check( "T4c panel opens", false ); return; }
+
+					// 1. IT MUST BE OPAQUE. The host is portalled to <body>, i.e. OUTSIDE
+					//    .tiptap-editor-container - so `background:var(--tt-menu-bg)`
+					//    resolved to nothing and the panel rendered fully TRANSPARENT over
+					//    the page. The variables are now declared for the host too.
+					var cs = getComputedStyle( host );
+					check( "T4c the panel is opaque (--tt-* reach the body-portalled host)",
+						cs.backgroundColor === "rgb(255, 255, 255)" && cs.borderTopWidth === "1px",
+						cs.backgroundColor + " / border " + cs.borderTopWidth );
+
+					// 3. A CLICK IN THE EDITABLE MUST CLOSE IT. The editable is in the
+					//    editing IFRAME, so a mousedown there never reaches the host
+					//    document - a host-only listener left the panel open over the very
+					//    content the user had just clicked into.
+					var fd = CKEDITOR.instances.t3b._t.view.dom.ownerDocument;
+					var target = fd.querySelector( ".ProseMirror p" ) || fd.querySelector( ".ProseMirror" );
+					target.dispatchEvent( new fd.defaultView.MouseEvent( "mousedown", { bubbles: true, cancelable: true } ) );
+					check( "T4c a mousedown in the editable (inside the frame) closes the panel",
+						!document.querySelector( ".tiptap-combo-panel.is-open" ) );
+
+					// 2. IT MUST FOLLOW THE TRIGGER ON SCROLL. `fixed` + placed once from
+					//    the trigger's viewport rect meant it hung in space while the admin
+					//    form scrolled away underneath it. Deferred, since it needs two
+					//    real scrolls and the rAF-throttled reposition between them.
+					comboScrollCheck = function() { return new Promise( function( resolve ) {
+						trig.scrollIntoView( { block: "center" } );
+						$tr.trigger( "click" );
+						var h = document.querySelector( ".tiptap-combo-panel.is-open" );
+						if ( !h ) { resolve(); return; }
+						var t0 = trig.getBoundingClientRect().top, p0 = h.getBoundingClientRect().top;
+						var y0 = window.scrollY;
+						window.scrollBy( 0, 150 );
+						setTimeout( function() {
+							var t1 = trig.getBoundingClientRect().top, p1 = h.getBoundingClientRect().top;
+							check( "T4c the panel follows its trigger when the page scrolls",
+								Math.abs( ( t1 - t0 ) - ( p1 - p0 ) ) <= 2,
+								"trigger " + Math.round( t1 - t0 ) + " vs panel " + Math.round( p1 - p0 ) );
+							// ...and gives up rather than pointing at a control off screen.
+							window.scrollBy( 0, 4000 );
+							setTimeout( function() {
+								check( "T4c ...and closes once the trigger is scrolled out of view",
+									!document.querySelector( ".tiptap-combo-panel.is-open" ) );
+								window.scrollTo( 0, y0 );
+								resolve();
+							}, 240 );
+						}, 240 );
+					} ); };
+				} )();
+
+				// ---- T4b: tag-aware INLINE styles -----------------------------------
+				// Preside's default validSelectors allows sixteen element prefixes, and
+				// CKEditor lists small/i/b/em/strong unconditionally (they are INLINE, so
+				// checkApplicable returns true) - on a Bootstrap-ish site that really is
+				// `small.text-muted`, `strong.text-danger`. They used to be dropped here,
+				// because the only class-bearing mark rendered a <span>.
+				( function() {
+					var inlineWanted = [ "small.text-muted", "strong.text-danger", "em.subtle", "span.hl" ];
+					var missing = inlineWanted.filter( function( n ) { return items.indexOf( n ) === -1; } );
+					check( "T4b inline styles on small/strong/em/span all appear", missing.length === 0, JSON.stringify( missing ) );
+
+					var tip = CKEDITOR.instances.t3._t;
+					var orig = tip.getHTML();
+
+					function roundTrips( html ) { tip.commands.setContent( html ); return tip.getHTML() === html; }
+
+					check( "T4b <small class> round-trips as <small>, not a span",
+						roundTrips( '<p><small class="text-muted">m</small></p>' ) );
+					check( "T4b <strong class> round-trips",  roundTrips( '<p><strong class="text-danger">d</strong></p>' ) );
+					check( "T4b <em class> round-trips",      roundTrips( '<p><em class="subtle">s</em></p>' ) );
+					check( "T4b <span class> round-trips",    roundTrips( '<p><span class="hl">h</span></p>' ) );
+					// THE SAFETY ARGUMENT for touching the schema: a field that never
+					// applies an inline style must serialise byte-identically to before.
+					// passthroughAttr renders nothing when the attribute is null.
+					check( "T4b an UNCLASSED strong/em/small is byte-identical (no churn)",
+						roundTrips( '<p><strong>a</strong> <em>b</em> <small>c</small></p>' ) );
+					// Known, documented collapse: StarterKit already normalises b -> strong
+					// and i -> em, so CKEditor's `b.x` vs `strong.x` distinction is lost.
+					tip.commands.setContent( '<p><b class="text-danger">b</b></p>' );
+					check( "T4b <b class> becomes <strong class> (the documented collapse)",
+						tip.getHTML() === '<p><strong class="text-danger">b</strong></p>', tip.getHTML() );
+
+					// Applying, and CKEditor's removeStyle semantics: toggling a style off
+					// takes the ELEMENT off, not just its class.
+					tip.commands.setContent( "<p>hello world</p>" );
+					tip.commands.focus();
+					tip.commands.setTextSelection( { from: 1, to: 6 } );
+					var $tr = toolbarOf( "t3" ).find( '.tiptap-dropdown-trigger[data-cmd="Styles"]' );
+					function clickStyle( label ) {
+						$tr.trigger( "click" );
+						var fd = document.querySelector( ".tiptap-combo-panel.is-open iframe" ).contentDocument;
+						var it = [].slice.call( fd.querySelectorAll( ".tiptap-fmt-preview" ) ).filter( function( e ) { return e.textContent === label; } )[ 0 ];
+						if ( !it ) { $tr.trigger( "click" ); return null; }
+						it.dispatchEvent( new fd.defaultView.MouseEvent( "mousedown", { bubbles: true, cancelable: true } ) );
+						return tip.getHTML();
+					}
+					check( "T4b applying small.text-muted wraps the selection in <small class>",
+						clickStyle( "small.text-muted" ) === '<p><small class="text-muted">hello</small> world</p>', tip.getHTML() );
+					tip.commands.focus(); tip.commands.setTextSelection( { from: 1, to: 6 } );
+					clickStyle( "strong.text-danger" );
+					check( "T4b ...and strong.text-danger nests on top of it",
+						/<strong class="text-danger">/.test( tip.getHTML() ), tip.getHTML() );
+					tip.commands.focus(); tip.commands.setTextSelection( { from: 1, to: 6 } );
+					clickStyle( "strong.text-danger" );
+					check( "T4b toggling it off removes the <strong> as well as the class (removeStyle)",
+						tip.getHTML() === '<p><small class="text-muted">hello</small> world</p>', tip.getHTML() );
+
+					tip.commands.setContent( orig );
+				} )();
 				isolationChecks();
 				specialCharChecks();
 				bidiChecks();
 				// Both of these end in deferred assertions (the table bubble's, and the
 				// undo-grouping delay), so the summary has to wait rather than render
 				// mid-run.
-				Promise.resolve( findReplaceChecks() )
+				Promise.resolve( comboScrollCheck() )
+					.then( findReplaceChecks, findReplaceChecks )
 					.then( attachmentLinkChecks, attachmentLinkChecks )
 					.then( sourceChecks, sourceChecks )
 					.then( resizeChecks, resizeChecks )

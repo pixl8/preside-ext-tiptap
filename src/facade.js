@@ -17,7 +17,7 @@
  */
 import { buildToolbar } from "./toolbar.js";
 import { tokenize, detokenize } from "./tokens.js";
-import { applyContentStyles, injectFrameStyles } from "./presideStyles.js";
+import { injectFrameStyles } from "./presideStyles.js";
 import { normalizeOutput } from "./normalize.js";
 import { createPasteTransform } from "./pasteFilter.js";
 import { getCustomConfig, prefetchCustomConfig } from "./customConfig.js";
@@ -468,17 +468,21 @@ import { t } from "./i18n.js";
 			createDragHandle( tiptap, container, surfaceEl, slashMenuEnabled( cfg ), { fixed: isInline } );
 		}
 
-		// contentsCss / stylesheets. The editable gets the sheet UNMODIFIED, in the
-		// frame's own head - that is the fidelity fix (see editorFrame.js). The
-		// transformed/scoped copy is injected into the host head for the
-		// Format/Styles dropdown PREVIEWS only, which are toolbar chrome and cannot
-		// live in the frame.
+		// contentsCss / stylesheets, UNMODIFIED, in the frame's own head - that is
+		// the fidelity fix (see editorFrame.js). The Format/Styles dropdown previews
+		// get their own <link> to the same sheet, in their own panel frame
+		// (src/comboPanel.js), so nothing here needs a scoped copy any more.
 		// Not inline: the editable sits in the real page and inherits the site's
 		// CSS directly - injecting the admin-configured content CSS again would
 		// double-apply or fight it.
 		if ( !isInline ) {
-			injectFrameStyles( frameApi.doc, cfg.stylesheets, frameApi.refit );
-			applyContentStyles( cfg.stylesheets );
+			// The toolbar is refreshed on load as well as the frame refitted: the Styles
+			// combo's entries are harvested from these very sheets, so until they arrive
+			// it has nothing to offer and correctly renders itself disabled.
+			injectFrameStyles( frameApi.doc, cfg.stylesheets, function() {
+				frameApi.refit();
+				if ( toolbarInfo && toolbarInfo.refresh ) { try { toolbarInfo.refresh(); } catch ( e ) {} }
+			} );
 		}
 
 		// Teardown registry, run FIRST in destroy() - everything here wrote outside

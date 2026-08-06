@@ -74,7 +74,7 @@ var APPLIES = {
 	// (can().setParagraph() is false when the block already is one, which would
 	// hide the dropdown exactly where it is most wanted - a plain paragraph).
 	, Format        : function() { return true; }
-	, Styles        : function( e, cfg ) { return styleItems( cfg ).length > 0; }
+	, Styles        : function( e, cfg ) { return styleItems( cfg, e ).length > 0; }
 	, PresideUnlink : function( e ) { return e.isActive( "presideLink" ); }
 	// PresideLink / PresideAnchor / RemoveFormat: any text selection.
 };
@@ -132,12 +132,13 @@ export function createSelectionBubble( editor, container, parsedToolbar, cfg ) {
 			if ( !test ) { return true; }
 			try { return !!test( editor, cfg ); } catch ( e ) { return false; }
 		} );
-		var group = document.createElement( "span" );
-		group.className = "tiptap-toolbar-group";
-		renderNames( group, names, editor, cfg, updaters, { skip: EXCLUDE } );
-		el.appendChild( group );
+		// renderNames owns the group spans now (a Format/Styles combo has to sit
+		// outside one), so it is handed the bubble itself as the row. The bubble is
+		// one flat pill - the css zeroes the block chrome on both .tiptap-toolbar-group
+		// and .tiptap-combo inside it.
+		renderNames( el, names, editor, cfg, updaters, { skip: EXCLUDE } );
 		updaters.forEach( function( u ) { try { u(); } catch ( e ) {} } );
-		return group.childNodes.length > 0;
+		return el.childNodes.length > 0;
 	}
 
 	function place() {

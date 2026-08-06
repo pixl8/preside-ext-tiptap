@@ -11,7 +11,8 @@
 import { ICONS } from "./icons.js";
 import { toggleSource } from "./sourceView.js";
 import { focusEditable } from "./editorFocus.js";
-import { getContentSelectors } from "./presideStyles.js";
+import { harvestSelectors } from "./presideStyles.js";
+import { createComboPanel } from "./comboPanel.js";
 import { themeEnabled, renderThemeToggle } from "./theme.js";
 import { toggleMaximize, isMaximized } from "./maximize.js";
 import { t } from "./i18n.js";
@@ -91,17 +92,82 @@ function formatOpts( cfg ) {
 	return opts.length ? opts : formatOpts( { defaultConfigs: { format_tags: DEFAULT_FORMAT_TAGS } } );
 }
 
+/**
+ * Documents a host-document popover must listen to in order to close.
+ *
+ * The editable is in the EDITING IFRAME, so a mousedown in it never reaches the
+ * host document - a host-only listener leaves the popover open when the user
+ * clicks back into their content. (Same boundary as the slash menu's key
+ * handling, and as containerOf() vs closest().)
+ */
+function popoverDocs( editor ) {
+	const docs  = [ document ];
+	const edDoc = editor && editor.view && editor.view.dom.ownerDocument;
+	if ( edDoc && edDoc !== document ) { docs.push( edDoc ); }
+	return docs;
+}
+
 // Render a list of CKEditor button names into `groupEl`, sharing the exact
 // per-name behaviour of the main toolbar (Justify* collapse into one dropdown,
 // Format/Styles/Table/Source/Theme special cases, plain buttons with is-active
 // updaters). Extracted so the selection bubble (Modern inline mode) builds its
 // filtered button set from the SAME renderers — one implementation, two hosts.
 // `opts.skip` drops names entirely (the bubble excludes insert/global commands).
-// Returns { themeRendered } (whether a Theme/DarkMode toggle was rendered).
-export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
+// The two controls CKEditor implements as richcombos, whose constructor sets
+// `canGroup:!1` - so the toolbar renderer closes any open toolgroup and emits
+// them OUTSIDE it, each as its own bordered block (.cke_combo_button). Nothing
+// else here is a combo: CKEditor had Table as a plain button and alignment as
+// four plain buttons, so those triggers stay inside their group.
+const COMBO_NAMES = [ "Format", "Styles" ];
+
+/**
+ * Render a toolbar ROW.
+ *
+ * `rowEl` is the row, not a group: this walks the names and opens/closes
+ * `.tiptap-toolbar-group` spans as it goes, exactly as CKEditor's renderer does
+ * with `A ? e||(open toolgroup) : e&&(close toolgroup)`. Groupable controls
+ * accumulate into the current group; a combo closes it and stands alone.
+ *
+ * Returns { themeRendered } (whether a Theme/DarkMode toggle was rendered).
+ */
+export function renderNames( rowEl, names, editor, cfg, updaters, opts ) {
 	opts = opts || {};
 	const skip = opts.skip || [];
 	let themeRendered = false;
+
+	// Rendered top-level pieces in order: groups, standalone combos, and the
+	// row-level separators between them. Collected first so empty groups (every
+	// name in them turned out to be unknown) can be dropped before appending.
+	const parts = [];
+	let group      = null;    // the open group - CKEditor's `e`
+	let pendingSep = false;   // a deferred separator - CKEditor's `k`
+
+	function openGroup() {
+		if ( !group ) {
+			group = document.createElement( "span" );
+			group.className = "tiptap-toolbar-group";
+			parts.push( { kind: "group", el: group } );
+		}
+		return group;
+	}
+
+	// CKEditor emits the deferred separator AFTER closing the group, so one
+	// between a group and a combo lands at row level, between the two blocks.
+	function flushSep( target ) {
+		if ( !pendingSep ) { return; }
+		pendingSep = false;
+		const sep = document.createElement( "span" );
+		sep.className = "tiptap-toolbar-sep";
+		if ( target ) { target.appendChild( sep ); } else { parts.push( { kind: "sep", el: sep } ); }
+	}
+
+	function placeGroupable( el ) { const g = openGroup(); flushSep( g ); g.appendChild( el ); }
+	function placeCombo( el ) {
+		group = null;                       // close it
+		flushSep( null );
+		el.classList.add( "tiptap-combo" );
+		parts.push( { kind: "combo", el: el } );
+	}
 
 	// The four Justify* buttons collapse into ONE dropdown (renderAlign) to save
 	// a lot of toolbar width. Scoped to the group, and only when the group names
@@ -116,21 +182,19 @@ export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
 		// rest. The menu offers EXACTLY the ones this toolbar named - never all
 		// four - so a site that deliberately withheld e.g. Justify keeps it out.
 		if ( collapseAlign && ALIGN_NAMES.indexOf( name ) !== -1 ) {
-			if ( name === alignNames[ 0 ] ) { groupEl.appendChild( renderAlign( editor, updaters, alignNames ) ); }
+			if ( name === alignNames[ 0 ] ) { placeGroupable( renderAlign( editor, updaters, alignNames ) ); }
 			return;
 		}
-		if ( name === "-" ) {
-			const sep = document.createElement( "span" );
-			sep.className = "tiptap-toolbar-sep";
-			groupEl.appendChild( sep );
-			return;
-		}
-		if ( name === "Format" ) { groupEl.appendChild( renderFormat( editor, updaters, cfg ) ); return; }
-		if ( name === "Styles" ) { groupEl.appendChild( renderStyles( editor, updaters, cfg ) ); return; }
-		if ( name === "Table"  ) { groupEl.appendChild( renderTable( editor, updaters ) ); return; }
-		if ( name === "Source" ) { groupEl.appendChild( renderSource( editor ) ); return; }
+		// `k = e && t`: a separator is only remembered while a group is open, so one
+		// between two combos is dropped - as it is in CKEditor.
+		if ( name === "-" ) { pendingSep = !!group; return; }
+
+		if ( name === "Format" ) { placeCombo( renderFormat( editor, updaters, cfg ) ); return; }
+		if ( name === "Styles" ) { placeCombo( renderStyles( editor, updaters, cfg ) ); return; }
+		if ( name === "Table"  ) { placeGroupable( renderTable( editor, updaters ) ); return; }
+		if ( name === "Source" ) { placeGroupable( renderSource( editor ) ); return; }
 		if ( name === "Theme" || name === "DarkMode" ) {
-			if ( themeEnabled( cfg ) ) { groupEl.appendChild( renderThemeToggle() ); themeRendered = true; }
+			if ( themeEnabled( cfg ) ) { placeGroupable( renderThemeToggle() ); themeRendered = true; }
 			return;
 		}
 
@@ -155,12 +219,26 @@ export function renderNames( groupEl, names, editor, cfg, updaters, opts ) {
 			cmd.run( focusEditable( editor ), cfg );
 			updaters.forEach( function( u ) { u(); } );
 		} );
-		groupEl.appendChild( btn );
+		placeGroupable( btn );
 
 		if ( cmd.active ) { updaters.push( function() { btn.classList.toggle( "is-active", !!cmd.active( editor ) ); } ); }
 	} );
 
-	tidySeparators( groupEl );
+	// Drop groups nothing rendered into (every name in them was unknown), tidy the
+	// separators inside each surviving group, then drop row-level separators that
+	// no longer sit between two blocks.
+	const kept = parts.filter( function( p ) { return p.kind !== "group" || p.el.childNodes.length; } );
+	kept.forEach( function( p ) { if ( p.kind === "group" ) { tidySeparators( p.el ); } } );
+
+	let prevWasBlock = false;
+	const final = [];
+	kept.forEach( function( p ) {
+		if ( p.kind === "sep" ) { if ( prevWasBlock ) { final.push( p ); prevWasBlock = false; } return; }
+		prevWasBlock = true;
+		final.push( p );
+	} );
+	while ( final.length && final[ final.length - 1 ].kind === "sep" ) { final.pop(); }
+	final.forEach( function( p ) { rowEl.appendChild( p.el ); } );
 
 	return { themeRendered: themeRendered };
 }
@@ -202,13 +280,12 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 	groups.forEach( function( group ) {
 		if ( group === "/" ) { el.appendChild( document.createElement( "br" ) ); return; }
 
-		const groupEl = document.createElement( "span" );
-		groupEl.className = "tiptap-toolbar-group";
-
-		const res = renderNames( groupEl, group, editor, cfg, updaters );
+		// renderNames opens its own .tiptap-toolbar-group spans as it walks the
+		// names, because a combo (Format/Styles) is canGroup:false and has to land
+		// OUTSIDE any group, as its own block - so one pipe-delimited bar can render
+		// as several blocks rather than exactly one.
+		const res = renderNames( el, group, editor, cfg, updaters );
 		if ( res.themeRendered ) { themeRendered = true; }
-
-		if ( groupEl.childNodes.length ) { el.appendChild( groupEl ); }
 	} );
 
 	const refresh = function() { updaters.forEach( function( u ) { u(); } ); };
@@ -216,7 +293,12 @@ export function buildToolbar( el, editor, parsedToolbar, cfg ) {
 	editor.on( "transaction", refresh );
 	refresh();
 
-	return { themeEnabled: themeEnabled( cfg ), themeRendered: themeRendered };
+	// `refresh` is returned because one piece of toolbar state does not depend on
+	// the document at all: the Styles combo's enabled/disabled state is derived from
+	// the harvested content stylesheets, and those load ASYNCHRONOUSLY. Without a
+	// re-run on load the first refresh() sees no sheets, finds no applicable style
+	// and leaves the combo greyed out until the user happens to cause a transaction.
+	return { themeEnabled: themeEnabled( cfg ), themeRendered: themeRendered, refresh: refresh };
 }
 
 // Custom dropdown (not a native <select>) so it opens directly under the button
@@ -237,46 +319,76 @@ function renderFormat( editor, updaters, cfg ) {
 	trigger.innerHTML = '<span class="tiptap-lbl"></span><span class="tiptap-caret" aria-hidden="true"></span>';
 	trigger.querySelector( ".tiptap-lbl" ).textContent = t( "toolbar.format" );
 
-	const menu = document.createElement( "div" );
-	menu.className = "tiptap-dropdown-menu";
+	// The menu is an IFRAME with the site's content CSS linked in unmodified, which
+	// is what makes each entry preview in the site's real typography - see
+	// comboPanel.js for why nothing in the host document can do that.
+	let menu = null;   // the list, inside the panel frame - only after first open
 
-	function closeMenu() { menu.classList.remove( "open" ); document.removeEventListener( "mousedown", onDocDown, true ); }
-	function openMenu() { menu.classList.add( "open" ); document.addEventListener( "mousedown", onDocDown, true ); }
-	function onDocDown( e ) { if ( !wrap.contains( e.target ) ) { closeMenu(); } }
+	const panel = createComboPanel( {
+		  stylesheets: cfg && cfg.stylesheets
+		, editor     : editor
+		, anchor     : trigger
+		, anchorWrap : wrap
+		, title      : t( "format.panelTitle" )
+		// The item list never changes (it is `format_tags`), so it is built once when
+		// the panel is - CKEditor's combo init(), which createPanel() calls.
+		, build      : function( pdoc, listEl ) {
+			menu = listEl;
 
-	formatOpts( cfg ).forEach( function( o ) {
-		const item = document.createElement( "div" );
-		item.className = "tiptap-dropdown-item tiptap-fmt-preview fmt-" + o.v;
-		// Render the item AS the real element (h1..h6/p/pre/div) so the injected
-		// content CSS (scoped to .tiptap-fmt-preview) styles it — e.g. a green H2,
-		// like CKEditor.
-		const inner = document.createElement( o.v );
-		inner.textContent = o.label;
-		item.appendChild( inner );
-		item.addEventListener( "mousedown", function( ev ) {
-			ev.preventDefault(); // keep the editor selection
-			applyFormat( editor, o.v );
-			closeMenu();
-		} );
-		menu.appendChild( item );
+			// CKEditor's format plugin opens its panel with a single
+			// startGroup( lang.format.panelTitle ) header ("Paragraph Format").
+			const head = pdoc.createElement( "div" );
+			head.className = "tiptap-dropdown-group";
+			head.textContent = t( "format.panelTitle" );
+			listEl.appendChild( head );
+
+			formatOpts( cfg ).forEach( function( o ) {
+				const item = pdoc.createElement( "div" );
+				item.className = "tiptap-dropdown-item tiptap-fmt-preview fmt-" + o.v;
+				// The entry IS a real h1..h6/p/pre/div, which the content CSS in this
+				// document styles - CKEditor's own style.buildPreview() output.
+				const inner = pdoc.createElement( o.v );
+				inner.textContent = o.label;
+				item.appendChild( inner );
+				item.addEventListener( "mousedown", function( ev ) {
+					ev.preventDefault(); // keep the editor selection
+					applyFormat( editor, o.v );
+					closeMenu();
+				} );
+				listEl.appendChild( item );
+			} );
+			markActive();
+		}
 	} );
+
+	// The panel owns close-on-outside-click and close-on-scroll-away itself: it has
+	// to listen on the EDITING FRAME's document as well as the host, and only it
+	// knows about the frame.
+	function closeMenu() { panel.close(); }
+	function openMenu() { panel.open(); markActive(); }
+
+	function markActive() {
+		if ( !menu ) { return; }
+		const v = currentFormat( editor );
+		Array.prototype.forEach.call( menu.children, function( el ) {
+			el.classList.toggle( "active", el.classList.contains( "fmt-" + v ) );
+		} );
+	}
 
 	trigger.addEventListener( "click", function( ev ) {
 		ev.preventDefault();
-		if ( menu.classList.contains( "open" ) ) { closeMenu(); } else { openMenu(); }
+		if ( panel.isOpen() ) { closeMenu(); } else { openMenu(); }
 	} );
 
 	wrap.appendChild( trigger );
-	wrap.appendChild( menu );
 
 	updaters.push( function() {
 		const v = currentFormat( editor );
 		trigger.querySelector( ".tiptap-lbl" ).textContent = FORMAT_TAGS.indexOf( v ) !== -1 ? t( "format." + v ) : t( "toolbar.format" );
-		Array.prototype.forEach.call( menu.children, function( el ) {
-			el.classList.toggle( "active", el.classList.contains( "fmt-" + v ) );
-		} );
+		markActive();
 	} );
 
+	editor.on( "destroy", panel.destroy );
 	return wrap;
 }
 
@@ -347,8 +459,9 @@ function renderAlign( editor, updaters, names ) {
 	const menu = document.createElement( "div" );
 	menu.className = "tiptap-dropdown-menu tiptap-align-menu";
 
-	function closeMenu() { menu.classList.remove( "open" ); document.removeEventListener( "mousedown", onDocDown, true ); }
-	function openMenu()  { menu.classList.add( "open" );    document.addEventListener( "mousedown", onDocDown, true ); }
+	const docs = popoverDocs( editor );
+	function closeMenu() { menu.classList.remove( "open" ); docs.forEach( d => d.removeEventListener( "mousedown", onDocDown, true ) ); }
+	function openMenu()  { menu.classList.add( "open" );    docs.forEach( d => d.addEventListener( "mousedown", onDocDown, true ) ); }
 	function onDocDown( e ) { if ( !wrap.contains( e.target ) ) { closeMenu(); } }
 
 	const itemBtns = {};
@@ -546,16 +659,21 @@ function renderTable( editor, updaters ) {
 		hdrBox.checked = withHeaderRowPref;
 		build();
 	}
+	const docs = popoverDocs( editor );
 	function closeMenu() {
 		menu.classList.remove( "open" );
-		document.removeEventListener( "mousedown", onDocDown, true );
-		document.removeEventListener( "keydown", onKeyDown, true );
+		docs.forEach( function( d ) {
+			d.removeEventListener( "mousedown", onDocDown, true );
+			d.removeEventListener( "keydown", onKeyDown, true );
+		} );
 	}
 	function openMenu() {
 		reset();
 		menu.classList.add( "open" );
-		document.addEventListener( "mousedown", onDocDown, true );
-		document.addEventListener( "keydown", onKeyDown, true );
+		docs.forEach( function( d ) {
+			d.addEventListener( "mousedown", onDocDown, true );
+			d.addEventListener( "keydown", onKeyDown, true );
+		} );
 	}
 	function onDocDown( e ) { if ( !wrap.contains( e.target ) ) { closeMenu(); } }
 	function onKeyDown( e ) { if ( e.key === "Escape" ) { e.stopPropagation(); closeMenu(); } }
@@ -582,84 +700,204 @@ function renderTable( editor, updaters ) {
 // plus any static defaultConfigs.stylesSet entries. Built lazily on open, because
 // the stylesheets load asynchronously.
 
-// tag -> [ tiptap node name, attrs, needsExistingNode ]
-const STYLE_BLOCK_TYPES = {
-	  p    : { type: "paragraph" }
-	, h1   : { type: "heading", attrs: { level: 1 } }
-	, h2   : { type: "heading", attrs: { level: 2 } }
-	, h3   : { type: "heading", attrs: { level: 3 } }
-	, h4   : { type: "heading", attrs: { level: 4 } }
-	, h5   : { type: "heading", attrs: { level: 5 } }
-	, h6   : { type: "heading", attrs: { level: 6 } }
-	, pre  : { type: "codeBlock" }
-	, div  : { type: "presideDiv" }
-	, ul   : { type: "bulletList",  existingOnly: true }
-	, ol   : { type: "orderedList", existingOnly: true }
-	, li   : { type: "listItem",    existingOnly: true }
-	, table: { type: "table",       existingOnly: true }
-};
-const DEFAULT_VALID_SELECTORS = "^(h[1-6]|p|span|pre|li|ul|ol|dl|dt|dd|small|i|b|em|strong|table)\\.\\w+";
+/**
+ * CKEditor's style TYPE, which is what decides both the panel group an entry
+ * lands in and whether it is applicable at all. It comes from two element tables
+ * in the `CKEDITOR.style` constructor:
+ *
+ *   this.type = a.type || ( A[c] ? STYLE_BLOCK : L[c] ? STYLE_OBJECT : STYLE_INLINE )
+ *
+ *   A -> BLOCK : address,div,h1..h6,p,pre,section,header,footer,nav,article,aside,
+ *                figure,dialog,hgroup,time,meter,menu,command,keygen,output,
+ *                progress,details,datagrid,datalist
+ *   L -> OBJECT: a,blockquote,embed,hr,img,li,object,ol,table,td,tr,th,ul,dl,dt,dd,
+ *                form,audio,video
+ *   anything else -> INLINE
+ *
+ * and `checkApplicable` then gates on it:
+ *
+ *   case STYLE_OBJECT: return !!path.contains( this.element )
+ *   case STYLE_BLOCK : return !!path.blockLimit.getDtd()[ this.element ]
+ *   (INLINE falls through to `return true` - always applicable)
+ *
+ * Over the tags we can actually apply that is BLOCK: p,h1..h6,pre,div / OBJECT:
+ * ul,ol,li,table / INLINE: span - which is exactly the old `existingOnly` flag,
+ * so the partition was already right; it was simply never used to filter.
+ */
+const BLOCK = 1, INLINE = 2, OBJECT = 3;   // CKEDITOR.STYLE_BLOCK / _INLINE / _OBJECT
 
-export function styleItems( cfg ) {
+const STYLE_TYPES = {
+	  p    : { type: BLOCK,  node: "paragraph" }
+	, h1   : { type: BLOCK,  node: "heading", attrs: { level: 1 } }
+	, h2   : { type: BLOCK,  node: "heading", attrs: { level: 2 } }
+	, h3   : { type: BLOCK,  node: "heading", attrs: { level: 3 } }
+	, h4   : { type: BLOCK,  node: "heading", attrs: { level: 4 } }
+	, h5   : { type: BLOCK,  node: "heading", attrs: { level: 5 } }
+	, h6   : { type: BLOCK,  node: "heading", attrs: { level: 6 } }
+	, pre  : { type: BLOCK,  node: "codeBlock" }
+	, div  : { type: BLOCK,  node: "presideDiv" }
+	, ul   : { type: OBJECT, node: "bulletList" }
+	, ol   : { type: OBJECT, node: "orderedList" }
+	, li   : { type: OBJECT, node: "listItem" }
+	, table: { type: OBJECT, node: "table" }
+	// INLINE. Every one of these is a tag Preside's own default
+	// stylesheetParser_validSelectors allows, and CKEditor lists them
+	// unconditionally (checkApplicable returns true for INLINE), so a Bootstrap-ish
+	// site's `small.text-muted` / `strong.text-danger` really does appear there.
+	// `strong`/`b` resolve onto StarterKit's bold and `em`/`i` onto its italic -
+	// which is why presideAttributes gives those two marks a `class` (a second mark
+	// parsing <strong> would double-apply); `span`/`small` are presideInlineStyle,
+	// distinguished by its `tag` attribute.
+	, span  : { type: INLINE, mark: "presideInlineStyle", markAttrs: { tag: "span" } }
+	, small : { type: INLINE, mark: "presideInlineStyle", markAttrs: { tag: "small" } }
+	, strong: { type: INLINE, mark: "bold" }
+	, b     : { type: INLINE, mark: "bold" }
+	, em    : { type: INLINE, mark: "italic" }
+	, i     : { type: INLINE, mark: "italic" }
+};
+
+// CKEditor's own sort weight: `i + 1000 * ( OBJECT?1 : BLOCK?2 : 3 )`, so the
+// panel reads Object, then Block, then Inline, each preserving harvest order.
+function styleWeight( item, i ) {
+	const type = STYLE_TYPES[ item.tag ].type;
+	return i + 1000 * ( type === OBJECT ? 1 : type === BLOCK ? 2 : 3 );
+}
+
+/**
+ * checkApplicable(), in Tiptap terms.
+ *
+ * OBJECT: `path.contains( element )` asks whether an ancestor of that tag exists,
+ *   which is `editor.isActive( node )` here.
+ * BLOCK : `path.blockLimit.getDtd()[ element ]` asks whether that element is a
+ *   legal child of the nearest block limit - a question about the SCHEMA, not
+ *   about whether applying it would change anything. `can().setNode()` answers
+ *   the schema half (no heading inside a code block, say), but it is false for
+ *   the block the caret is ALREADY in, which would hide `p.lead` in every
+ *   paragraph - the same trap that makes `can().setParagraph()` useless for the
+ *   Format dropdown. So an already-active node counts as applicable too.
+ * INLINE: unconditionally true, as CKEditor's fall-through return is.
+ */
+function styleApplicable( editor, item ) {
+	const d = STYLE_TYPES[ item.tag ];
+	if ( !d ) { return false; }
+	if ( d.type === INLINE ) { return true; }
+	if ( d.type === OBJECT ) { return editor.isActive( d.node ); }
+	if ( editor.isActive( d.node, d.attrs || {} ) ) { return true; }
+	try { return editor.can().setNode( d.node, d.attrs || {} ); } catch ( e ) { return true; }
+}
+const DEFAULT_VALID_SELECTORS = "^(h[1-6]|p|span|pre|li|ul|ol|dl|dt|dd|small|i|b|em|strong|table)\\.\\w+";
+const DEFAULT_SKIP_SELECTORS  = "(^body\\.|^\\.)";
+
+/**
+ * Reduce a document's raw selector list to `element.class` pairs, EXACTLY as
+ * CKEditor's stylesheetparser does (its `function h`, in the vendored
+ * ckeditor.js). The order of operations is the whole point:
+ *
+ *   join(" ") -> `, > + ~` become spaces -> strip `[attr...` -> strip `#id`
+ *   -> strip `:pseudo`/`::pseudo` -> collapse whitespace -> SPLIT ON SPACE
+ *
+ * so every SIMPLE selector is tested on its own, and the pair is then
+ * `token.split(".")` taking `[0]` as the element and `[1]` as the class - the
+ * FIRST class only.
+ *
+ * Testing the raw `selectorText` instead is what produced the junk entries this
+ * replaces: `table.table-ruled tbody tr td` matched on its `table.table-` prefix
+ * and the whole descendant tail became the "class name", so the menu offered
+ * `table.table-ruled tbody tr td` as a label and set it as three bogus classes.
+ * Normalised, that selector yields exactly one usable pair, `table.table-ruled`.
+ */
+function selectorPairs( selectors, valid, skip ) {
+	let s = selectors.join( " " );
+	s = s.replace( /(,|>|\+|~)/g, " " );
+	// CKEditor's own pattern here is /\[[^\]]*/g, which strips the `[` and the
+	// attribute but LEAVES the closing bracket - so `p.lead[data-x]` came out as
+	// `p.lead]`, a broken class that also deduped separately from a real `p.lead`.
+	// The `\]?` is a deliberate fix, not a transcription slip.
+	s = s.replace( /\[[^\]]*\]?/g, "" );
+	s = s.replace( /#[^\s]*/g, "" );
+	s = s.replace( /\:{1,2}[^\s]*/g, "" );
+	s = s.replace( /\s+/g, " " );
+
+	const out  = [];
+	const seen = {};
+	s.split( " " ).forEach( function( token ) {
+		if ( !token || !valid.test( token ) || skip.test( token ) || seen[ token ] ) { return; }
+		seen[ token ] = true;
+		const parts = token.split( "." );
+		out.push( { element: parts[ 0 ].toLowerCase(), className: parts[ 1 ] } );
+	} );
+	return out;
+}
+
+function selectorRegex( source, fallback ) {
+	try { return new RegExp( source || fallback ); } catch ( e ) { return new RegExp( fallback ); }
+}
+
+export function styleItems( cfg, editor ) {
 	const dc    = ( cfg && cfg.defaultConfigs ) || {};
 	const items = [];
 	const seen  = {};
 
-	let valid;
-	try { valid = new RegExp( dc.stylesheetParser_validSelectors || DEFAULT_VALID_SELECTORS ); }
-	catch ( e ) { valid = new RegExp( DEFAULT_VALID_SELECTORS ); }
+	const valid = selectorRegex( dc.stylesheetParser_validSelectors, DEFAULT_VALID_SELECTORS );
+	const skip  = selectorRegex( dc.stylesheetParser_skipSelectors, DEFAULT_SKIP_SELECTORS );
 
 	function add( tag, className, name ) {
-		tag = tag.toLowerCase();
-		const supported = tag === "span" || STYLE_BLOCK_TYPES[ tag ];
+		tag = String( tag ).toLowerCase();
 		const key = tag + "." + className;
-		if ( !supported || !className || seen[ key ] ) { return; }
+		if ( !STYLE_TYPES[ tag ] || !className || seen[ key ] ) { return; }
 		seen[ key ] = true;
 		items.push( { tag: tag, className: className, name: name || key } );
 	}
 
 	// Static stylesSet entries ({ name, element, attributes: { class } }).
+	// CKEditor `concat`s the harvested pairs onto these, so both arrive in one
+	// shape; static entries come first and keep their authored `name`.
 	( Array.isArray( dc.stylesSet ) ? dc.stylesSet : [] ).forEach( function( s ) {
 		const cls = s && s.attributes && s.attributes[ "class" ];
 		if ( s && s.element && cls ) { add( s.element, cls, s.name ); }
 	} );
 
-	// Selectors harvested from the fetched content stylesheets.
-	getContentSelectors().forEach( function( selector ) {
-		selector.split( "," ).forEach( function( s ) {
-			s = s.trim();
-			if ( !valid.test( s ) ) { return; }
-			const parts = s.split( "." );
-			add( parts[ 0 ], parts.slice( 1 ).join( " " ) );
-		} );
+	// Harvested from the editable's OWN document - the editing frame's sheets for
+	// a boxed editor, the site page's for a Modern inline one.
+	const doc = editor && editor.view && editor.view.dom.ownerDocument;
+	selectorPairs( harvestSelectors( doc ), valid, skip ).forEach( function( p ) {
+		add( p.element, p.className );
 	} );
 
 	return items;
 }
 
 function applyStyle( editor, item ) {
-	if ( item.tag === "span" ) {
-		if ( editor.isActive( "presideInlineStyle", { "class": item.className } ) ) {
-			focusEditable( editor ).chain().focus().unsetMark( "presideInlineStyle" ).run();
+	const inline = STYLE_TYPES[ item.tag ];
+	if ( inline && inline.mark ) {
+		// CKEditor's onClick calls removeStyle when the style is already active,
+		// which takes the element AND its class off - so toggling off unsets the
+		// whole mark rather than just clearing the class.
+		if ( styleIsActive( editor, item ) ) {
+			focusEditable( editor ).chain().focus().unsetMark( inline.mark ).run();
 		} else {
-			focusEditable( editor ).chain().focus().setMark( "presideInlineStyle", { "class": item.className } ).run();
+			const attrs = Object.assign( { "class": item.className }, inline.markAttrs || {} );
+			focusEditable( editor ).chain().focus().setMark( inline.mark, attrs ).run();
 		}
 		return;
 	}
 
-	const t = STYLE_BLOCK_TYPES[ item.tag ];
-	if ( !t ) { return; }
-	if ( t.existingOnly && !editor.isActive( t.type ) ) { return; } // e.g. table style with no table selected
+	const d = STYLE_TYPES[ item.tag ];
+	if ( !d || !styleApplicable( editor, item ) ) { return; }
 
-	if ( !t.existingOnly ) { applyFormat( editor, item.tag ); }
-	const current = editor.getAttributes( t.type )[ "class" ];
-	focusEditable( editor ).chain().focus().updateAttributes( t.type, { "class": current === item.className ? null : item.className } ).run();
+	// A BLOCK style names the element it applies, so it converts the block too
+	// (`h2.intro` on a paragraph makes it an h2). An OBJECT style only ever
+	// re-classes the node the caret is already inside.
+	if ( d.type === BLOCK ) { applyFormat( editor, item.tag ); }
+	const current = editor.getAttributes( d.node )[ "class" ];
+	focusEditable( editor ).chain().focus().updateAttributes( d.node, { "class": current === item.className ? null : item.className } ).run();
 }
 
 function styleIsActive( editor, item ) {
-	if ( item.tag === "span" ) { return editor.isActive( "presideInlineStyle", { "class": item.className } ); }
-	const t = STYLE_BLOCK_TYPES[ item.tag ];
-	return !!t && editor.isActive( t.type, t.attrs || {} ) && editor.getAttributes( t.type )[ "class" ] === item.className;
+	const d = STYLE_TYPES[ item.tag ];
+	if ( !d ) { return false; }
+	if ( d.mark ) { return editor.isActive( d.mark, Object.assign( { "class": item.className }, d.markAttrs || {} ) ); }
+	return editor.isActive( d.node, d.attrs || {} ) && editor.getAttributes( d.node )[ "class" ] === item.className;
 }
 
 function renderStyles( editor, updaters, cfg ) {
@@ -678,26 +916,60 @@ function renderStyles( editor, updaters, cfg ) {
 	trigger.innerHTML = '<span class="tiptap-lbl"></span><span class="tiptap-caret" aria-hidden="true"></span>';
 	trigger.querySelector( ".tiptap-lbl" ).textContent = t( "toolbar.styles" );
 
-	const menu = document.createElement( "div" );
-	menu.className = "tiptap-dropdown-menu";
+	// Same framed panel as Format: the entries are `<p class="lead">`-shaped real
+	// elements and only the site's own stylesheet can preview them properly.
+	const panel = createComboPanel( {
+		  stylesheets: cfg && cfg.stylesheets
+		, editor     : editor
+		, anchor     : trigger
+		, anchorWrap : wrap
+		, title      : t( "toolbar.styles" )
+	} );
 
-	function closeMenu() { menu.classList.remove( "open" ); document.removeEventListener( "mousedown", onDocDown, true ); }
-	function onDocDown( e ) { if ( !wrap.contains( e.target ) ) { closeMenu(); } }
+	function closeMenu() { panel.close(); }
 
+	// Mirrors stylescombo's onOpen: every entry is checked for applicability at the
+	// current selection, the inapplicable ones are dropped, a type group with
+	// nothing applicable in it loses its header too, and the applicable ones are
+	// marked active. Built on open (not once at render) because the answer depends
+	// on where the caret is, and because the sheets load asynchronously.
 	function openMenu() {
+		// Forces the panel frame into existence on first open (lazily, as CKEditor's
+		// createPanel is) and hands back its document - items MUST be created with it,
+		// not with the host `document`.
+		const p    = panel.ensure();
+		const pdoc = p.doc;
+		const menu = p.body;
 		menu.innerHTML = "";
-		const items = styleItems( cfg );
+
+		const items = styleItems( cfg, editor )
+			.map( function( it, i ) { return { it: it, w: styleWeight( it, i ) }; } )
+			.sort( function( a, b ) { return a.w - b.w; } )
+			.map( function( e ) { return e.it; } )
+			.filter( function( it ) { return styleApplicable( editor, it ); } );
+
 		if ( !items.length ) {
-			const none = document.createElement( "div" );
+			const none = pdoc.createElement( "div" );
 			none.className = "tiptap-dropdown-item tiptap-dropdown-empty";
 			none.textContent = t( "styles.none" );
 			menu.appendChild( none );
 		}
+
+		let group = null;
 		items.forEach( function( it ) {
-			const item = document.createElement( "div" );
+			const type = STYLE_TYPES[ it.tag ].type;
+			if ( type !== group ) {
+				group = type;
+				const head = pdoc.createElement( "div" );
+				head.className = "tiptap-dropdown-group";
+				head.textContent = t( type === OBJECT ? "styles.object" : type === BLOCK ? "styles.block" : "styles.inline" );
+				menu.appendChild( head );
+			}
+
+			const item = pdoc.createElement( "div" );
 			item.className = "tiptap-dropdown-item tiptap-fmt-preview";
-			// Preview AS tag.class so the scoped content CSS styles the entry.
-			const inner = document.createElement( it.tag );
+			// Preview AS tag.class so the content CSS styles the entry.
+			const inner = pdoc.createElement( it.tag );
 			inner.className = it.className;
 			inner.textContent = it.name;
 			item.appendChild( inner );
@@ -709,17 +981,31 @@ function renderStyles( editor, updaters, cfg ) {
 			} );
 			menu.appendChild( item );
 		} );
-		menu.classList.add( "open" );
-		document.addEventListener( "mousedown", onDocDown, true );
+
+		// Opened AFTER the items are in place: the panel is a frame whose height is
+		// measured from its content, so an empty box would size and place wrong.
+		panel.open();
 	}
 
 	trigger.addEventListener( "click", function( ev ) {
 		ev.preventDefault();
-		if ( menu.classList.contains( "open" ) ) { closeMenu(); } else { openMenu(); }
+		if ( trigger.disabled ) { return; }
+		if ( panel.isOpen() ) { closeMenu(); } else { openMenu(); }
+	} );
+
+	// stylescombo's `refresh`: the whole combo goes TRISTATE_DISABLED when no style
+	// is applicable at the caret. That is why CKEditor's Styles button reads as
+	// greyed out in an ordinary paragraph on a site whose only harvested styles are
+	// `table.*` - they are OBJECT styles and need a table in the element path.
+	updaters.push( function() {
+		const any = styleItems( cfg, editor ).some( function( it ) { return styleApplicable( editor, it ); } );
+		trigger.disabled = !any;
+		trigger.classList.toggle( "is-disabled", !any );
+		if ( !any ) { closeMenu(); }
 	} );
 
 	wrap.appendChild( trigger );
-	wrap.appendChild( menu );
+	editor.on( "destroy", panel.destroy );
 	return wrap;
 }
 

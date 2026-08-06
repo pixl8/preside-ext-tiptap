@@ -93,8 +93,18 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
     highlight layer painting exactly the textarea's text at identical metrics, and
     the display-only contract — open-then-close is byte-identical, an edit applies
     and ONLY the edit (token, `<pre>` whitespace and `&amp;` all survive),
-  - the cms-basics `defaultConfigs.stylesSet` append
-    (`table.compact` → Styles dropdown) plus stylesheet-harvested styles,
+  - the **Styles / Format combos** (T3, T3b, T3c, T4, T4b): the cms-basics
+    `defaultConfigs.stylesSet` append (`table.compact`) plus styles harvested from
+    `content-sample.css` with CKEditor's stylesheetparser algorithm — that sheet
+    deliberately carries Bootstrap-shaped descendant selectors
+    (`table.table-ruled tbody tr td`), an attribute selector, skip-listed
+    selectors, a `:where()` rule and an `@layer` block, so the assertions cover the
+    junk entries the naive harvest produced *and* the two shapes the old scoped
+    preview path could not style. Also: each combo renders as its own toolbar block
+    with a `-` between two of them dropped; the combo disables when no style applies
+    at the caret and re-enables inside a table; the panel is an iframe with the
+    sheet linked unmodified and nothing leaked into the admin document; and inline
+    styles round-trip as `<small class>` / `<strong class>` / `<em class>`,
   - a site-style **custom CKEditor config file** (`custom-config-fixture.js`:
     `toolbar_<name>` named toolbars, `format_tags`, numeric `CKEDITOR.ENTER_BR`,
     `disallowedContent`) with instance-over-file precedence asserted,

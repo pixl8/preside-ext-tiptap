@@ -110,8 +110,9 @@ The extension reproduces Preside's editor integration contract exactly:
 - **Existing configuration is honoured**: named toolbars and per-field toolbar
   strings, `settings.ckeditor.defaults` (stylesheets, min/max height,
   autoParagraph, enterMode), `format_tags`, the stylesheet-driven **Styles**
-  dropdown (`stylesheetParser_validSelectors`), and paste filtering
-  (`disallowedContent` / `pasteFromWordDisallow`).
+  dropdown (`stylesheetParser_validSelectors` / `_skipSelectors` and static
+  `stylesSet` entries, harvested and filtered with CKEditor's own algorithm),
+  and paste filtering (`disallowedContent` / `pasteFromWordDisallow`).
 - **Custom CKEditor config files keep working.** A site-provided
   `settings.ckeditor.defaults.configFile` (or per-field `customConfig`) is
   loaded and executed exactly as CKEditor would: its

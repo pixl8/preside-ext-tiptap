@@ -61,6 +61,13 @@ export const DEFAULTS = {
 	, "toolbar.format"           : "Format"
 	, "toolbar.styles"           : "Styles"
 	, "styles.none"              : "No styles available"
+	// The three panel group titles, from CKEditor's lang.stylescombo.panelTitle1/2/3
+	// (keyed on the style TYPE - see STYLE_TYPES in toolbar.js).
+	, "styles.block"             : "Block Styles"
+	, "styles.inline"            : "Inline Styles"
+	, "styles.object"            : "Object Styles"
+	// lang.format.panelTitle - the single group title over the Format menu.
+	, "format.panelTitle"        : "Paragraph Format"
 	, "format.p"                 : "Paragraph"
 	, "format.h1"                : "Heading 1"
 	, "format.h2"                : "Heading 2"

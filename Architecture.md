@@ -157,8 +157,10 @@ attributes):
   `class`/`style` on inline spans, explicitly declining the embed placeholder
   spans and spans with neither attribute.
 
-This is also the foundation a future stylesheetParser-style "Styles" dropdown
-would build on.
+This is what the stylesheetParser-style "Styles" dropdown applies. It also gives
+StarterKit's `bold`/`italic` marks a `class`, and `presideInlineStyle` a `tag`
+attribute (`span`|`small`), so a `strong.text-danger` / `small.text-muted` style
+round-trips as its own element rather than being flattened to a span.
 
 ### `src/normalize.js` — output normaliser
 
@@ -170,16 +172,23 @@ default `colspan/rowspan="1"`); drops one trailing empty `<p>`. Idempotent by
 design; a `<p>` carrying class/style is left wrapped so attributes are never
 lost.
 
-### `src/presideStyles.js` — content CSS scoping
+### `src/presideStyles.js` — content CSS, and the Styles dropdown's input
 
 CKEditor edited inside an iframe, so site content CSS could load there without
-touching admin chrome. Tiptap edits in the page DOM, so `applyContentStyles()`
-fetches each configured stylesheet, parses it via the browser CSSOM (handling
-`@media`/`@supports`/`@font-face`), and re-injects it with every selector
-prefixed by two scopes: `.tiptap-editor-mount .ProseMirror` (the editing
-surface) and `.tiptap-fmt-preview` (so Format-dropdown items render in real
-content styles, e.g. a green H2, like CKEditor's menu). Falls back to an
-unscoped `<link>` only if the fetch fails (e.g. cross-origin without CORS).
+touching admin chrome; this extension is back to doing the same (see
+`src/editorFrame.js`), so the module is small:
+
+- `injectFrameStyles( doc, csv, onLoad )` — one **unmodified** `<link>` per URL into
+  a frame's head. Two callers: the editing frame, and the Format/Styles dropdown
+  panel (`src/comboPanel.js`), which is an iframe for exactly this reason.
+- `harvestSelectors( doc )` — the raw selector list from a document's own sheets,
+  read off the CSSOM. It is the Styles dropdown's input, and it is what CKEditor's
+  `stylesheetparser` reads too (`h( editor.document.$, … )`).
+
+An earlier version fetched each sheet and re-injected a copy scoped to
+`.tiptap-editor-mount .ProseMirror` / `.tiptap-fmt-preview`, with `rem` rebased.
+That path is **gone** — see CLAUDE.md, "Nothing transforms content CSS any more",
+for why it could not be made correct.
 
 ### `src/presidePickerModal.js` — the picker iframe + `onDialogEvent` protocol
 
@@ -218,17 +227,26 @@ names are skipped gracefully. Highlights:
 - Preside-specific buttons (`PresideLink`, `PresideUnlink`, `PresideAnchor`,
   `Widgets`, `ImagePicker`, `AttachmentPicker`) invoke the custom extensions'
   commands.
-- `Format` renders a custom dropdown driven by `defaultConfigs.format_tags`
-  (CKEditor's `format_tags`, incl. `div` via the `presideDiv` node); items are
-  real `h1…h6/p/pre/div` elements carrying `.tiptap-fmt-preview`, so the
-  scoped content CSS styles the menu itself.
-- `Styles` renders a CKEditor-stylesheetParser-style dropdown: class-based
-  selectors harvested from the field's fetched content stylesheets
-  (`presideStyles.js` collects them) filtered by
-  `defaultConfigs.stylesheetParser_validSelectors`, plus static
-  `defaultConfigs.stylesSet` entries. Block styles set `class` on the node
-  (via `presideAttributes`); `span.x` styles toggle the `presideInlineStyle`
-  mark.
+- `Format` and `Styles` are CKEditor's two **richcombos**, and are ports of its
+  real behaviour — see CLAUDE.md, "The Styles and Format dropdowns", for the
+  upstream sources and every rule. In outline:
+  - Both render their menu in an **iframe** with the site's content CSS linked
+    unmodified (`src/comboPanel.js`), because that is the only way an entry can
+    preview in real content typography. This is CKEditor's own
+    `panel:{ css:[…].concat( contentsCss ) }` + `isFramed = css.length`.
+  - Both are `canGroup:false`, so each renders as its own toolbar block rather
+    than inside a `.tiptap-toolbar-group`.
+  - `Format` is driven by `defaultConfigs.format_tags` (incl. `div` via the
+    `presideDiv` node); entries are real `h1…h6/p/pre/div` elements.
+  - `Styles` harvests `element.class` pairs from the editable's own stylesheets
+    using stylesheetparser's exact normalisation, filtered by
+    `stylesheetParser_validSelectors`/`_skipSelectors`, plus static
+    `defaultConfigs.stylesSet` entries. Entries are then gated by CKEditor's
+    `checkApplicable` (block/inline/object) and grouped by type; the combo
+    **disables** when nothing applies at the caret.
+  - Block styles set `class` on the node (via `presideAttributes`); inline styles
+    resolve onto `presideInlineStyle` (`span`/`small`) or StarterKit's
+    `bold`/`italic` (`strong`/`b`, `em`/`i`), which carry a `class` for this.
 - `Source` toggles a raw textarea view showing **tokenized** HTML (the stored
   form) and re-parses it (`detokenize` → `setContent`) on toggle back.
 - `Maximize` calls `src/maximize.js`, which **portals the container to `<body>`**
