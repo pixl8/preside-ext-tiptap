@@ -31,63 +31,28 @@
 	event.include( "tiptap-css" );
 
 	// i18n: CKEditor 4 shipped its own language packs; Tiptap's UI strings are
-	// translated HERE (admin user locale) via the extension's i18n/tiptap.properties
-	// bundle and shipped to the facade as cfrequest.tiptapI18n. Keep this key list
-	// in sync with i18n/tiptap.properties + src/i18n.js (the JS falls back to its
-	// built-in English defaults for any missing/empty key).
-	tiptapI18nKeys = [
-		  "toolbar.bold", "toolbar.italic", "toolbar.underline", "toolbar.strike"
-		, "toolbar.subscript", "toolbar.superscript", "toolbar.blockquote"
-		, "toolbar.numberedlist", "toolbar.bulletedlist", "toolbar.outdent", "toolbar.indent"
-		, "toolbar.justifyleft", "toolbar.justifycenter", "toolbar.justifyright", "toolbar.justifyblock"
-		, "toolbar.align"
-		, "toolbar.horizontalrule", "toolbar.table", "toolbar.removeformat"
-		, "toolbar.specialchar", "toolbar.find", "toolbar.replace"
-		, "toolbar.bidiltr", "toolbar.bidirtl"
-		, "toolbar.undo", "toolbar.redo", "toolbar.maximize"
-		, "toolbar.presidelink", "toolbar.presideunlink", "toolbar.presideanchor"
-		, "toolbar.widgets", "toolbar.imagepicker", "toolbar.attachmentpicker"
-		, "toolbar.codesnippet", "toolbar.source", "toolbar.format", "toolbar.styles"
-		, "toolbar.theme.dark", "toolbar.theme.light"
-		, "styles.none", "styles.block", "styles.inline", "styles.object"
-		, "format.panelTitle"
-		, "format.p", "format.h1", "format.h2", "format.h3", "format.h4", "format.h5", "format.h6", "format.pre", "format.div"
-		, "picker.ok", "picker.cancel", "picker.close"
-		, "picker.link.title", "picker.image.title", "picker.attachment.title", "picker.widget.title"
-		, "anchor.dialog.title", "anchor.dialog.placeholder", "anchor.tooltip"
-		, "embed.edithint", "embed.loading.image", "embed.loading.attachment", "embed.error"
-		, "embed.edit", "embed.remove"
-		, "image.resize", "image.align.left", "image.align.center", "image.align.right"
-		, "image.size.percent", "image.size.original", "image.refresh", "image.edit", "image.remove"
-		, "find.title", "find.find", "find.replace", "find.replaceall"
-		, "find.findwhat", "find.replacewith", "find.findoptions"
-		, "find.matchcase", "find.matchword", "find.matchcyclic"
-		, "find.notfound", "find.replaced"
-		, "specialchar.title", "specialchar.options"
-		, "table.insert", "table.gridsize", "table.gridcell", "table.withheaderrow"
-		, "table.column.before", "table.column.after", "table.column.delete"
-		, "table.row.before", "table.row.after", "table.row.delete"
-		, "table.cells.merge", "table.cells.split"
-		, "table.headerrow", "table.headercolumn", "table.delete"
-		, "draghandle.tooltip", "draghandle.insert"
-		, "slash.title", "slash.empty"
-		, "slash.group.format", "slash.group.block", "slash.group.preside", "slash.group.widget"
-		, "slash.h1", "slash.h1.hint", "slash.h2", "slash.h2.hint", "slash.h3", "slash.h3.hint"
-		, "slash.paragraph", "slash.paragraph.hint", "slash.bulletlist", "slash.bulletlist.hint"
-		, "slash.orderedlist", "slash.orderedlist.hint", "slash.blockquote", "slash.blockquote.hint"
-		, "slash.codeblock", "slash.codeblock.hint", "slash.hr", "slash.hr.hint"
-		, "slash.table", "slash.table.hint", "slash.image", "slash.image.hint"
-		, "slash.attachment", "slash.attachment.hint", "slash.widget", "slash.widget.hint"
-		, "slash.link", "slash.link.hint", "slash.anchor", "slash.anchor.hint"
-		, "outline.title", "outline.empty", "outline.untitled"
-		, "footer.words", "footer.chars", "footer.readingtime", "resize.tooltip"
-		, "editmode.trigger", "editmode.off", "editmode.classic", "editmode.modern"
-		, "editmode.modern.unavailable", "editmode.unsaved.confirm"
-		, "bubble.title"
-	];
-	tiptapI18n = {};
+	// translated HERE (admin user locale) and shipped to the facade as
+	// cfrequest.tiptapI18n. The JS falls back to its built-in English defaults for
+	// any missing/empty key.
+	//
+	// THE KEY LIST IS A SETTING (config/Config.cfc: settings.tiptap.i18nKeys), not a
+	// literal in this view, because a view can only be overridden ONCE - a second
+	// extension overriding ckEditorJs.cfm would silently drop this one's strings.
+	// A dependent extension appends its keys to the setting instead, and may name
+	// its own resource bundle per entry ("tiptapai:ai.button"); a bare key means
+	// this extension's own "tiptap" bundle, so every existing entry is untouched.
+	// The JS key stays unprefixed either way - src/i18n.js looks up "ai.button".
+	tiptapI18nKeys = getSetting( name="tiptap.i18nKeys", defaultValue=[] );
+	tiptapI18n     = {};
 	for ( tiptapI18nKey in tiptapI18nKeys ) {
-		tiptapI18n[ tiptapI18nKey ] = translateResource( uri="tiptap:#tiptapI18nKey#", defaultValue="" );
+		if ( listLen( tiptapI18nKey, ":" ) > 1 ) {
+			tiptapI18nBundle = listFirst( tiptapI18nKey, ":" );
+			tiptapI18nJsKey  = listRest(  tiptapI18nKey, ":" );
+		} else {
+			tiptapI18nBundle = "tiptap";
+			tiptapI18nJsKey  = tiptapI18nKey;
+		}
+		tiptapI18n[ tiptapI18nJsKey ] = translateResource( uri="#tiptapI18nBundle#:#tiptapI18nJsKey#", defaultValue="" );
 	}
 
 	// Widget list for the "/" insert menu (src/slashMenu.js), so "/news" can offer

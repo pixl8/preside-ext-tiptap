@@ -1,9 +1,75 @@
 # preside-ext-tiptap — Claude Code Guide
 
+A **Preside CMS extension** replacing the vendored CKEditor 4 with a self-contained
+**Tiptap v3** editor, as a byte-faithful drop-in. This file is the repo's memory:
+the rules, and the reason behind each one. Nearly every "why" here was paid for
+with a bug — treat a rule with a stated reason as load-bearing until you have
+disproved the reason, not merely found the rule inconvenient.
+
 > **Local environment** (machine paths, dev-server URL, credentials, sync
 > commands) lives in **`devlocal.md`** — gitignored, per-developer. If it is
 > missing, create it from the template in that section's headings; never put
 > local paths or credentials in this file.
+
+`Architecture.md` has the full architectural walkthrough (layers, diagrams, data
+flow); this file is the working guide.
+
+## Skills — start here for a task
+
+Task-shaped instructions live in **`.claude/skills/`** and are loaded on demand.
+**Invoke the skill before starting that kind of work**; this guide tells you how
+the repo *is*, a skill tells you how to *do the job*. They are written to be
+useful from another repo too — an add-on extension's own working directory —
+so they repeat the constraints they depend on rather than assuming this file.
+
+| If you are… | Invoke |
+|---|---|
+| Building a NEW `preside-ext-tiptap-*` add-on, or making an existing extension talk to this editor | **`tiptap-plugin-api`** |
+| Creating or shipping ANY Preside extension (manifest, box.json, Config.cfc, i18n, handlers, CI → ForgeBox) | **`preside-extension-anatomy`** |
+| Wiring JS/CSS onto a Preside page, or debugging a 404 / wrong-order asset | **`sticker-assets`** |
+| Drawing a toolbar icon, or theming anything light/dark | **`tiptap-icons`** |
+| Building UI *inside* the editor — a dialog, a bubble, a popover, anything positioned | **`tiptap-chrome`** |
+| Touching frontend editing, or anything that behaves differently boxed vs inline | **`tiptap-editing-modes`** |
+| Writing or debugging a test | **`tiptap-harness-testing`** |
+
+`.claude/skills/README.md` explains how the set fits together.
+
+## The five invariants
+
+Everything else in this file is detail. These five are the ones that make a
+change *wrong* rather than merely imperfect, and each has its own section below.
+
+1. **Stored markup never changes.** `getData()` output, the `{{…}}` token
+   formats, and `normalize.js` are a contract with server-side renderers, forms
+   and AJAX endpoints. The fidelity matrix must not move. (Part 2, Part 6.)
+2. **The Preside-facing API is CKEditor's.** `CKEDITOR.instances[name]`,
+   `$ta.data("ckeditorinstance")`, `getData/setData/on/fire/focus/destroy`. Core
+   Preside code calls these and is never edited. (Part 2.)
+3. **Zero core Preside edits.** Everything is an extension-level override —
+   Sticker re-declaration and one view override. (Part 2.)
+4. **The editable is in an iframe** (except in Modern inline mode), and chrome
+   is not. Every positioning, focus, class and stylesheet question has a
+   different answer either side of that boundary — and a third answer when
+   there is no frame at all. (Part 4.)
+5. **Chrome must not outlive its editor.** Anything portalled to `<body>`, or
+   written onto `document`/`<html>`, is torn down in `destroy()`. Modern inline
+   mode destroys and recreates the editor on *every save*. (Part 4.)
+
+## Contents
+
+- **Part 1 — Orientation**: what this is, repo layout, build
+- **Part 2 — How it plugs into Preside**: Sticker, the serving constraint,
+  installing, releasing, the integration contract, i18n
+- **Part 3 — Extending this extension**: the plugin API for add-ons
+- **Part 4 — Cross-cutting architecture**: the editing iframe, the Safari focus
+  hazard, light/dark, frontend fit, Classic vs Modern, the jQuery fix
+- **Part 5 — Toolbar and persistent chrome**
+- **Part 6 — Content features**
+- **Part 7 — Dev, testing, history**
+
+---
+
+# Part 1 — Orientation
 
 ## What this is
 
@@ -17,9 +83,6 @@ It replaces an earlier approach that edited two core Preside files
 Those edits have been reverted — **everything is now done as extension-level
 overrides, with zero core Preside edits** (the same philosophy as
 `preside-ext-jsmodern`).
-
-`Architecture.md` has the full architectural walkthrough (layers, diagrams,
-data flow); this file is the working guide.
 
 ## Repo layout
 
@@ -43,6 +106,12 @@ preside-ext-tiptap/
     index.js              vendor bundle entry -> window.PresideTiptap
     facade.js             -> window.PresideRichEditor + CKEDITOR.instances shim + footer status bar
     toolbar.js            CKEditor-button-name -> Tiptap-command map + renderer
+    plugins.js            THE PLUGIN REGISTRY (window.PresideTiptap.plugins) - the
+                          WRITE side, in the VENDOR bundle so a dependent extension's
+                          parse-time register() can never run before it exists
+    pluginHost.js         the READ side: how our own modules consume what was
+                          registered. Reaches the registry through the GLOBAL, never
+                          by import - the two bundles would otherwise each get one
     i18n.js               UI-string lookup: cfrequest.tiptapI18n -> English defaults
     theme.js              light/dark chrome theme (localStorage per-user preference) + its toggle button
     maximize.js           full-viewport toggle (portals the container to <body>)
@@ -85,6 +154,10 @@ preside-ext-tiptap/
       presideEmbeds.js      image / attachment / widget nodes (block-level)
       presideAttributes.js  generic attribute + inline-style support
   harness/                standalone browser harness for editor dev (see harness/README.md)
+  .claude/skills/         TASK-SHAPED INSTRUCTIONS, loaded on demand. Written to be
+                          usable from an ADD-ON's repo too, where this file is not
+                          loaded - so they restate what they depend on. See the
+                          skills table at the top of this file, and skills/README.md
   esbuild.mjs             build script (outdir = assets/dist)
   package.json            Tiptap v3 deps + esbuild; scripts: build, watch
   devlocal.md             LOCAL-ONLY (gitignored): paths, URLs, credentials
@@ -114,36 +187,9 @@ npm run watch      # rebuild on change
   is committed too: without a lockfile a floating `@tiptap/*` or `esbuild` version
   would change the bundle bytes (and therefore the content hashes) on every CI run.
 
-## Releasing / publishing to ForgeBox
+---
 
-`.github/workflows/ci.yml` runs on every push/PR and **publishes only from a
-`release-*` or `v*` ref** (never from a PR) — the same twgit flow as
-`preside-ext-jsmodern`. **The ref name IS the version number** — there is no
-version to edit anywhere:
-
-| push this ref            | published version    | ForgeBox / GitHub release |
-|--------------------------|----------------------|---------------------------|
-| tag `v1.2.0`             | `1.2.0+<build>`      | stable                    |
-| branch `release-1.2.0`   | `1.2.0-SNAPSHOT<build>` | prerelease             |
-
-`<build>` is the GitHub run number, zero-padded. So a stable release is just
-`git tag v1.2.0 && git push origin v1.2.0`.
-
-Pipeline:
-
-1. every run: `npm ci` → `npm run build` → **fail if `assets/dist` differs from a
-   fresh build** (i.e. someone edited `src/` without committing a rebuild);
-2. publish runs only: `pixl8/github-action-twgit-release-version-generator`
-   generates the semver, envsubst injects it into the `$VERSION_NUMBER`
-   placeholders in **`box.json` + `manifest.json`** (both files ship with the
-   literal placeholder — don't hardcode a version);
-3. the project is zipped (excluding everything in `box.json`'s `ignore` list —
-   `src/`, `harness/`, `node_modules/`, the npm/esbuild files, `CLAUDE.md`),
-   a GitHub release is created with the zip attached, that asset URL is substituted
-   into `box.json`'s `$DOWNLOAD_URL`, and `pixl8/github-action-box-publish` pushes
-   to ForgeBox.
-
-Requires repo/org secrets **`FORGEBOX_USER`** and **`FORGEBOX_PASS`**.
+# Part 2 — How it plugs into Preside
 
 ## How it plugs into Preside (the important part)
 
@@ -232,6 +278,37 @@ Two supported approaches (concrete paths + ready-made commands: see `devlocal.md
 After changing the extension structure or a `.cfc`, **restart the server or
 `fwreinit`** — production mode caches Sticker bundles, views, and the extension list.
 
+## Releasing / publishing to ForgeBox
+
+`.github/workflows/ci.yml` runs on every push/PR and **publishes only from a
+`release-*` or `v*` ref** (never from a PR) — the same twgit flow as
+`preside-ext-jsmodern`. **The ref name IS the version number** — there is no
+version to edit anywhere:
+
+| push this ref            | published version    | ForgeBox / GitHub release |
+|--------------------------|----------------------|---------------------------|
+| tag `v1.2.0`             | `1.2.0+<build>`      | stable                    |
+| branch `release-1.2.0`   | `1.2.0-SNAPSHOT<build>` | prerelease             |
+
+`<build>` is the GitHub run number, zero-padded. So a stable release is just
+`git tag v1.2.0 && git push origin v1.2.0`.
+
+Pipeline:
+
+1. every run: `npm ci` → `npm run build` → **fail if `assets/dist` differs from a
+   fresh build** (i.e. someone edited `src/` without committing a rebuild);
+2. publish runs only: `pixl8/github-action-twgit-release-version-generator`
+   generates the semver, envsubst injects it into the `$VERSION_NUMBER`
+   placeholders in **`box.json` + `manifest.json`** (both files ship with the
+   literal placeholder — don't hardcode a version);
+3. the project is zipped (excluding everything in `box.json`'s `ignore` list —
+   `src/`, `harness/`, `node_modules/`, the npm/esbuild files, `CLAUDE.md`),
+   a GitHub release is created with the zip attached, that asset URL is substituted
+   into `box.json`'s `$DOWNLOAD_URL`, and `pixl8/github-action-box-publish` pushes
+   to ForgeBox.
+
+Requires repo/org secrets **`FORGEBOX_USER`** and **`FORGEBOX_PASS`**.
+
 ## Preside integration contract (must be preserved)
 
 The facade (`src/facade.js`) reproduces the CKEditor-facing API Preside depends on:
@@ -269,487 +346,552 @@ Preside way instead:
   (the cfrequest data block may be emitted after the bundles execute).
 - **`i18n/tiptap.properties`** is the resource bundle; sites localise by adding
   `tiptap_<lang>.properties` overrides (normal Preside resource-bundle rules).
-- **`views/admin/layout/ckEditorJs.cfm`** translates each key server-side (admin
-  user locale) into `event.includeData({ tiptapI18n = … })`.
+- **THE KEY LIST IS A SETTING, not a literal in the view**:
+  `settings.tiptap.i18nKeys` (`config/Config.cfc`), which
+  `views/admin/layout/ckEditorJs.cfm` reads and translates server-side (admin
+  user locale) into `event.includeData({ tiptapI18n = … })`. It moved there
+  because **a view can only be overridden once** — a second extension overriding
+  `ckEditorJs.cfm` makes the last one win and silently drops the other's
+  strings, which was the hard blocker on any dependent extension.
+- **An entry may name its own resource bundle** — `"tiptapai:ai.button"` — and a
+  bare key means this extension's own `tiptap` bundle, so every existing entry is
+  untouched. **The JS key stays unprefixed** (`t( "ai.button" )`), so `src/i18n.js`
+  needs no change and the client never learns which bundle a string came from.
+- **APPEND to the setting, never assign** — here and in a dependent extension.
+  `dependsOn` should make the ordering right anyway; writing both defensively
+  means nothing depends on that belief being correct, and it costs nothing.
 - Adding a string = add the key in **three places**: `src/i18n.js` DEFAULTS,
-  `i18n/tiptap.properties`, and the key list in `ckEditorJs.cfm`.
+  `i18n/tiptap.properties`, and the list in `config/Config.cfc`.
 - `{count}` / `{name}` placeholders are substituted client-side by `t()`.
+- `tIf( key )` is `t()` for an **optional** string: it returns `""` rather than
+  the key when nothing resolves. `t()`'s key-as-fallback is right for a string
+  that must exist and wrong for one that need not (a plugin "/" item with no
+  hint would print `slash.foo.hint` under its label).
 
-## Footer status bar
+---
 
-The facade renders a `.tiptap-footer` under each editor with live word / char
-counts and estimated reading time (225 wpm), refreshed on every doc change, plus
-the right-aligned light/dark toggle (`.tiptap-footer-right`). Disable per
-site/field with `defaultConfigs.wordcount = false`. Strings are the `footer.*`
-i18n keys.
+# Part 3 — Extending this extension
 
-## Document outline navigator
+## Extending this extension (the plugin API)
 
-`src/outline.js` renders a collapsed **rail** of short horizontal lines on the
-right edge of the container — one per heading, wider line = higher level — that
-expands on hover (or focus, or click to pin) into a panel of heading titles;
-clicking a line or an entry drops the caret in that heading and scrolls it into
-view, and the current heading highlights as you scroll past it. Disable per
-site/field with `defaultConfigs.outline = false`. Strings are the `outline.*`
-i18n keys.
+> **Actually building one? Invoke the `tiptap-plugin-api` skill** — it carries
+> the full spec, a complete worked `preside-ext-tiptap-spellcheck` example, and
+> the "does this belong in an add-on at all?" test. This section is the summary
+> that lives with the core code; the skill is the instructions.
 
-- **The outline adapts to the space it has** (`railPlan()`): it shows the
-  **deepest heading level that fits** — h1–h6, else h1–h5, … — then, if even the
-  shallowest level present outnumbers the room, **every Nth** of them
-  (`.is-sampled`, plus `.is-partial` whenever anything was dropped). Levels are
-  never shed below the shallowest level the document actually uses, so a doc
-  starting at h2 still gets a rail.
-- **The rail and the panel show the SAME set** — the panel is the label list for
-  the markers, so it can never offer a heading the rail does not mark. Capacity is
-  `min( (editable − 24)/8px rail rows, (editable − 20)/24px panel rows )`; the
-  panel's taller rows are the binding constraint, which is also what stops either
-  list overflowing the editor. `PANEL_ROW_HEIGHT`/`PANEL_PADDING` in
-  `src/outline.js` MUST track `.tiptap-outline-item`/`.tiptap-outline-panel` in
-  the CSS.
-- Capacity is **measured**, not read from CSS: the computed value of a
-  percentage `max-height` stays a percentage, so `getComputedStyle` cannot give
-  it in px. Same reason the rail has no percentage `max-height` of its own — it
-  would not resolve against the wrapper (whose height is capped, not set) and
-  the rail would run off the bottom of the editor.
-- **Chrome only** — it lives on `.tiptap-editor-container`, never in the
-  editable, so `getData()` is unaffected and the rail does not scroll with the
-  content (the scroller is `.tiptap-editor-mount`, one level in).
-- **It stays vertically centred on the editable** at any heading count. Two
-  things are load-bearing: the panel is **out of flow** (as a hidden flex sibling
-  it still contributed its full height, making the wrapper tall and pushing the
-  top-aligned rail upwards — the bug that made the rail "creep up" as content
-  grew), and `place()` sets the wrapper's `top` in px from the **editable's** box,
-  not the container's (a two-row toolbar puts those centres ~20px apart).
-- The active heading comes from **scroll position** while scrolling (mount or
-  window, rAF-throttled) and from the **caret** otherwise; the rail highlights
-  the marker at or above it, since the rail is a subset.
-- **Colours come from the Preside admin palette** (Preside-CMS
-  `system/assets/css/admin/lessglobals/colours.less`), not from anywhere else:
-  entry hover is `@pale-blue` (`@default-row-hover-colour`), the current entry
-  gets the `@blue` tree-list highlight bar, rail markers are `@grey12` idling and
-  `@blue-darker` active, and the landed-on heading flashes the admin's highlight
-  `@yellow`. The variable-to-admin mapping is listed in the `src/tiptap.css`
-  header - add colours as `--tt-*` variables sourced from that file, never as
-  new hex values.
-- The panel has **no visible heading** - `outline.title` is only its accessible
-  name (`aria-label`).
-- The wrapper is `pointer-events:none`; only the drawn rows and the open panel
-  take clicks, so the right edge of the editable stays usable. Don't "simplify"
-  that away.
-- **Scrolling is scoped, and often skipped entirely.** Clicking scrolls the
-  **mount** when the mount is the scroller (field `maxHeight`, or maximized). When
-  the field shows all its content there is nothing to scroll to, so a click only
-  moves the caret + highlight — do NOT reinstate a `scrollIntoView()` fallback
-  there: with no scroller of its own the browser satisfies it by scrolling the
-  admin PAGE, yanking the form around under a heading that was already visible.
-  The page is only moved when the heading is genuinely outside the viewport (a
-  tall uncapped field), and then with `block:"nearest"`.
-- The landed-on-heading highlight is a **ProseMirror node decoration**
-  (`tiptap-outline-target`), NOT a class on the heading element: ProseMirror's
-  next DOM sync rewrites node attributes and wipes any class we set. That is why
-  `src/index.js` exports `Plugin`/`PluginKey`/`Decoration`/`DecorationSet` on
-  `window.PresideTiptap`. Being a decoration also keeps the doc clean — no
-  `update` event, so the form never goes dirty from navigating.
+Anything genuinely optional — AI authoring, diagramming, a spell-check service,
+a custom embed — belongs in its **own** `preside-ext-tiptap-*` extension, so the
+fidelity-critical core stays small and a site ships no code for a feature it
+does not use. `apiVersion` is **1**; there are no compatibility shims, so a
+plugin can check and refuse, and that is the whole negotiation.
 
-## Smart images (drag-resize + alignment)
+The Preside half needs nothing new: declare `dependsOn: ["preside-ext-tiptap"]`,
+register a Sticker bundle with `.dependsOn("tiptap-facade").after("tiptap-facade")`,
+and append your keys to `settings.tiptap.i18nKeys` (above). The JS half is:
 
-`src/imageTools.js` puts corner drag handles and a bubble toolbar over the
-**selected** embedded image (align left/centre/right, 25/50/100%-of-editor-width
-presets, original size, edit-in-picker, remove), and writes the result back into
-the same `{{image:...:image}}` token the picker produces. Disable per site/field
-with `defaultConfigs.imageTools = false`. Strings are the `image.*` i18n keys.
-Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
+- **`window.PresideTiptap.plugins`** (`src/plugins.js`) — `register( spec )`,
+  `all()`, `get( name )`, plus a lifecycle bus (`on`/`off`/`emit`). It lives in
+  the **vendor** bundle, which is the first script on the page, so a plugin's
+  parse-time `register()` can never run before the registry exists. Registering
+  after an editor already exists still applies to editors created *later* and
+  `console.warn`s — a predictable half-failure beats a silent one.
+- **`window.PresideTiptap.api`** — the helpers, re-exported unwrapped by the
+  facade: `t`, `openDialog`/`closeDialog`, `surfaceOf`/`pageRect`/`containerOf`/
+  `frameOf`, `focusEditable`, `placeBubble`/`bubbleButton`, `ICONS`,
+  `applyTheme`/`isDark`, `tokenize`/`detokenize`, `normalizeOutput`.
+  **Exporting them is the point of the whole exercise**: each one encodes a trap
+  that cost a release (`containerOf` because `closest()` returns null from inside
+  the frame; `focusEditable` because a Tiptap chain on an unfocused editable
+  throws on Safari; `openDialog` because the admin's `!important` rules cannot be
+  out-specified, only escaped into a shadow root; `placeBubble` because centring
+  clips and the mount is page-height inline). A plugin that reimplements them
+  reimplements the bugs. `tokenize`/`normalizeOutput` are there so a plugin that
+  touches content can see what `getData()` will really store.
+- **The spec**: `name` (required), `enabled( cfg )`, `tiptapExtensions( ctx )`,
+  `commands`, `slashItems( ctx )`, `bubble`, `chrome( ctx )`, `i18nDefaults`.
+- **The ctx** — `{ editor, instance, cfg, container, toolbar, frame, mode, api }`
+  — exists so a plugin never has to work out the frame boundary itself.
+  `frame` is the editing `<iframe>` for a boxed editor and **null** in Modern
+  inline mode; `mode` is `"boxed"`/`"inline"`. It is **one object, filled in as
+  the pieces appear**: `tiptapExtensions` necessarily runs before there is an
+  editor at all, so a plugin holding the ctx sees `editor`/`instance` arrive
+  rather than keeping a permanently-null copy.
+- **Lifecycle**: `beforeExtensions` → `toolbarReady` → `instanceReady` →
+  `beforeDestroy`. The last three also fire on the facade instance's own
+  CKEditor-shaped bus; `beforeExtensions` can only reach the registry's bus,
+  because no instance exists yet — which is also why `tiptapExtensions` is a
+  registry hook rather than an event. `beforeDestroy` fires at the **top** of
+  `destroy()`, before `_cleanups` and with the editor still alive, so a plugin
+  can revert document state it applied.
 
-- **It writes only three config keys** - and each one is a documented Preside
-  contract, not a choice we are free to change:
-  - `dimensions` - the `"WxH"` px string. Preside-CMS
-    `system/handlers/renderers/asset/Image.cfc::RichEditor` turns it into an
-    on-the-fly derivative `"WxH-<quality>"` via a `resize` with
-    `maintainAspectRatio=true`. **That is why dragging is always proportional**: a
-    non-proportional height would simply be ignored by the server.
-  - `alignment` - `auto|left|right|center`, applied by
-    `system/views/renderers/asset/image/richEditor.cfm` as `float:` / `margin:...
-    auto`.
-  - `derivative` - reset to `"none"` on resize, because
-    `ContentRendererService.renderEmbeddedImages` **deletes**
-    width/height/quality/dimensions whenever a named derivative is set. Named
-    derivatives only exist on sites that configure some with `inEditor=true`
-    (`DerivativePicker.cfc` renders nothing otherwise), so on most sites this
-    never fires.
-- **The preview is NOT re-requested on resize/align** - every distinct size makes
-  Preside generate and store a derivative, so a drag would litter the asset
-  store. The geometry is applied locally over the already-rendered HTML and a
-  **refresh button appears in the middle of the image**; the real derivative
-  arrives on the next load or when that button is clicked. Do not "fix" this into
-  an automatic (even debounced) refetch.
-- **ALIGNMENT AND SPACING ARE ALWAYS APPLIED BY US, COMPUTED FROM THE TOKEN, onto the
-  node view wrapper** (`data-tt-align` + an inline margin) - never only while the
-  preview is stale, and never copied back off the rendered HTML.
-  - *Why the wrapper*: `richEditor.cfm` puts `float:`/auto-margins and the spacing
-    margins on the rendered element, and those are inert inside the frame that
-    shrink-wraps the preview - there is no room to float in a box that is exactly the
-    image's width. CKEditor hit the same wall and solved it the same way
-    (`addEmbeddedImageStylesToWidgetWrapper` copied those styles onto its widget
-    wrapper). The css zeroes `float`/`margin` on `.tiptap-embed-preview > *` so the
-    wrapper is the single owner of both.
-  - *Why computed, not copied*: the rendered HTML is only ever as fresh as the last
-    render, and a stored `center` renders `margin:Xpx auto` - so copying gave an
-    image re-aligned left/right the wrong side spacing until it was refreshed.
-    `spacingPx()` mirrors `richEditor.cfm` exactly (`spacing_<side> ?: spacing ?: 0`,
-    and centre gets NO horizontal spacing), which makes the geometry exact in every
-    state.
-  - *The element carrying the styles is not always the `<img>`*: it is the `<figure>`
-    when there is a caption/copyright and the `<a>` when there is a link - hence the
-    css selector is `preview > *`. The harness mock renders all three shapes.
-  - Applying alignment only while stale was the bug where refresh made a right-aligned
-    image jump left and then refuse to re-align: the config still said `right`, so the
-    button was "active" and clicking it toggled the alignment *off*.
-- **Two key sets, and they are not the same set.** `LOCAL_KEYS`
-  (dimensions/alignment/derivative) are what this module writes - a change confined
-  to them is handled locally with no refetch. `STALE_KEYS` (dimensions/derivative)
-  are the ones that make the already-rendered HTML *wrong*, i.e. mark it stale and
-  offer the refresh button. **`alignment` is deliberately in the first and not the
-  second**: we render alignment ourselves, so re-requesting for it would achieve
-  nothing and just flash a pointless refresh button.
-- **Stale is derived, never flagged**: `renderedGeom` records the geometry the
-  visible HTML was rendered for, so undo/redo back to the rendered state clears the
-  marker on its own. The SIZE override is applied only while stale, so an untouched
-  image is exactly what the server produced (the derivative's own natural size).
-- **Empty / `"auto"` / `"none"` compare equal** in `geometryKey()`: clicking an
-  alignment off writes the picker's own `"auto"`, which renders identically to the
-  empty value it replaced, and would otherwise mark the preview stale forever.
-- **A local-key-only change must not refetch, anything else must.** The node view's
-  `update()` decides by comparing the non-local keys, so this holds for undo, redo
-  and picker edits alike - not just for changes this module made. Without an
-  `update()` at all, ProseMirror rebuilds the node view on every attribute change
-  and refetches every time.
-- Embeds render as **`dom > .tiptap-embed-frame > .tiptap-embed-preview`** (all
-  three, for uniformity). The server HTML replaces `preview`'s innerHTML, so the
-  chrome has to be a sibling of it; `frame` shrink-wraps the embed and is what the
-  absolute overlays measure against. **The selection outline is on the frame, not
-  the wrapper** - a centre-aligned image makes the wrapper a full-width block (that
-  is how it centres), so outlining the wrapper drew a selection box across the
-  whole editor.
-- The bubble is anchored to the image's **left** edge and then nudged by
-  `placeBubble()` to stay inside the editable; centring it on the image clipped
-  half its buttons off the editor border on any small or left-floated image.
-  Vertically it prefers **above** the image and **flips below** (`.is-below`) when
-  there is no room — an image at the top of a field otherwise put the bubble on
-  the toolbar or outside the mount, with none of its buttons reachable. The room
-  is measured against the **mount∩viewport** band, as the table bubble and the
-  Modern selection bubble do: inline the mount is page-height, so the raw rect
-  answers the wrong question.
-- Clicking the refresh button **also selects** the node, and so does starting a
-  drag: the button covers the middle of the image, so a click aimed at the image
-  lands there instead, and that must not be a dead end.
-- **Byte fidelity**: the token is rebuilt only when the user actually changes
-  something. Never parse-and-reserialise on load - it reformats the JSON and
-  breaks `getData()`'s byte match with CKEditor.
-- "Original size" is the one action allowed to exceed the editor width (the site's
-  layout may be wider); drags and the % presets cap there.
-- The harness mock (`harness/server.mjs` `renderMockImage()`) mirrors
-  `richEditor.cfm` closely enough to exercise all of this without a Preside boot,
-  including serving the mock svg AT the requested size so the aspect ratio the
-  editor reads is real.
+Rules the merge points keep, and which must not be relaxed:
 
-## Embeds: block chips, and click-to-select
+- **Built-ins always win.** `command( name, cfg )` in `toolbar.js` checks
+  `COMMANDS` first; a plugin cannot silently re-point `Bold`. Everything that
+  renders or tests a button name goes through that one lookup — never index
+  `COMMANDS` directly, or the name becomes unreachable for plugins.
+- **A disabled plugin is indistinguishable from an unregistered one.** Its
+  command resolves to null, so it is skipped exactly like `Scayt` is, and
+  `tidySeparators()` (which runs *after* rendering, precisely because what
+  renders is not knowable up front) leaves no dangling rule where its button
+  would have been. T29 asserts both halves.
+- **An item whose command does not exist is dropped, not shown broken** — the
+  "/" menu's existing rule, applied to plugin items too.
+- **`i18nDefaults` sit UNDER our own DEFAULTS**, so a plugin can add keys and
+  never silently restate one of the editor's.
+- **The seam is fidelity-neutral**: a registered but idle plugin changes
+  `getData()` by nothing. That is asserted (T29), and it is the release
+  criterion for any change here.
 
-All three embeds (`presideImage`, `presideAttachment`, `presideWidget`) are
-**block** atom nodes, and their DOM has to be block-level too.
+Tests: **T29** (`harness/test-plugin-api.html` + `harness/plugin-fixture.js`,
+the dummy add-on), plus two Modern-mode context assertions in
+`harness/test-frontend-inline.html` — the shape a boxed editor cannot exercise.
 
-- **Widget/attachment placeholders are `display:block; width:fit-content`.** As
-  `inline-block` their DOM shared a line, so two widgets in a row sat side by side
-  instead of stacking - wrong for a block node. `fit-content` keeps the shrink-wrap
-  that makes a widget read as a chip rather than a full-width bar (shrinking AND
-  stacking verified in blink, webkit and gecko).
-- **The IMAGE keeps `inline-block`**, deliberately: its alignment feature floats
-  the wrapper so text can sit beside it, and `center` switches itself to
-  `display:block` for the auto margins. So two consecutive *images* can still share
-  a line - that is the alignment feature working, not the widget bug.
-- **A single click selects the NODE.** These are atoms with
-  `contenteditable=false`, but their previews are server-rendered HTML full of real
-  text, and a click landing on it left the browser to start a text selection
-  *inside* the embed. `makePreviewDom()` adds a `mousedown` handler that
-  `preventDefault()`s (which is what stops the text selection) and sets a
-  NodeSelection. Only for embeds with no tools of their own - **imageTools already
-  does this for images**, where the click must also arm the handles and the bubble.
-  `user-select:none` on all three stops a drag painting a highlight across them.
-- **The selected outline goes on the CHIP for widget/attachment, on the FRAME for
-  the image.** The image's wrapper goes full-width to centre itself, so outlining
-  it drew a selection box across the whole editor; a chip shrink-wraps and is the
-  box the user actually sees.
+---
 
-### Preview links never navigate inside the editor
+# Part 4 — Cross-cutting architecture (read before touching ANY UI)
 
-The previews are **real server-rendered HTML**, and an attachment renders as an
-`<a href>` to the asset - so clicking the paperclip icon or the filename
-**downloaded the file**, from inside the editor, where the click was meant to select
-the embed so it could be edited or removed. (A linked image is the same shape of
-problem.) `makePreviewDom()` cancels `click` and `auxclick` on any anchor inside an
-embed, in the **capture** phase so it lands before anything in the rendered markup.
+## The editing iframe (isolation + content-CSS fidelity)
 
-- **Selecting the node already worked; that was not the bug.** The select-me handler
-  `preventDefault()`s the *mousedown*, and a cancelled mousedown does not stop the
-  anchor's own click activation - which is what navigates.
-- `auxclick` is covered because a **middle click** opens the download in a new tab,
-  and keyboard activation fires a click of its own, so it is covered too.
-- **Nothing is neutered outside the editor, by construction**: the guard lives on the
-  node view, which only exists while the editor does. Classic closing, or Modern
-  re-rendering the region from the server, leaves the page's own markup with the page's
-  own links. Verified in both modes.
-- It is **scoped to embeds**, not a blanket "cancel every link click" - an ordinary
-  content link in the editable is untouched (asserted, so the guard cannot quietly
-  grow into one).
+**The editable lives in its own document.** `src/editorFrame.js` builds a
+per-editor `<iframe>`; the toolbar, footer, outline rail and pickers stay in the
+host page. This is what CKEditor 4 did, and returning to it deleted three CSS
+transforms that each existed only because we were not in an iframe.
 
-Tests: **T27** (the mock renders the server's own download href - it used to be
-`href="#"`, which is why the harness could not see this bug; the click and the middle
-click are both cancelled; the click selects the embed instead; the token round-trips;
-an ordinary content link is left alone). Confirmed with a real Playwright mouse too:
-no navigation, no download, and **no request** for the asset.
+### Why an iframe and not CSS, and not shadow DOM
 
-### The bubble: all three embeds get one
+Three separate problems, one boundary:
 
-The floating toolbar over a **selected** embed is one implementation
-(`src/embedBubble.js`) with two button sets: the image's full one (align, size
-presets, original size, edit, remove - `src/imageTools.js`) and, for widgets and
-attachments, just **Edit** and **Remove**, because they have no geometry to offer.
+1. **Isolation.** The previous `all: revert` wall was a *specificity contest* at
+   `(0,2,0)`, so it was beaten by any admin/theme rule at `(0,2,1)` or above and
+   by **any `!important`** — both of which real admin stylesheets contain. No
+   ordering wins that argument. It also cost a release: reverting `all` discards
+   the presentational hint WebKit maps `contenteditable` onto, so the editable
+   went read-only in Safari. A shadow root would have fixed this much, and
+   neither of the next two.
+2. **`rem`.** Always resolves against the **document root** — spec, no
+   exceptions, and a shadow root is not a new root. The admin is
+   `html{font-size:10px}` (Ace/bootstrap), so a site's rem-based content CSS
+   rendered at 62.5% of its intended size. A frame has its own root, so `1.2rem`
+   is simply `19.2px`.
+3. **`vw`/`vh` and media queries.** Resolve against the frame's own box — roughly
+   the width the content will really be rendered at — instead of the whole admin
+   viewport. A real site's `clamp(1.125rem, 0.9375rem + 0.5vw, 1.375rem)` base
+   size was being computed for a 1600px viewport inside an 800px editor.
 
-- **`placeBubble()` and `bubbleButton()` live in `embedBubble.js` and imageTools
-  imports them**, so the two bubbles cannot drift apart. The placement rules are the
-  ones the image bubble arrived at the hard way and they are documented there: left-
-  anchored then clamped inside the editable (centring clipped half the buttons off a
-  small or floated embed), above unless there is no room and then `.is-below` (an
-  embed at the top of a field otherwise put the bubble on the toolbar with none of
-  its buttons reachable), and the room measured against the **mount ∩ viewport**
-  (inline the mount is page-height, so the raw rect answers the wrong question).
-- The css follows the same split: **`.tiptap-embed-bubble` is the shared chrome**,
-  `.tiptap-image-bubble` only carries the image-specific extras. Both classes are on
-  the image's bubble element.
-- **Chrome only** - it is a sibling of the preview inside the frame, never in the
-  document, so `getData()` is untouched whether it is on screen or not. Remove is an
-  ordinary `deleteRange`, so undo restores the token byte-for-byte.
-- **The buttons swallow `mousedown`** (`bubbleButton()`): a focused button inside the
-  `contenteditable=false` wrapper collapses the NodeSelection - which hides the very
-  chrome that was just clicked - and stopping propagation also keeps the click off the
-  embed's own select-me handler.
-- Edit reuses **`openPicker()`**, the same path the existing double-click uses, so
-  there is one way in to the picker and it stays prefilled for editing.
-- It is under the **same opt-out as the image tools** (`defaultConfigs.imageTools =
-  false`) and absent in a read-only editor: a field that turned embed chrome off
-  should not sprout a different flavour of it. An image whose token cannot be parsed
-  is still left strictly alone - it does not fall back to the reduced bubble.
-- Strings are the `embed.edit` / `embed.remove` i18n keys.
+**Deleted with the wall:** the reset and its specificity contract, the
+`html`/`:root`/`body` → editable selector mapping, and the rem→px rebasing.
+Content stylesheets go in as plain unmodified `<link>`s — same bytes, same cache
+as the site. An unstyled field is therefore **raw browser defaults**, exactly as
+CKEditor's iframe with no `contentsCss` was; the editor imposes no content
+typography of its own (`p{margin:0 0 .6em}` went too — at `(0,2,1)` it had been
+beating sites' own `p` margins, including on the real page in Modern mode).
 
-Tests: `harness/test-realworld.html` **T21** (stacking, shrink-wrap,
-click-selects-node, the outline, no text selection, token round-trip, and the bubble:
-exactly Edit + Remove on the selected chip, hidden on the unselected one, flipped
-below at the top of the field and still inside the mount, and Remove deleting just
-that embed).
+Do not reintroduce an `all: revert` anywhere. There is none left in the codebase:
+the dropdown previews carried the last one, and they moved into a frame of their own
+too (see "Nothing transforms content CSS any more").
 
-## The "/" insert menu
+### The rules
 
-`src/slashMenu.js` - type `/` in an empty block to filter and insert any
-block-level element, **including Preside's own**: the image / attachment / widget
-pickers, link, anchor, and **individual widgets by name** ("/news" → the news
-widget). Disable per site/field with `defaultConfigs.slashMenu = false`; strings
-are the `slash.*` keys.
+- **Synchronous by contract.** Core's `frontendEditors.js` reads `.editor`
+  straight off the constructor, so the frame is appended, its document written
+  and the editor built in ONE stack. `open()/write()/close()` into a freshly
+  appended `about:blank` is synchronous and the document is not replaced
+  afterwards (verified in chromium, webkit and firefox). **The frame must be in
+  the document before `contentDocument` exists** — hence it is created *after*
+  the container is inserted.
+- **Our own stylesheet is copied in as `cssText`, not linked** — it must apply
+  before the first height measurement, and a `<link>` would still be loading.
+  The `--tt-*` variables are declared for `.tiptap-editor-doc` (the frame's
+  `<html>`) as well as the container, and `applyTheme()` mirrors the dark class
+  onto the frame root, because a class on the container cannot cross documents.
+- **Height is measured, not CSS.** A frame is a replaced element and does not
+  grow with its content. `refit()` applies `min`/`maxHeight`; the editor also
+  refits **on every update, synchronously** — a ResizeObserver alone leaves the
+  frame a tick behind its content, and chrome that clamps to the visible band
+  then correctly refuses to show for a block that is briefly outside it (T15
+  caught the `+` button silently doing nothing). The initial fit is re-run after
+  the editor is built, since `setHeights()` runs before the editor exists and
+  would otherwise measure an empty mount.
+- **Whether the frame scrolls is DERIVED from its rendered height**
+  (`syncOverflow()`), not from the configured `maxHeight` — a CSS cap can clamp
+  it too, which is exactly what the front end does with a viewport-relative
+  `max-height` so core's fixed save bar stays clear. Scrolling is otherwise off:
+  on an auto-growing frame a scrollbar is pointless *and* a feedback loop
+  (appearing changes the content width → text rewraps → height changes →
+  scrollbar toggles again). The ResizeObserver observes the **body only**, never
+  `documentElement` whose box is the height we write, and defers through rAF.
+- **What lives where.** The frame holds the editable and the chrome glued to the
+  content: embeds/image tools, **the drag gutter** and the table bubble's target.
+  The host holds the toolbar, footer, outline rail, pickers, slash menu.
+- **`surfaceOf()` / `pageRect()`** let host-side chrome work against either
+  shape: `mount` now means *the frame* for a boxed editor and *the mount div* in
+  Modern inline mode. `box()` is the visible editor box (a frame's own rect IS
+  the viewport its content is clipped to), `toHost()` translates content
+  geometry, and `onScroll()` binds to whatever actually scrolls — **an
+  `<iframe>` never fires a scroll event itself**, its document does.
+- **THE DRAG RAIL IS INSIDE THE FRAME, and that is not cosmetic**: a drag must
+  begin and end in one document. With the grip in the host and the editable in
+  the frame, `dragstart` fired in one and ProseMirror's drop handling ran in the
+  other — `view.dragging` armed correctly and the drop then did nothing, so a
+  dragged table *vanished* (T16). Living in the frame also means no coordinate
+  translation in that module at all. The frame's `body` is `position:relative`
+  so the absolutely-positioned rail scrolls with the content.
+- **Never `view.dom.closest( ".tiptap-editor-container" )` — use `containerOf()`**
+  (`editorFrame.js`). `closest()` stops at the root of the editable's OWN
+  document, so from inside the frame it returns null and the caller silently
+  operates on nothing. That is exactly how the toolbar's **Maximize** button
+  stopped working (it toggled a null container) and how the slash menu lost its
+  light/dark sync. Toolbar `is-active` states also refresh right after a button
+  click, not only on the next transaction, because Maximize changes chrome
+  without touching the document.
+- **The gutter classes go on whichever root can reach the mount** — the frame's
+  `<html>` for a boxed editor. The padding they apply is on `.tiptap-editor-mount`,
+  which a class on the container can no longer select.
+- **The slash menu's manual session binds keys to BOTH documents.** The popup is
+  body-portalled in the host (it has to escape a capped field's clipping) but the
+  user types into the frame, so a host-only listener never saw the keystrokes.
+- **Four table/pre rules lost their `.tiptap-editor-container` prefix.** It was
+  there purely for specificity against the reset, and inside the frame there is no
+  container ancestor, so it had become actively wrong (T19's `td` box-sizing and
+  T12's `.selectedCell` highlight both caught it).
+- **Modern inline mode gets NO frame.** There the editable IS the site page: it
+  must inherit the theme, and `rem`/`vw` already resolve against the site's own
+  root and viewport. It is correct by construction.
 
-- Trigger detection is **`@tiptap/suggestion`** (MIT, framework-agnostic; the
-  popup is ours because Tiptap only ships React/Vue renderers). Costs **+24kb**
-  and pulls nothing but core/pm/floating-ui - contrast
-  `@tiptap/extension-drag-handle`, below.
-- **`/` only fires at the start of an empty-ish block, and never in a code
-  block.** Preside content is full of real slashes (dates, paths, "and/or") and
-  CKEditor had no such trigger, so a menu opening mid-sentence would be a
-  regression against the editor we replace, not a missing feature.
-- **Every item runs a command that already exists** (the toolbar's `COMMANDS`, or
-  the pickers the embed extensions register). This module adds a way to REACH
-  things, never a second implementation - and items whose command is absent from
-  the build/field are dropped rather than shown broken.
-- The suggestion range is deleted **before** the item runs, so a picker inserting
-  a block-level node sees a clean block.
-- **Search matches the translated label first, then keywords/hints** - the
-  English keywords are additive so "/pic" finds the image picker, but a localised
-  admin stays searchable in its own language.
-- The popup is on **`<body>`**, not the container: a capped-height or
-  overflow-hidden field would clip it (same reason the picker overlays live
-  there). That puts it outside the `--tt-*` variables' scope, so its light/dark
-  values are its own — synced from the **editor's** `tiptap-dark` class at open
-  (NOT `prefers-color-scheme`: a dark OS must not put a dark menu over a light
-  editor, or over the site page in Modern inline mode).
-- **It renders before it positions.** Measuring an empty box put a full-length
-  menu off the bottom of the screen - `paint()` renders, *then* `move()` decides
-  whether to flip above the caret.
+### Nothing transforms content CSS any more
 
-### The widget list
+There used to be a second, scope/rewrite/rem-rebase path here for the Format/Styles
+dropdown previews, which were chrome in the host document. **It is gone, along with
+the last `all: revert` in the codebase, because the previews moved into a frame of
+their own too** (`src/comboPanel.js`, below). Do not reintroduce either.
 
-`views/admin/layout/ckEditorJs.cfm` emits `cfrequest.tiptapWidgets` from
-`widgetsService.getWidgets()` - **no new endpoint**, the same pattern as
-`tiptapI18n`, translated for the admin user and filtered to the active site
-template (mirroring core's `Widgets._getSortedAndTranslatedWidgets`).
+It could not have been made to work by patching:
 
-- `widgetCategories` is a **per-field** setting while this view renders **once per
-  page**, so each widget ships **with its `categories`** and `slashMenu.js`
-  filters per field, applying Preside's own rule (`_isWidgetInCategories`):
-  an empty list on *either* side means `"default"`.
-- The categories knowable server-side are `"default"` plus whatever the site
-  configures. A field naming some other category still gets the "Widget…" entry,
-  so **no widget is ever unreachable** - it just loses the by-name shortcut.
-- Selecting a widget opens the picker **pre-pointed at it**, via a new optional
-  `extra` argument threaded through `openPresideWidgetPicker` →
-  `pickerUrl` → `widget=<id>` (core's `Widgets.dialog()` renders that widget's
-  configForm whenever `rc.widget` is set). Called with no argument - i.e. the
-  toolbar button - **the URL is byte-identical to before**.
-- Deliberately **not** short-circuited into building a `{{widget:...}}` token
-  here, even for widgets with no config form: the token would then be ours rather
-  than Preside's, and byte fidelity with what the picker commits is the whole
-  point of tokens.
-- The whole block is wrapped in a `try`/`catch` - the menu is a convenience and
-  must never take the editor down with it.
+- **The admin's own stylesheet reached the preview.** It sat inside
+  `.tiptap-editor-container` in the admin's document, so a rule like
+  `body main .tiptap-editor-container p{text-transform:uppercase}` — (0,2,2), and
+  T19's head plants exactly that — simply won. Same fight the editable lost before
+  it moved into a frame.
+- **`.tiptap-fmt-preview *{all:revert}` was itself the bug.** At (0,1,1) it beat any
+  content rule of lower specificity, so a `:where()`d rule never reached the
+  preview; anything in an `@layer` loses to unlayered CSS at *any* specificity.
+- **`serialiseRules` had no branch for `@layer`/`@container`/`@scope`** (no legacy
+  numeric rule type), so those blocks fell through to `out += rule.cssText` and were
+  emitted **unscoped into the admin's own `<head>`** — no preview styling *and* a
+  leak that restyled the admin UI.
+- `remBase()` *guessed* the rem base from the sheet's own `:root` rule, `em` chained
+  off the admin's 10px root, `vw`/media/container queries resolved against the admin
+  viewport, and the whole path needed a same-origin `fetch()` to succeed where a
+  `<link>` does not.
 
-## Block drag handle
+`presideStyles.js` now does two things only: `injectFrameStyles()` (an unmodified
+`<link>` per URL, into whichever frame asked) and `harvestSelectors( doc )`.
 
-`src/dragHandle.js` - hovering a block shows two controls in the left gutter: a
-**"+"** (insert a block below) and a **grip** (drag to reorder, click to select -
-which is also what makes the image tools / table bubble appear, so the grip
-doubles as "select this"). Disable per site/field with
-`defaultConfigs.dragHandle = false`.
+Tests: `harness/test-realworld.html` **T19** asserts the boundary itself, that an
+admin `!important` and a higher-specificity admin rule do **not** reach the
+content, that `rem` resolves against the frame root (`1.5rem` = 24px, not 15px)
+and that `em` chains off it (`1.25em` = 30px), and that the content sheet arrives
+unmodified. Its head carries the admin-leak emulation, including the two rule
+forms that defeated the old reset.
 
-- **"+" opens the slash menu DIRECTLY at a fresh empty block, with no "/"
-  character written into the document** (`slashMenu.js` `storage.openManual`):
-  the same popup, item list and filtering as the typed "/", so the two
-  affordances cannot drift — the manual session keeps the query itself and a
-  capture-phase key handler swallows typed characters to filter (Esc closes,
-  Enter/Tab picks, Backspace unfilters-then-closes). It used to type a literal
-  "/" and let the suggestion plugin react; a button that writes its shortcut's
-  trigger character into the author's content read as a bug (T15 asserts the
-  block stays empty). "+" still renders **only when the slash menu is enabled**
-  (the facade passes `slashMenuEnabled( cfg )`), and the gutter narrows to the
-  grip alone otherwise - `.tiptap-gutter-2` (48px) vs `.tiptap-gutter-1` (28px),
-  so a field never pays for a control it does not show.
-- Clicking "+" on an **already-empty paragraph reuses that block** rather than
-  pushing it down, so it cannot stack blank lines.
-- Both controls live in one `.tiptap-block-gutter` wrapper and share the hover
-  bookkeeping - `is-visible` is on the WRAPPER, not the grip. Hovering either must
-  not count as leaving the block.
+## Safari: never build a command chain on an unfocused editable
 
-- **HAND-ROLLED DELIBERATELY. Do not "simplify" this to
-  `@tiptap/extension-drag-handle`.** That package is MIT in v3, but it
-  hard-imports `@tiptap/extension-collaboration` + `@tiptap/y-tiptap`, so the
-  build *fails* without them and installing them drags real Yjs runtime code into
-  the bundle: **measured at +139kb (+30% of the vendor bundle)** for an editor
-  that does zero collaboration. It also pins `@tiptap/pm` to an exact version.
-  Everything it offers is already in what we ship - `nodeDOM` for positioning,
-  `NodeSelection` for the drag, `prosemirror-dropcursor` (via StarterKit) for the
-  drop indicator.
-- **Chrome only** - the handle lives on `.tiptap-editor-container`, so
-  `getData()` is unaffected by its existence. A drag is of course a real edit, but
-  an ordinary ProseMirror move: tokens survive byte-for-byte and undo restores
-  exactly (both asserted in `test-realworld.html` T15).
-- The gutter comes from a **`.tiptap-has-draghandle` class**, not from
-  `.tiptap-editor-mount` itself, so a field opting out keeps the original padding
-  and loses no editable width.
-- **Block lookup iterates the doc's own top-level children** and compares DOM
-  boxes, rather than using `view.posAtCoords`. We want the top-level block (the
-  draggable unit); `posAtCoords` returns the innermost position, so a paragraph
-  in a list item or table cell would have to be climbed back up, and it behaves
-  differently for leaf nodes like our embeds.
-- The grip aligns to the block's **first line**, not its centre - on a tall block
-  (a long list, a big image) a centred grip reads as belonging to nothing. It is
-  also clamped into the visible mount, so a half-scrolled block's grip cannot
-  float over the toolbar.
-- Mouse tracking is on the **container**, not the editable: the grip sits in the
-  gutter *outside* the editable, so hovering the grip must not count as leaving
-  the block.
-- `hide()` **no-ops while dragging** - otherwise the grip is yanked out from under
-  the drag in progress.
-- Drag is the standard ProseMirror recipe: select the node, set
-  `view.dragging = { slice, move: true }`, and attach `text/html` +
-  `setDragImage` (some browsers cancel a drag with no data attached). ProseMirror's
-  own drop handling does the move. The ghost is anchored to where the pointer
-  actually is relative to the block (x clamped at 0 — negative `setDragImage`
-  offsets are unreliable), so the block doesn't visually jump left on pick-up.
-- **The gutter is a live drop zone.** The grip sits OUTSIDE the editable, so a
-  vertical-only drag keeps the pointer where ProseMirror never sees the
-  `dragover` — no drop line, no drop, and users had to drift right into the
-  text. While our drag is live, `dragover`/`drop` in the band left of the
-  editable (document capture listeners, gated on `dragging`) are re-dispatched
-  to the editable with the x clamped just inside it. `dragend` is also relayed
-  to the editable so the dropcursor clears on a cancelled (Esc'd) drag —
-  natively it only fires at the drag source.
-- **Edge auto-scroll during drag**: the same `dragover` pass nudges the scroller
-  (the mount when it scrolls; the window too when the editor overflows the
-  viewport — inline mode's scroller IS the page) proportionally within 40px of
-  the visible edge, so a block can be dragged to an off-screen spot in one
-  gesture. No rAF loop — `dragover` keeps firing while the pointer is
-  stationary, which is what makes hover-at-the-edge scrolling work.
-- **`allowTableNodeSelection: true` is REQUIRED on the Table extension** (set in
-  `src/index.js`) and is not optional polish. `prosemirror-tables` defaults it to
-  `false`, which silently **normalises away** a NodeSelection on a table - the
-  grip's selection collapsed to a cell inside it, so ProseMirror's move-on-drop
-  deleted that cell selection instead of the table and left the original in place:
-  **dragging a table DUPLICATED it.** Regression test: T16.
-- Because a dispatch can be normalised away like that, `dragstart` **verifies the
-  NodeSelection actually stuck** (`sel.node && sel.from === offset`) and refuses to
-  start the drag otherwise. A grip that does nothing is a far better failure than
-  one that silently copies content, and it makes any future node type with similar
-  plugin behaviour fail safe.
-- **Testing note on undo:** ProseMirror's history amalgamates transactions within
-  `newGroupDelay` (500ms), so a test that inserts a block and drags it immediately
-  gets ONE undo step for both - which looks exactly like "undo is broken". T16
-  waits 900ms between the two, as a real user's pause does.
-- **Testing note:** Playwright's `dragTo` uses mouse events and does **not** drive
-  native HTML5 drag-and-drop - it reports success while changing nothing. T15
-  dispatches the real sequence (`dragstart`/`dragover`/`drop`/`dragend`) with one
-  shared `DataTransfer`, which is what actually exercises the drop.
+`src/editorFocus.js` `focusEditable( editor )`. **Call it at every point where our
+own chrome runs an editor command**, and chain off its return value:
+`focusEditable( editor ).chain().focus().toggleBold().run()`.
 
-## Manual resize grip (bottom-right corner)
+Tiptap snapshots the transaction when a chain is created (`createChain()` does
+`const tr = state.tr`) and dispatches that same transaction at `.run()`. Its
+`focus` command contains a **Safari-only** branch that takes the DOM focus
+*synchronously*, where every other engine defers it to a `requestAnimationFrame`:
 
-`src/resize.js` reproduces CKEditor's `resize` plugin: the grip in the bottom-right
-corner of the bottom bar (our footer status bar) that drags the editor to a size the
-author chooses. Boxed/classic editors only.
+```js
+if ( isSafari() && !isiOS() && !isAndroid() ) { view.dom.focus( { preventScroll: true } ); }
+```
 
-- **`resize_dir` defaults to `"vertical"`**, so out of the box it drags HEIGHT only;
-  `"horizontal"`/`"both"` are honoured. Defaults are CKEditor's own: min 750x250,
-  max 3000x3000, `resize_enabled` true. An axis is draggable only when its min and
-  max differ (CKEditor's own test), so a field pinning both gets **no grip at all**.
-- **The minimum is lowered to the current size on pointer-down when the editor is
-  already smaller than it.** That is CKEditor's own line, and it matters far more
-  here: Preside's default `maxHeight` is 300, so a stock field starts under the 250
-  minimum and without it the first pixel of drag would JUMP the editor taller.
-- Clamping is against the WHOLE editor box, as CKEditor's is (`getResizable()`
-  returns the outer container), not the editable alone - so the corner stays under
-  the pointer.
-- **A dragged height is applied as `frameApi.setHeights( h, h )` - min and max
-  pinned to the same value - and that is the whole implementation.** Everything else
-  follows: the frame stops auto-growing (which is what "I chose this height" means,
-  and what CKEditor's explicit height did), and `syncOverflow()` derives on its own
-  that taller content now scrolls inside the frame. Resist adding a second height
-  path for this.
-- Nothing is persisted - a per-session size, exactly as CKEditor's was.
-- Hidden while maximized (CKEditor hides it on the `maximize` event; ours is a CSS
-  rule on `.is-maximized`), and **absent in Modern inline mode**, where the editable
-  is the site page in its own flow - CKEditor's inline mode had no bottom bar and no
-  resizer either.
-- It is drawn as the same 10px CSS border-triangle CKEditor's skin uses, NOT the
-  `◢` glyph that skin falls back to - same reasoning as the dropdown caret. Two
-  small departures: the cursor names the axis actually being dragged
-  (`ns-resize`/`ew-resize`/`se-resize`, where CKEditor's skin says `se-resize`
-  always), and the grip is focusable so arrow keys resize in 20px steps.
-- The footer's right-hand slot (`.tiptap-footer-right`) is now **always created**,
-  holding the light/dark toggle and the grip. That is deliberate: two elements each
-  with `margin-left:auto` would SPLIT the free space and park the toggle in the
-  middle of the footer. A field with `wordcount:false` has no footer, so the grip
-  floats in the container's own corner (`.is-floating`).
+A DOM focus makes prosemirror-view re-read the document selection and, if it
+differs from `state.selection`, dispatch a correcting transaction. So on Safari the
+state moves on mid-chain and `.run()` applies a transaction built from the state
+before it: **`RangeError: Applying a mismatched transaction`, and the whole chain
+is silently lost.** What that cost, all Safari-only:
 
-Tests: **T25** (rendered in the footer corner, vertical-only by default with the
-matching cursor, drag down/up by the drag distance, the height STICKS when content
-is added and the frame scrolls instead, arrow keys, hidden while maximized,
-`resize_enabled:false`, min===max leaves no grip, `resize_dir:"both"` narrows the
-container, and the min-lowering rule on a field capped below the default minimum).
-Its fixtures are its own: an earlier version dragged T9's field and raced the
-outline rail's rAF-deferred re-centring - the rail does re-place itself on a resize
-(it observes the surface), just not in the same tick.
+- **every frontend editor threw as it opened** — core's `frontendEditors.js`
+  calls `e.editor.focus()` from its own `instanceReady` handler (line ~174), and
+  the throw aborted the rest of core's handler, including its scroll-to-the-editor;
+- a **toolbar button pressed while the editable was not focused did nothing**;
+- the **outline rail could not move the caret** (silently — its `try/catch`).
+
+The way out is Tiptap's own guard, `if ( view.hasFocus() && position === null )
+return true;` — so take the DOM focus **first, outside any transaction**, where it
+is free to dispatch whatever it likes.
+
+- **`CompatInstance.focus()` uses `view.focus()`, not `commands.focus()`** — no
+  transaction is built, so there is nothing to mismatch, and it is the more
+  faithful reading of CKEditor's `focus()`, which focused the editing surface and
+  never moved the caret. Same in `maximize.js` (whose `try/catch` had been
+  swallowing exactly this).
+- **`chain().focus( pos )` is NOT protected by `focusEditable()`** — passing a
+  position deliberately skips the `hasFocus()` guard. Use
+  `setTextSelection( pos )` on the chain instead; that is what `outline.js` does.
+- The harness pages carry the same discipline as `edFocus( ed )`, because a
+  synthetic test drives the editor from an unfocused editable where a real user's
+  click would have focused it natively.
+
+## Light / dark mode
+
+The toggle (`.tiptap-theme-toggle`) is rendered **right-aligned in the footer
+status bar**. A toolbar config can instead place it in the toolbar with the button
+name `Theme` (or `DarkMode`), in which case the footer does not get one; if the
+footer is disabled (`wordcount = false`) it falls back to the far right of the
+toolbar (`.tiptap-toolbar-right`). `buildToolbar()` returns
+`{ themeEnabled, themeRendered }` so the facade can make that call. Disable the
+control entirely per site/field with `defaultConfigs.darkMode = false`.
+
+- **Chrome only** — dark mode adds `.tiptap-dark` to the container; the stored
+  content is untouched, so `getData()` is identical in either mode.
+- **`src/theme.js`** owns the state: the choice is a per-USER preference in
+  `localStorage` (`presideTiptapTheme`), not per-field, so toggling one editor
+  re-themes every editor on the page (it walks the live DOM rather than keeping a
+  listener registry — editors are created/destroyed freely) and the preference is
+  re-applied on mount. Default is light.
+- **`src/tiptap.css`** drives all chrome colours through `--tt-*` custom
+  properties declared on `.tiptap-editor-container`, so the dark theme is one
+  variable override block at the bottom of the file. Add new colours as variables,
+  not literals. The picker/anchor overlays live outside the container (on `<body>`,
+  hosting admin forms in an iframe) and stay light deliberately.
+- **THE OVERRIDE BLOCK IS DECLARED FOR BOTH DOCUMENTS**
+  (`.tiptap-editor-container.tiptap-dark,.tiptap-editor-doc.tiptap-dark`), exactly
+  as the light block is, and the mount-scoped dark rules are prefixed with a bare
+  `.tiptap-dark` rather than the container. This was a real bug for as long as the
+  editing frame has existed: with the override on the container alone it **could not
+  match inside the frame** — `theme.js` mirrors the class onto the frame's own
+  `<html>` precisely because a container selector means nothing in there — so every
+  `--tt-*` variable kept its LIGHT value inside the editable's document. Dark mode
+  drew a dark surface (the container, behind a transparent frame) under **black
+  content text**, with light table borders, light embed placeholders and a light
+  selected-cell highlight. Anything new that colours the editable or the chrome
+  inside the frame must be reachable from the frame root, never from the container.
+- A field's own content stylesheets (`contentsCss`/`stylesheets`) are authored
+  for a light page, so any explicit colour they set still wins inside the
+  editable — intentional (WYSIWYG fidelity), so dark mode is a chrome-comfort
+  feature, not a content preview.
+- Strings are the `toolbar.theme.dark` / `toolbar.theme.light` i18n keys (the
+  tooltip describes what a click will do; the icon shows the current mode).
+
+## Frontend (in-page) editors: clearing the site's own chrome
+
+Core opens a frontend editor as `position:fixed; top:100px; z-index:100` with a
+`z-index:99` sheen (`system/assets/css/admin/frontend/frontendEditor.less`) —
+numbers that predate sticky site headers. A theme header above that band paints
+**over** the editor, and being anchored to the top of the viewport it lands
+exactly on the toolbar: the toolbar is simply not there. `src/frontendFit.js`
+fixes that, in two steps, and both are **frontend-only**.
+
+1. **Win the stack.** The site's own fixed/sticky chrome is measured
+   (`siteChromeZ()`) and `--tt-z-base` is set above the highest of it.
+   **Every z-index this extension owns is expressed against that one variable**
+   in `src/tiptap.css`, so the whole ladder lifts together and keeps its order:
+   sheen (`base-1`) < frontend container (`base`) < maximized (`base+10`) <
+   picker overlay (`base+960`) < anchor overlay / slash menu (`base+1060`).
+   **Never write a literal z-index for those** — a fixed rung is one that stops
+   moving with the rest, which is exactly how a maximized editor ended up under
+   a site header while the un-maximized one was fine.
+   - The var's **default is 1040**, chosen so the rungs compute to the previous
+     literals (1039/1040/1050/2000/2100). In the admin the var is never set, so
+     admin stacking is byte-identical to before — asserted on `/tiptap.html`.
+   - Painting over the header is the right answer, not a compromise: the editor
+     is modal and the sheen already dims the page behind it.
+2. **Push down whatever still covers us** — an element with a z we refused to
+   out-bid (the sweep ignores anything ≥ 2e9, to leave the ladder headroom), or
+   one that only appears later. The test is `document.elementsFromPoint()` at the
+   editor's own top edge, **not** more z-index arithmetic: it asks the question
+   that matters ("is something drawn on top of us *here*?") in real paint order,
+   so nested stacking contexts, opacity and transform layers resolve for free.
+   The push is published as `--tt-frontend-offset` and the editable's max-height
+   gives back exactly that much, so core's fixed save bar stays clear.
+
+- The `getComputedStyle` sweep is affordable because it runs **once per editor
+  open** (the page's chrome does not change while a modal editor is open), not
+  per frame. The geometric pass re-runs rAF-throttled on resize/scroll.
+- Our own elements are excluded from the sweep or it ratchets against itself
+  every time an editor opens. `.content-editor-editor-container` and the sheen
+  are listed in their own right because `frontendEditors.js` re-parents both to
+  `<body>`, so neither is inside `.content-editor` by then.
+- Everything is undone by a teardown registered on `instance._cleanups` (run by
+  `destroy()`) — frontend editors are created and destroyed on **every** edit-mode
+  toggle, so leaving the var or the inline `top` behind would leak.
+- `harness/test-frontend-maximize.html` carries a `z-index:5000` site header, so
+  it reproduces the original bug and exercises step 1; bumping that header to
+  `2147483647` in the console exercises step 2.
+
+## Frontend edit-mode dropdown (Off / Classic / Modern) + Modern inline editing
+
+Core's admin frontend toolbar has a binary "Quick edit" checkbox switch. The
+extension replaces it — **JS-only, zero core edits** — with a 3-option dropdown
+styled like the adjacent Draft-view dropdown: **Off**, **Classic** (core's
+overlays → fixed modal editor, unchanged), and **Modern** — inline, gutentap-style
+editing of the page's single rich region. Four modules:
+`src/editModeSwitch.js` (the dropdown), `src/inlineMode.js` (enter/exit + the
+mount swap), `src/selectionBubble.js` (the only toolbar Modern has), plus small
+refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
+(`liftChromeZ()` exported).
+
+- **Core's checkbox stays in the DOM (hidden) and stays the source of truth for
+  "is editing on"** — Off/Classic drive it programmatically, so core's
+  `_presideEditMode` cookie, delegated handler and "e" hotkey keep working
+  untouched. Our `_presideEditModeStyle` cookie (`classic|modern`) is the only
+  new state. The dropdown needs **no JS binding of its own**: core's patched
+  bootstrap delegates `[data-toggle$=dropdown]` on `document`.
+- **Init on DOMContentLoaded** (`facade.js` `initChrome`) — core's
+  `frontendEditors.js` is a parse-time IIFE, so by then its handlers are wired
+  and its cookie restored; we compose on top, never race it.
+- **Modern reuses core's flow end-to-end** (the load-bearing design):
+  `inlineMode.enter()` marks the textarea `data-tiptap-inline=<containerId>` and
+  triggers core's own overlay click → `toggleEditMode(true)` →
+  `new PresideRichEditor(ta)`. The facade sees the marker at construction time,
+  detaches the rendered nodes between the region's
+  `<!-- container: _x -->…<!-- !container: _x -->` comments (detached, NOT
+  display:none — core's 1s geometry interval must measure the live editor) and
+  mounts `.tiptap-editor-container.tiptap-inline` in their place. Save / Publish
+  / Cancel / Esc / ctrl+Enter / version-restore are core's untouched closures.
+- **Save-vs-cancel is DERIVED from connectivity, never flagged**:
+  `instance._cleanups` run at the top of `destroy()`. Cancel path → our container
+  is still connected between the comments → remove it, re-insert the stored
+  originals (byte-identical restore; asserted). Save path → core's
+  `setContent(data.rendered)` already replaced the region and detached us → keep
+  the fresh render. Policy (user decisions): **every exit lands on Off** —
+  cancel/Esc discards and leaves edit mode; save/publish also drop to Off
+  because the page re-rendering with the saved content IS the visible "it
+  saved" confirmation (revised from an earlier re-enter-after-save behaviour,
+  which looked identical to before the save and read as "nothing happened").
+- **Switching Off/Classic with unsaved edits prompts** (`editmode.unsaved.confirm`,
+  presideBootbox with a window.confirm fallback): OK saves the draft through
+  core's own button — the region re-renders, so the edits stay visible after
+  the switch — Cancel discards them, exactly like the Cancel button. Dirtiness
+  is `getData() !== initialdata` on the facade instance (core's `isDirty()` is
+  hard-coded true and unusable). The "e" hotkey path re-checks the checkbox and
+  routes through the same guard. **The after-save target mode rides ON the
+  inline session** (`saveDraft({ after })` → `onExit( reason, after )`) —
+  deliberately NOT switch-module state: onExit callbacks dispatch via
+  setTimeout, so a stale one from a previous session can fire between "prompt
+  accepted" and "save completed" and would consume it (the bug was Modern
+  re-entering instead of landing on Off; T6b).
+- **The container is kept, chrome-less** (`.tiptap-inline`): it still carries the
+  `--tt-*` variables, `position:relative`, and the key-isolation boundary that
+  the table bubble / drag handle / maximize all need. No toolbar/footer, no
+  height caps, and no content CSS injected (the editable IS the site page and
+  inherits its own). The **outline navigator stays**, in its `fixed` variant
+  (`outline.js` `opts.fixed`): pinned to the viewport's right edge (`.is-fixed`,
+  `--tt-z-base + 40` rung) with capacity measured from the viewport instead of
+  the editable — the page is the scroller inline, so an editable-centred rail
+  would sit mid-document mostly off-screen. Still a container CHILD (the
+  `--tt-*` vars keep cascading); the click-scroll / active-tracking paths
+  already handled the window-as-scroller case. The drag-handle gutter is given back as negative
+  `margin-left` so the content column stays exactly where the rendered page had
+  it.
+- **Modern availability = exactly one `.content-editor.richeditor`** on the
+  page; otherwise the option is disabled with a tooltip and the style cookie is
+  left untouched (the next qualifying page resumes Modern). While Modern is
+  active the OTHER regions' overlays are hidden (`visibility:hidden`, not
+  `display:none` — core scrolls to `$editor.offset()` on open, and a 0,0 overlay
+  would yank the page to the top) **and re-absoluted**: core's
+  `frontend-editors-editing` state flips `.content-editor` to
+  `position:relative` (in flow, at the end of `<body>` where core appended it)
+  while its 1s sizing interval sets an explicit region-height on it —
+  `visibility:hidden` keeps layout space, so without `position:absolute`
+  (core's own non-editing value) Modern showed a region-sized band of invisible
+  whitespace under the page. The same stale inline sizes also outlived the
+  session (core never clears them, and with edit mode OFF `.content-editor` is
+  position:STATIC — in flow), so `editModeSwitch.js` clears them on every
+  off-landing (`clearRegionSizes()`, run from the document-level checkbox
+  change handler, which fires after core's own delegate on every path —
+  dropdown, "e" hotkey, cancel-button exit).
+- **`src/selectionBubble.js`** appears for any FOCUSED text context: a
+  selection, a clicked caret, or the caret being typed at — the block having
+  focus IS the context, and it only drops on blur or a non-text selection
+  (NodeSelections belong to imageTools, cell selections to the table bubble).
+  A `mouseup` listener covers the click that moves no caret (no
+  selectionUpdate fires for it), and the button set is **rebuilt only when the
+  caret changes block** (`contextKey()`), not per keystroke — otherwise it just
+  refreshes is-active states and repositions. Positioning: 24px clear of the
+  text (GAP; flips below under the admin toolbar), **left-aligned to the
+  caret's BLOCK** — never centred on / following the caret, so typing moves it
+  only vertically. **Idle fade**: ~2.5s with no click/keystroke adds `is-idle`
+  (opacity 0, pointer-events none — still is-open); any activity or hovering
+  the bubble fades it back. It renders the field's
+  configured toolbar via the SAME `renderNames()` the main toolbar uses, minus
+  the never-in-bubble set (Maximize/Source/Undo/Redo/Theme/HR/Table/pickers),
+  filtered per block by its own `BUBBLE_APPLIES` map (Outdent/Indent only in
+  lists, Unlink only in links, **Format always** — `can().setParagraph()` is
+  false in a paragraph, which would hide it exactly where it is most wanted).
+  Body-portalled on the `--tt-z-base + 1060` rung, **always light** (the site
+  page is the editing surface — deliberately no `prefers-color-scheme` block);
+  a capture-phase `mousedown` preventDefault keeps the editor selection through
+  any interaction.
+- **The drag rail is body-portalled in inline mode** (`dragHandle.js`
+  `{ fixed: true }`): the container sits in the SITE's page flow, where a gutter
+  carved out of the theme's layout (or hung off it with negative margin) is one
+  `overflow:hidden` ancestor away from being clipped into invisibility — the
+  original "why is the + / grip missing?" bug. Fixed mode reserves NO gutter
+  (the content column keeps the rendered page's exact geometry), positions the
+  rail in viewport coords just left of the mount — **except on a full-width
+  layout** (mount left < 60px: nowhere to float, the rail sat at negative x,
+  the bug's second life), where it falls back to reserving an interior gutter
+  (`tiptap-gutter-*` re-asserted for `.tiptap-inline` in the css, since the
+  inline padding reset would otherwise win) — hides on window scroll, and
+  carves out container→rail mouse travel so the grip is not yanked away en
+  route. It carries its own light styling (outside the `--tt-*` scope) and is
+  removed on destroy (leak-audited).
+- The dropdown trigger's icon is **our own inline SVG** (`ICONS.EditMode`,
+  Tabler "article") — not font-awesome's pencil, which already means "Full
+  edit" one control to the right.
+- **`liftChromeZ()`** (frontendFit step 1, now exported) runs on Modern entry:
+  the inline editor is in page flow (nothing to push down) but the bubble /
+  slash menu / picker overlays still have to out-bid a sticky site header.
+- **Churn-safety is load-bearing**: Modern destroys and recreates the editor on
+  every save. `instanceReady` is guarded with `tiptap.isDestroyed` (consumers
+  call `getData()` in that handler), the slash-menu popup is removed in the
+  extension's `onDestroy` (it used to leak one `<body>` div per cycle — T18),
+  and the bubble/table/drag clamps use the **mount∩viewport** intersection (the
+  raw mount rect is page-height inline, which parked chrome off screen).
+- Tests: `harness/test-frontend-inline.html` (self-running, 56 assertions,
+  backed by `harness/mockFrontendEditors.js` — a faithful trimmed transcription
+  of core's contract — and `/mock/frontend/*` endpoints in `server.mjs`);
+  `test-realworld.html` T18 covers the slash-menu leak. **jQuery's
+  `.trigger("click")` skips native handlers on `<a>`** — the dropdown items need
+  native `.click()` in tests.
+- i18n keys: `editmode.*`, `bubble.title` (the three usual places).
+
+## jQuery insert-order fix (src/jqueryOrderFix.js)
+
+Some Preside builds ship a jQuery ("2.2.5-jqnext") whose **`after()` and
+`prepend()` insert multi-node HTML strings in REVERSE order** (fixed-reference
+`insertBefore` loop instead of a fragment; `before()`/`append()` are fine).
+Core frontendEditors.js re-renders an edited region with
+`$( startComment ).after( data.rendered )` after **every save**, so on an
+affected build the whole region came back in reverse block order — in Classic
+and Modern alike. The editor itself always looked right (it renders from the
+textarea), so the scrambling only showed once editing closed — the original
+symptom was "my content disappears when I switch Quick edit off".
+
+- **Feature-detected per method at facade parse time** (a real 2-node probe
+  insert) — a healthy build is left completely untouched, and the shim
+  self-disables the day the build is fixed upstream.
+- When broken, the wrapper **pre-reverses string content that parses to 2+
+  top-level nodes and delegates to the ORIGINAL method** — its reversing loop
+  re-reverses into the correct order, and jQuery's own internals (script
+  evaluation, multi-target cloning) still run. Deliberately NOT a
+  reimplementation: node/jQuery-object/function content passes through
+  untouched.
+- `harness/test-frontend-inline.html` **emulates the broken build** (a shim
+  before the facade loads), so T0 plus every save-path case exercises the
+  healed path; the DB content was never affected (only the client DOM), so a
+  reload always showed the truth.
+
+---
+
+# Part 5 — Toolbar and persistent chrome
 
 ## Toolbar chrome: grouped blocks, separators, carets
 
@@ -1027,6 +1169,329 @@ collapses them into **one trigger plus a compact single ROW of icons** (the shap
   (`setTextAlign` only, as before) — worth knowing if unsetting alignment is ever
   asked for, since it was never possible here.
 
+## Footer status bar
+
+The facade renders a `.tiptap-footer` under each editor with live word / char
+counts and estimated reading time (225 wpm), refreshed on every doc change, plus
+the right-aligned light/dark toggle (`.tiptap-footer-right`). Disable per
+site/field with `defaultConfigs.wordcount = false`. Strings are the `footer.*`
+i18n keys.
+
+## Manual resize grip (bottom-right corner)
+
+`src/resize.js` reproduces CKEditor's `resize` plugin: the grip in the bottom-right
+corner of the bottom bar (our footer status bar) that drags the editor to a size the
+author chooses. Boxed/classic editors only.
+
+- **`resize_dir` defaults to `"vertical"`**, so out of the box it drags HEIGHT only;
+  `"horizontal"`/`"both"` are honoured. Defaults are CKEditor's own: min 750x250,
+  max 3000x3000, `resize_enabled` true. An axis is draggable only when its min and
+  max differ (CKEditor's own test), so a field pinning both gets **no grip at all**.
+- **The minimum is lowered to the current size on pointer-down when the editor is
+  already smaller than it.** That is CKEditor's own line, and it matters far more
+  here: Preside's default `maxHeight` is 300, so a stock field starts under the 250
+  minimum and without it the first pixel of drag would JUMP the editor taller.
+- Clamping is against the WHOLE editor box, as CKEditor's is (`getResizable()`
+  returns the outer container), not the editable alone - so the corner stays under
+  the pointer.
+- **A dragged height is applied as `frameApi.setHeights( h, h )` - min and max
+  pinned to the same value - and that is the whole implementation.** Everything else
+  follows: the frame stops auto-growing (which is what "I chose this height" means,
+  and what CKEditor's explicit height did), and `syncOverflow()` derives on its own
+  that taller content now scrolls inside the frame. Resist adding a second height
+  path for this.
+- Nothing is persisted - a per-session size, exactly as CKEditor's was.
+- Hidden while maximized (CKEditor hides it on the `maximize` event; ours is a CSS
+  rule on `.is-maximized`), and **absent in Modern inline mode**, where the editable
+  is the site page in its own flow - CKEditor's inline mode had no bottom bar and no
+  resizer either.
+- It is drawn as the same 10px CSS border-triangle CKEditor's skin uses, NOT the
+  `◢` glyph that skin falls back to - same reasoning as the dropdown caret. Two
+  small departures: the cursor names the axis actually being dragged
+  (`ns-resize`/`ew-resize`/`se-resize`, where CKEditor's skin says `se-resize`
+  always), and the grip is focusable so arrow keys resize in 20px steps.
+- The footer's right-hand slot (`.tiptap-footer-right`) is now **always created**,
+  holding the light/dark toggle and the grip. That is deliberate: two elements each
+  with `margin-left:auto` would SPLIT the free space and park the toggle in the
+  middle of the footer. A field with `wordcount:false` has no footer, so the grip
+  floats in the container's own corner (`.is-floating`).
+
+Tests: **T25** (rendered in the footer corner, vertical-only by default with the
+matching cursor, drag down/up by the drag distance, the height STICKS when content
+is added and the frame scrolls instead, arrow keys, hidden while maximized,
+`resize_enabled:false`, min===max leaves no grip, `resize_dir:"both"` narrows the
+container, and the min-lowering rule on a field capped below the default minimum).
+Its fixtures are its own: an earlier version dragged T9's field and raced the
+outline rail's rAF-deferred re-centring - the rail does re-place itself on a resize
+(it observes the surface), just not in the same tick.
+
+## Document outline navigator
+
+`src/outline.js` renders a collapsed **rail** of short horizontal lines on the
+right edge of the container — one per heading, wider line = higher level — that
+expands on hover (or focus, or click to pin) into a panel of heading titles;
+clicking a line or an entry drops the caret in that heading and scrolls it into
+view, and the current heading highlights as you scroll past it. Disable per
+site/field with `defaultConfigs.outline = false`. Strings are the `outline.*`
+i18n keys.
+
+- **The outline adapts to the space it has** (`railPlan()`): it shows the
+  **deepest heading level that fits** — h1–h6, else h1–h5, … — then, if even the
+  shallowest level present outnumbers the room, **every Nth** of them
+  (`.is-sampled`, plus `.is-partial` whenever anything was dropped). Levels are
+  never shed below the shallowest level the document actually uses, so a doc
+  starting at h2 still gets a rail.
+- **The rail and the panel show the SAME set** — the panel is the label list for
+  the markers, so it can never offer a heading the rail does not mark. Capacity is
+  `min( (editable − 24)/8px rail rows, (editable − 20)/24px panel rows )`; the
+  panel's taller rows are the binding constraint, which is also what stops either
+  list overflowing the editor. `PANEL_ROW_HEIGHT`/`PANEL_PADDING` in
+  `src/outline.js` MUST track `.tiptap-outline-item`/`.tiptap-outline-panel` in
+  the CSS.
+- Capacity is **measured**, not read from CSS: the computed value of a
+  percentage `max-height` stays a percentage, so `getComputedStyle` cannot give
+  it in px. Same reason the rail has no percentage `max-height` of its own — it
+  would not resolve against the wrapper (whose height is capped, not set) and
+  the rail would run off the bottom of the editor.
+- **Chrome only** — it lives on `.tiptap-editor-container`, never in the
+  editable, so `getData()` is unaffected and the rail does not scroll with the
+  content (the scroller is `.tiptap-editor-mount`, one level in).
+- **It stays vertically centred on the editable** at any heading count. Two
+  things are load-bearing: the panel is **out of flow** (as a hidden flex sibling
+  it still contributed its full height, making the wrapper tall and pushing the
+  top-aligned rail upwards — the bug that made the rail "creep up" as content
+  grew), and `place()` sets the wrapper's `top` in px from the **editable's** box,
+  not the container's (a two-row toolbar puts those centres ~20px apart).
+- The active heading comes from **scroll position** while scrolling (mount or
+  window, rAF-throttled) and from the **caret** otherwise; the rail highlights
+  the marker at or above it, since the rail is a subset.
+- **Colours come from the Preside admin palette** (Preside-CMS
+  `system/assets/css/admin/lessglobals/colours.less`), not from anywhere else:
+  entry hover is `@pale-blue` (`@default-row-hover-colour`), the current entry
+  gets the `@blue` tree-list highlight bar, rail markers are `@grey12` idling and
+  `@blue-darker` active, and the landed-on heading flashes the admin's highlight
+  `@yellow`. The variable-to-admin mapping is listed in the `src/tiptap.css`
+  header - add colours as `--tt-*` variables sourced from that file, never as
+  new hex values.
+- The panel has **no visible heading** - `outline.title` is only its accessible
+  name (`aria-label`).
+- The wrapper is `pointer-events:none`; only the drawn rows and the open panel
+  take clicks, so the right edge of the editable stays usable. Don't "simplify"
+  that away.
+- **Scrolling is scoped, and often skipped entirely.** Clicking scrolls the
+  **mount** when the mount is the scroller (field `maxHeight`, or maximized). When
+  the field shows all its content there is nothing to scroll to, so a click only
+  moves the caret + highlight — do NOT reinstate a `scrollIntoView()` fallback
+  there: with no scroller of its own the browser satisfies it by scrolling the
+  admin PAGE, yanking the form around under a heading that was already visible.
+  The page is only moved when the heading is genuinely outside the viewport (a
+  tall uncapped field), and then with `block:"nearest"`.
+- The landed-on-heading highlight is a **ProseMirror node decoration**
+  (`tiptap-outline-target`), NOT a class on the heading element: ProseMirror's
+  next DOM sync rewrites node attributes and wipes any class we set. That is why
+  `src/index.js` exports `Plugin`/`PluginKey`/`Decoration`/`DecorationSet` on
+  `window.PresideTiptap`. Being a decoration also keeps the doc clean — no
+  `update` event, so the form never goes dirty from navigating.
+
+---
+
+# Part 6 — Content features
+
+## Smart images (drag-resize + alignment)
+
+`src/imageTools.js` puts corner drag handles and a bubble toolbar over the
+**selected** embedded image (align left/centre/right, 25/50/100%-of-editor-width
+presets, original size, edit-in-picker, remove), and writes the result back into
+the same `{{image:...:image}}` token the picker produces. Disable per site/field
+with `defaultConfigs.imageTools = false`. Strings are the `image.*` i18n keys.
+Only `presideImage` gets it (`opts.resizable`); attachments and widgets do not.
+
+- **It writes only three config keys** - and each one is a documented Preside
+  contract, not a choice we are free to change:
+  - `dimensions` - the `"WxH"` px string. Preside-CMS
+    `system/handlers/renderers/asset/Image.cfc::RichEditor` turns it into an
+    on-the-fly derivative `"WxH-<quality>"` via a `resize` with
+    `maintainAspectRatio=true`. **That is why dragging is always proportional**: a
+    non-proportional height would simply be ignored by the server.
+  - `alignment` - `auto|left|right|center`, applied by
+    `system/views/renderers/asset/image/richEditor.cfm` as `float:` / `margin:...
+    auto`.
+  - `derivative` - reset to `"none"` on resize, because
+    `ContentRendererService.renderEmbeddedImages` **deletes**
+    width/height/quality/dimensions whenever a named derivative is set. Named
+    derivatives only exist on sites that configure some with `inEditor=true`
+    (`DerivativePicker.cfc` renders nothing otherwise), so on most sites this
+    never fires.
+- **The preview is NOT re-requested on resize/align** - every distinct size makes
+  Preside generate and store a derivative, so a drag would litter the asset
+  store. The geometry is applied locally over the already-rendered HTML and a
+  **refresh button appears in the middle of the image**; the real derivative
+  arrives on the next load or when that button is clicked. Do not "fix" this into
+  an automatic (even debounced) refetch.
+- **ALIGNMENT AND SPACING ARE ALWAYS APPLIED BY US, COMPUTED FROM THE TOKEN, onto the
+  node view wrapper** (`data-tt-align` + an inline margin) - never only while the
+  preview is stale, and never copied back off the rendered HTML.
+  - *Why the wrapper*: `richEditor.cfm` puts `float:`/auto-margins and the spacing
+    margins on the rendered element, and those are inert inside the frame that
+    shrink-wraps the preview - there is no room to float in a box that is exactly the
+    image's width. CKEditor hit the same wall and solved it the same way
+    (`addEmbeddedImageStylesToWidgetWrapper` copied those styles onto its widget
+    wrapper). The css zeroes `float`/`margin` on `.tiptap-embed-preview > *` so the
+    wrapper is the single owner of both.
+  - *Why computed, not copied*: the rendered HTML is only ever as fresh as the last
+    render, and a stored `center` renders `margin:Xpx auto` - so copying gave an
+    image re-aligned left/right the wrong side spacing until it was refreshed.
+    `spacingPx()` mirrors `richEditor.cfm` exactly (`spacing_<side> ?: spacing ?: 0`,
+    and centre gets NO horizontal spacing), which makes the geometry exact in every
+    state.
+  - *The element carrying the styles is not always the `<img>`*: it is the `<figure>`
+    when there is a caption/copyright and the `<a>` when there is a link - hence the
+    css selector is `preview > *`. The harness mock renders all three shapes.
+  - Applying alignment only while stale was the bug where refresh made a right-aligned
+    image jump left and then refuse to re-align: the config still said `right`, so the
+    button was "active" and clicking it toggled the alignment *off*.
+- **Two key sets, and they are not the same set.** `LOCAL_KEYS`
+  (dimensions/alignment/derivative) are what this module writes - a change confined
+  to them is handled locally with no refetch. `STALE_KEYS` (dimensions/derivative)
+  are the ones that make the already-rendered HTML *wrong*, i.e. mark it stale and
+  offer the refresh button. **`alignment` is deliberately in the first and not the
+  second**: we render alignment ourselves, so re-requesting for it would achieve
+  nothing and just flash a pointless refresh button.
+- **Stale is derived, never flagged**: `renderedGeom` records the geometry the
+  visible HTML was rendered for, so undo/redo back to the rendered state clears the
+  marker on its own. The SIZE override is applied only while stale, so an untouched
+  image is exactly what the server produced (the derivative's own natural size).
+- **Empty / `"auto"` / `"none"` compare equal** in `geometryKey()`: clicking an
+  alignment off writes the picker's own `"auto"`, which renders identically to the
+  empty value it replaced, and would otherwise mark the preview stale forever.
+- **A local-key-only change must not refetch, anything else must.** The node view's
+  `update()` decides by comparing the non-local keys, so this holds for undo, redo
+  and picker edits alike - not just for changes this module made. Without an
+  `update()` at all, ProseMirror rebuilds the node view on every attribute change
+  and refetches every time.
+- Embeds render as **`dom > .tiptap-embed-frame > .tiptap-embed-preview`** (all
+  three, for uniformity). The server HTML replaces `preview`'s innerHTML, so the
+  chrome has to be a sibling of it; `frame` shrink-wraps the embed and is what the
+  absolute overlays measure against. **The selection outline is on the frame, not
+  the wrapper** - a centre-aligned image makes the wrapper a full-width block (that
+  is how it centres), so outlining the wrapper drew a selection box across the
+  whole editor.
+- The bubble is anchored to the image's **left** edge and then nudged by
+  `placeBubble()` to stay inside the editable; centring it on the image clipped
+  half its buttons off the editor border on any small or left-floated image.
+  Vertically it prefers **above** the image and **flips below** (`.is-below`) when
+  there is no room — an image at the top of a field otherwise put the bubble on
+  the toolbar or outside the mount, with none of its buttons reachable. The room
+  is measured against the **mount∩viewport** band, as the table bubble and the
+  Modern selection bubble do: inline the mount is page-height, so the raw rect
+  answers the wrong question.
+- Clicking the refresh button **also selects** the node, and so does starting a
+  drag: the button covers the middle of the image, so a click aimed at the image
+  lands there instead, and that must not be a dead end.
+- **Byte fidelity**: the token is rebuilt only when the user actually changes
+  something. Never parse-and-reserialise on load - it reformats the JSON and
+  breaks `getData()`'s byte match with CKEditor.
+- "Original size" is the one action allowed to exceed the editor width (the site's
+  layout may be wider); drags and the % presets cap there.
+- The harness mock (`harness/server.mjs` `renderMockImage()`) mirrors
+  `richEditor.cfm` closely enough to exercise all of this without a Preside boot,
+  including serving the mock svg AT the requested size so the aspect ratio the
+  editor reads is real.
+
+## Embeds: block chips, and click-to-select
+
+All three embeds (`presideImage`, `presideAttachment`, `presideWidget`) are
+**block** atom nodes, and their DOM has to be block-level too.
+
+- **Widget/attachment placeholders are `display:block; width:fit-content`.** As
+  `inline-block` their DOM shared a line, so two widgets in a row sat side by side
+  instead of stacking - wrong for a block node. `fit-content` keeps the shrink-wrap
+  that makes a widget read as a chip rather than a full-width bar (shrinking AND
+  stacking verified in blink, webkit and gecko).
+- **The IMAGE keeps `inline-block`**, deliberately: its alignment feature floats
+  the wrapper so text can sit beside it, and `center` switches itself to
+  `display:block` for the auto margins. So two consecutive *images* can still share
+  a line - that is the alignment feature working, not the widget bug.
+- **A single click selects the NODE.** These are atoms with
+  `contenteditable=false`, but their previews are server-rendered HTML full of real
+  text, and a click landing on it left the browser to start a text selection
+  *inside* the embed. `makePreviewDom()` adds a `mousedown` handler that
+  `preventDefault()`s (which is what stops the text selection) and sets a
+  NodeSelection. Only for embeds with no tools of their own - **imageTools already
+  does this for images**, where the click must also arm the handles and the bubble.
+  `user-select:none` on all three stops a drag painting a highlight across them.
+- **The selected outline goes on the CHIP for widget/attachment, on the FRAME for
+  the image.** The image's wrapper goes full-width to centre itself, so outlining
+  it drew a selection box across the whole editor; a chip shrink-wraps and is the
+  box the user actually sees.
+
+### Preview links never navigate inside the editor
+
+The previews are **real server-rendered HTML**, and an attachment renders as an
+`<a href>` to the asset - so clicking the paperclip icon or the filename
+**downloaded the file**, from inside the editor, where the click was meant to select
+the embed so it could be edited or removed. (A linked image is the same shape of
+problem.) `makePreviewDom()` cancels `click` and `auxclick` on any anchor inside an
+embed, in the **capture** phase so it lands before anything in the rendered markup.
+
+- **Selecting the node already worked; that was not the bug.** The select-me handler
+  `preventDefault()`s the *mousedown*, and a cancelled mousedown does not stop the
+  anchor's own click activation - which is what navigates.
+- `auxclick` is covered because a **middle click** opens the download in a new tab,
+  and keyboard activation fires a click of its own, so it is covered too.
+- **Nothing is neutered outside the editor, by construction**: the guard lives on the
+  node view, which only exists while the editor does. Classic closing, or Modern
+  re-rendering the region from the server, leaves the page's own markup with the page's
+  own links. Verified in both modes.
+- It is **scoped to embeds**, not a blanket "cancel every link click" - an ordinary
+  content link in the editable is untouched (asserted, so the guard cannot quietly
+  grow into one).
+
+Tests: **T27** (the mock renders the server's own download href - it used to be
+`href="#"`, which is why the harness could not see this bug; the click and the middle
+click are both cancelled; the click selects the embed instead; the token round-trips;
+an ordinary content link is left alone). Confirmed with a real Playwright mouse too:
+no navigation, no download, and **no request** for the asset.
+
+### The bubble: all three embeds get one
+
+The floating toolbar over a **selected** embed is one implementation
+(`src/embedBubble.js`) with two button sets: the image's full one (align, size
+presets, original size, edit, remove - `src/imageTools.js`) and, for widgets and
+attachments, just **Edit** and **Remove**, because they have no geometry to offer.
+
+- **`placeBubble()` and `bubbleButton()` live in `embedBubble.js` and imageTools
+  imports them**, so the two bubbles cannot drift apart. The placement rules are the
+  ones the image bubble arrived at the hard way and they are documented there: left-
+  anchored then clamped inside the editable (centring clipped half the buttons off a
+  small or floated embed), above unless there is no room and then `.is-below` (an
+  embed at the top of a field otherwise put the bubble on the toolbar with none of
+  its buttons reachable), and the room measured against the **mount ∩ viewport**
+  (inline the mount is page-height, so the raw rect answers the wrong question).
+- The css follows the same split: **`.tiptap-embed-bubble` is the shared chrome**,
+  `.tiptap-image-bubble` only carries the image-specific extras. Both classes are on
+  the image's bubble element.
+- **Chrome only** - it is a sibling of the preview inside the frame, never in the
+  document, so `getData()` is untouched whether it is on screen or not. Remove is an
+  ordinary `deleteRange`, so undo restores the token byte-for-byte.
+- **The buttons swallow `mousedown`** (`bubbleButton()`): a focused button inside the
+  `contenteditable=false` wrapper collapses the NodeSelection - which hides the very
+  chrome that was just clicked - and stopping propagation also keeps the click off the
+  embed's own select-me handler.
+- Edit reuses **`openPicker()`**, the same path the existing double-click uses, so
+  there is one way in to the picker and it stays prefilled for editing.
+- It is under the **same opt-out as the image tools** (`defaultConfigs.imageTools =
+  false`) and absent in a read-only editor: a field that turned embed chrome off
+  should not sprout a different flavour of it. An image whose token cannot be parsed
+  is still left strictly alone - it does not fall back to the reduced bubble.
+- Strings are the `embed.edit` / `embed.remove` i18n keys.
+
+Tests: `harness/test-realworld.html` **T21** (stacking, shrink-wrap,
+click-selects-node, the outline, no text selection, token round-trip, and the bubble:
+exactly Edit + Remove on the selected chip, hidden on the unselected one, flipped
+below at the top of the field and still inside the mount, and Remove deleting just
+that embed).
+
 ## Tables (grid-size picker + bubble toolbar)
 
 Tables used to be a single toolbar button that dropped a fixed 3x3 in and then
@@ -1166,6 +1631,163 @@ way out, and made invisible while editing.
 Tests: **T28** (flat/nested/deep unwrapping, the kept empty wrapper, and a
 save/reload cycle asserted stable for both), the fidelity matrix's **"nested lists"**
 fragment, and **T26**'s source-view assertions.
+
+## The "/" insert menu
+
+`src/slashMenu.js` - type `/` in an empty block to filter and insert any
+block-level element, **including Preside's own**: the image / attachment / widget
+pickers, link, anchor, and **individual widgets by name** ("/news" → the news
+widget). Disable per site/field with `defaultConfigs.slashMenu = false`; strings
+are the `slash.*` keys.
+
+- Trigger detection is **`@tiptap/suggestion`** (MIT, framework-agnostic; the
+  popup is ours because Tiptap only ships React/Vue renderers). Costs **+24kb**
+  and pulls nothing but core/pm/floating-ui - contrast
+  `@tiptap/extension-drag-handle`, below.
+- **`/` only fires at the start of an empty-ish block, and never in a code
+  block.** Preside content is full of real slashes (dates, paths, "and/or") and
+  CKEditor had no such trigger, so a menu opening mid-sentence would be a
+  regression against the editor we replace, not a missing feature.
+- **Every item runs a command that already exists** (the toolbar's `COMMANDS`, or
+  the pickers the embed extensions register). This module adds a way to REACH
+  things, never a second implementation - and items whose command is absent from
+  the build/field are dropped rather than shown broken.
+- The suggestion range is deleted **before** the item runs, so a picker inserting
+  a block-level node sees a clean block.
+- **Search matches the translated label first, then keywords/hints** - the
+  English keywords are additive so "/pic" finds the image picker, but a localised
+  admin stays searchable in its own language.
+- The popup is on **`<body>`**, not the container: a capped-height or
+  overflow-hidden field would clip it (same reason the picker overlays live
+  there). That puts it outside the `--tt-*` variables' scope, so its light/dark
+  values are its own — synced from the **editor's** `tiptap-dark` class at open
+  (NOT `prefers-color-scheme`: a dark OS must not put a dark menu over a light
+  editor, or over the site page in Modern inline mode).
+- **It renders before it positions.** Measuring an empty box put a full-length
+  menu off the bottom of the screen - `paint()` renders, *then* `move()` decides
+  whether to flip above the caret.
+
+### The widget list
+
+`views/admin/layout/ckEditorJs.cfm` emits `cfrequest.tiptapWidgets` from
+`widgetsService.getWidgets()` - **no new endpoint**, the same pattern as
+`tiptapI18n`, translated for the admin user and filtered to the active site
+template (mirroring core's `Widgets._getSortedAndTranslatedWidgets`).
+
+- `widgetCategories` is a **per-field** setting while this view renders **once per
+  page**, so each widget ships **with its `categories`** and `slashMenu.js`
+  filters per field, applying Preside's own rule (`_isWidgetInCategories`):
+  an empty list on *either* side means `"default"`.
+- The categories knowable server-side are `"default"` plus whatever the site
+  configures. A field naming some other category still gets the "Widget…" entry,
+  so **no widget is ever unreachable** - it just loses the by-name shortcut.
+- Selecting a widget opens the picker **pre-pointed at it**, via a new optional
+  `extra` argument threaded through `openPresideWidgetPicker` →
+  `pickerUrl` → `widget=<id>` (core's `Widgets.dialog()` renders that widget's
+  configForm whenever `rc.widget` is set). Called with no argument - i.e. the
+  toolbar button - **the URL is byte-identical to before**.
+- Deliberately **not** short-circuited into building a `{{widget:...}}` token
+  here, even for widgets with no config form: the token would then be ours rather
+  than Preside's, and byte fidelity with what the picker commits is the whole
+  point of tokens.
+- The whole block is wrapped in a `try`/`catch` - the menu is a convenience and
+  must never take the editor down with it.
+
+## Block drag handle
+
+`src/dragHandle.js` - hovering a block shows two controls in the left gutter: a
+**"+"** (insert a block below) and a **grip** (drag to reorder, click to select -
+which is also what makes the image tools / table bubble appear, so the grip
+doubles as "select this"). Disable per site/field with
+`defaultConfigs.dragHandle = false`.
+
+- **"+" opens the slash menu DIRECTLY at a fresh empty block, with no "/"
+  character written into the document** (`slashMenu.js` `storage.openManual`):
+  the same popup, item list and filtering as the typed "/", so the two
+  affordances cannot drift — the manual session keeps the query itself and a
+  capture-phase key handler swallows typed characters to filter (Esc closes,
+  Enter/Tab picks, Backspace unfilters-then-closes). It used to type a literal
+  "/" and let the suggestion plugin react; a button that writes its shortcut's
+  trigger character into the author's content read as a bug (T15 asserts the
+  block stays empty). "+" still renders **only when the slash menu is enabled**
+  (the facade passes `slashMenuEnabled( cfg )`), and the gutter narrows to the
+  grip alone otherwise - `.tiptap-gutter-2` (48px) vs `.tiptap-gutter-1` (28px),
+  so a field never pays for a control it does not show.
+- Clicking "+" on an **already-empty paragraph reuses that block** rather than
+  pushing it down, so it cannot stack blank lines.
+- Both controls live in one `.tiptap-block-gutter` wrapper and share the hover
+  bookkeeping - `is-visible` is on the WRAPPER, not the grip. Hovering either must
+  not count as leaving the block.
+
+- **HAND-ROLLED DELIBERATELY. Do not "simplify" this to
+  `@tiptap/extension-drag-handle`.** That package is MIT in v3, but it
+  hard-imports `@tiptap/extension-collaboration` + `@tiptap/y-tiptap`, so the
+  build *fails* without them and installing them drags real Yjs runtime code into
+  the bundle: **measured at +139kb (+30% of the vendor bundle)** for an editor
+  that does zero collaboration. It also pins `@tiptap/pm` to an exact version.
+  Everything it offers is already in what we ship - `nodeDOM` for positioning,
+  `NodeSelection` for the drag, `prosemirror-dropcursor` (via StarterKit) for the
+  drop indicator.
+- **Chrome only** - the handle lives on `.tiptap-editor-container`, so
+  `getData()` is unaffected by its existence. A drag is of course a real edit, but
+  an ordinary ProseMirror move: tokens survive byte-for-byte and undo restores
+  exactly (both asserted in `test-realworld.html` T15).
+- The gutter comes from a **`.tiptap-has-draghandle` class**, not from
+  `.tiptap-editor-mount` itself, so a field opting out keeps the original padding
+  and loses no editable width.
+- **Block lookup iterates the doc's own top-level children** and compares DOM
+  boxes, rather than using `view.posAtCoords`. We want the top-level block (the
+  draggable unit); `posAtCoords` returns the innermost position, so a paragraph
+  in a list item or table cell would have to be climbed back up, and it behaves
+  differently for leaf nodes like our embeds.
+- The grip aligns to the block's **first line**, not its centre - on a tall block
+  (a long list, a big image) a centred grip reads as belonging to nothing. It is
+  also clamped into the visible mount, so a half-scrolled block's grip cannot
+  float over the toolbar.
+- Mouse tracking is on the **container**, not the editable: the grip sits in the
+  gutter *outside* the editable, so hovering the grip must not count as leaving
+  the block.
+- `hide()` **no-ops while dragging** - otherwise the grip is yanked out from under
+  the drag in progress.
+- Drag is the standard ProseMirror recipe: select the node, set
+  `view.dragging = { slice, move: true }`, and attach `text/html` +
+  `setDragImage` (some browsers cancel a drag with no data attached). ProseMirror's
+  own drop handling does the move. The ghost is anchored to where the pointer
+  actually is relative to the block (x clamped at 0 — negative `setDragImage`
+  offsets are unreliable), so the block doesn't visually jump left on pick-up.
+- **The gutter is a live drop zone.** The grip sits OUTSIDE the editable, so a
+  vertical-only drag keeps the pointer where ProseMirror never sees the
+  `dragover` — no drop line, no drop, and users had to drift right into the
+  text. While our drag is live, `dragover`/`drop` in the band left of the
+  editable (document capture listeners, gated on `dragging`) are re-dispatched
+  to the editable with the x clamped just inside it. `dragend` is also relayed
+  to the editable so the dropcursor clears on a cancelled (Esc'd) drag —
+  natively it only fires at the drag source.
+- **Edge auto-scroll during drag**: the same `dragover` pass nudges the scroller
+  (the mount when it scrolls; the window too when the editor overflows the
+  viewport — inline mode's scroller IS the page) proportionally within 40px of
+  the visible edge, so a block can be dragged to an off-screen spot in one
+  gesture. No rAF loop — `dragover` keeps firing while the pointer is
+  stationary, which is what makes hover-at-the-edge scrolling work.
+- **`allowTableNodeSelection: true` is REQUIRED on the Table extension** (set in
+  `src/index.js`) and is not optional polish. `prosemirror-tables` defaults it to
+  `false`, which silently **normalises away** a NodeSelection on a table - the
+  grip's selection collapsed to a cell inside it, so ProseMirror's move-on-drop
+  deleted that cell selection instead of the table and left the original in place:
+  **dragging a table DUPLICATED it.** Regression test: T16.
+- Because a dispatch can be normalised away like that, `dragstart` **verifies the
+  NodeSelection actually stuck** (`sel.node && sel.from === offset`) and refuses to
+  start the drag otherwise. A grip that does nothing is a far better failure than
+  one that silently copies content, and it makes any future node type with similar
+  plugin behaviour fail safe.
+- **Testing note on undo:** ProseMirror's history amalgamates transactions within
+  `newGroupDelay` (500ms), so a test that inserts a block and drags it immediately
+  gets ONE undo step for both - which looks exactly like "undo is broken". T16
+  waits 900ms between the two, as a real user's pause does.
+- **Testing note:** Playwright's `dragTo` uses mouse events and does **not** drive
+  native HTML5 drag-and-drop - it reports success while changing nothing. T15
+  dispatches the real sequence (`dragstart`/`dragover`/`drop`/`dragend`) with one
+  shared `DataTransfer`, which is what actually exercises the drop.
 
 ## Source view (src/sourceView.js)
 
@@ -1461,443 +2083,9 @@ preserved) and **T24** (dir written/removed per `useComputedState`, inline
 T2 now asserts these five buttons RENDER, and its "unmapped" list is down to
 Scayt/SelectAll/CreateDiv/Language/Cut/Copy.
 
-## The editing iframe (isolation + content-CSS fidelity)
+---
 
-**The editable lives in its own document.** `src/editorFrame.js` builds a
-per-editor `<iframe>`; the toolbar, footer, outline rail and pickers stay in the
-host page. This is what CKEditor 4 did, and returning to it deleted three CSS
-transforms that each existed only because we were not in an iframe.
-
-### Why an iframe and not CSS, and not shadow DOM
-
-Three separate problems, one boundary:
-
-1. **Isolation.** The previous `all: revert` wall was a *specificity contest* at
-   `(0,2,0)`, so it was beaten by any admin/theme rule at `(0,2,1)` or above and
-   by **any `!important`** — both of which real admin stylesheets contain. No
-   ordering wins that argument. It also cost a release: reverting `all` discards
-   the presentational hint WebKit maps `contenteditable` onto, so the editable
-   went read-only in Safari. A shadow root would have fixed this much, and
-   neither of the next two.
-2. **`rem`.** Always resolves against the **document root** — spec, no
-   exceptions, and a shadow root is not a new root. The admin is
-   `html{font-size:10px}` (Ace/bootstrap), so a site's rem-based content CSS
-   rendered at 62.5% of its intended size. A frame has its own root, so `1.2rem`
-   is simply `19.2px`.
-3. **`vw`/`vh` and media queries.** Resolve against the frame's own box — roughly
-   the width the content will really be rendered at — instead of the whole admin
-   viewport. A real site's `clamp(1.125rem, 0.9375rem + 0.5vw, 1.375rem)` base
-   size was being computed for a 1600px viewport inside an 800px editor.
-
-**Deleted with the wall:** the reset and its specificity contract, the
-`html`/`:root`/`body` → editable selector mapping, and the rem→px rebasing.
-Content stylesheets go in as plain unmodified `<link>`s — same bytes, same cache
-as the site. An unstyled field is therefore **raw browser defaults**, exactly as
-CKEditor's iframe with no `contentsCss` was; the editor imposes no content
-typography of its own (`p{margin:0 0 .6em}` went too — at `(0,2,1)` it had been
-beating sites' own `p` margins, including on the real page in Modern mode).
-
-Do not reintroduce an `all: revert` anywhere. There is none left in the codebase:
-the dropdown previews carried the last one, and they moved into a frame of their own
-too (see "Nothing transforms content CSS any more").
-
-### The rules
-
-- **Synchronous by contract.** Core's `frontendEditors.js` reads `.editor`
-  straight off the constructor, so the frame is appended, its document written
-  and the editor built in ONE stack. `open()/write()/close()` into a freshly
-  appended `about:blank` is synchronous and the document is not replaced
-  afterwards (verified in chromium, webkit and firefox). **The frame must be in
-  the document before `contentDocument` exists** — hence it is created *after*
-  the container is inserted.
-- **Our own stylesheet is copied in as `cssText`, not linked** — it must apply
-  before the first height measurement, and a `<link>` would still be loading.
-  The `--tt-*` variables are declared for `.tiptap-editor-doc` (the frame's
-  `<html>`) as well as the container, and `applyTheme()` mirrors the dark class
-  onto the frame root, because a class on the container cannot cross documents.
-- **Height is measured, not CSS.** A frame is a replaced element and does not
-  grow with its content. `refit()` applies `min`/`maxHeight`; the editor also
-  refits **on every update, synchronously** — a ResizeObserver alone leaves the
-  frame a tick behind its content, and chrome that clamps to the visible band
-  then correctly refuses to show for a block that is briefly outside it (T15
-  caught the `+` button silently doing nothing). The initial fit is re-run after
-  the editor is built, since `setHeights()` runs before the editor exists and
-  would otherwise measure an empty mount.
-- **Whether the frame scrolls is DERIVED from its rendered height**
-  (`syncOverflow()`), not from the configured `maxHeight` — a CSS cap can clamp
-  it too, which is exactly what the front end does with a viewport-relative
-  `max-height` so core's fixed save bar stays clear. Scrolling is otherwise off:
-  on an auto-growing frame a scrollbar is pointless *and* a feedback loop
-  (appearing changes the content width → text rewraps → height changes →
-  scrollbar toggles again). The ResizeObserver observes the **body only**, never
-  `documentElement` whose box is the height we write, and defers through rAF.
-- **What lives where.** The frame holds the editable and the chrome glued to the
-  content: embeds/image tools, **the drag gutter** and the table bubble's target.
-  The host holds the toolbar, footer, outline rail, pickers, slash menu.
-- **`surfaceOf()` / `pageRect()`** let host-side chrome work against either
-  shape: `mount` now means *the frame* for a boxed editor and *the mount div* in
-  Modern inline mode. `box()` is the visible editor box (a frame's own rect IS
-  the viewport its content is clipped to), `toHost()` translates content
-  geometry, and `onScroll()` binds to whatever actually scrolls — **an
-  `<iframe>` never fires a scroll event itself**, its document does.
-- **THE DRAG RAIL IS INSIDE THE FRAME, and that is not cosmetic**: a drag must
-  begin and end in one document. With the grip in the host and the editable in
-  the frame, `dragstart` fired in one and ProseMirror's drop handling ran in the
-  other — `view.dragging` armed correctly and the drop then did nothing, so a
-  dragged table *vanished* (T16). Living in the frame also means no coordinate
-  translation in that module at all. The frame's `body` is `position:relative`
-  so the absolutely-positioned rail scrolls with the content.
-- **Never `view.dom.closest( ".tiptap-editor-container" )` — use `containerOf()`**
-  (`editorFrame.js`). `closest()` stops at the root of the editable's OWN
-  document, so from inside the frame it returns null and the caller silently
-  operates on nothing. That is exactly how the toolbar's **Maximize** button
-  stopped working (it toggled a null container) and how the slash menu lost its
-  light/dark sync. Toolbar `is-active` states also refresh right after a button
-  click, not only on the next transaction, because Maximize changes chrome
-  without touching the document.
-- **The gutter classes go on whichever root can reach the mount** — the frame's
-  `<html>` for a boxed editor. The padding they apply is on `.tiptap-editor-mount`,
-  which a class on the container can no longer select.
-- **The slash menu's manual session binds keys to BOTH documents.** The popup is
-  body-portalled in the host (it has to escape a capped field's clipping) but the
-  user types into the frame, so a host-only listener never saw the keystrokes.
-- **Four table/pre rules lost their `.tiptap-editor-container` prefix.** It was
-  there purely for specificity against the reset, and inside the frame there is no
-  container ancestor, so it had become actively wrong (T19's `td` box-sizing and
-  T12's `.selectedCell` highlight both caught it).
-- **Modern inline mode gets NO frame.** There the editable IS the site page: it
-  must inherit the theme, and `rem`/`vw` already resolve against the site's own
-  root and viewport. It is correct by construction.
-
-### Nothing transforms content CSS any more
-
-There used to be a second, scope/rewrite/rem-rebase path here for the Format/Styles
-dropdown previews, which were chrome in the host document. **It is gone, along with
-the last `all: revert` in the codebase, because the previews moved into a frame of
-their own too** (`src/comboPanel.js`, below). Do not reintroduce either.
-
-It could not have been made to work by patching:
-
-- **The admin's own stylesheet reached the preview.** It sat inside
-  `.tiptap-editor-container` in the admin's document, so a rule like
-  `body main .tiptap-editor-container p{text-transform:uppercase}` — (0,2,2), and
-  T19's head plants exactly that — simply won. Same fight the editable lost before
-  it moved into a frame.
-- **`.tiptap-fmt-preview *{all:revert}` was itself the bug.** At (0,1,1) it beat any
-  content rule of lower specificity, so a `:where()`d rule never reached the
-  preview; anything in an `@layer` loses to unlayered CSS at *any* specificity.
-- **`serialiseRules` had no branch for `@layer`/`@container`/`@scope`** (no legacy
-  numeric rule type), so those blocks fell through to `out += rule.cssText` and were
-  emitted **unscoped into the admin's own `<head>`** — no preview styling *and* a
-  leak that restyled the admin UI.
-- `remBase()` *guessed* the rem base from the sheet's own `:root` rule, `em` chained
-  off the admin's 10px root, `vw`/media/container queries resolved against the admin
-  viewport, and the whole path needed a same-origin `fetch()` to succeed where a
-  `<link>` does not.
-
-`presideStyles.js` now does two things only: `injectFrameStyles()` (an unmodified
-`<link>` per URL, into whichever frame asked) and `harvestSelectors( doc )`.
-
-Tests: `harness/test-realworld.html` **T19** asserts the boundary itself, that an
-admin `!important` and a higher-specificity admin rule do **not** reach the
-content, that `rem` resolves against the frame root (`1.5rem` = 24px, not 15px)
-and that `em` chains off it (`1.25em` = 30px), and that the content sheet arrives
-unmodified. Its head carries the admin-leak emulation, including the two rule
-forms that defeated the old reset.
-
-## Safari: never build a command chain on an unfocused editable
-
-`src/editorFocus.js` `focusEditable( editor )`. **Call it at every point where our
-own chrome runs an editor command**, and chain off its return value:
-`focusEditable( editor ).chain().focus().toggleBold().run()`.
-
-Tiptap snapshots the transaction when a chain is created (`createChain()` does
-`const tr = state.tr`) and dispatches that same transaction at `.run()`. Its
-`focus` command contains a **Safari-only** branch that takes the DOM focus
-*synchronously*, where every other engine defers it to a `requestAnimationFrame`:
-
-```js
-if ( isSafari() && !isiOS() && !isAndroid() ) { view.dom.focus( { preventScroll: true } ); }
-```
-
-A DOM focus makes prosemirror-view re-read the document selection and, if it
-differs from `state.selection`, dispatch a correcting transaction. So on Safari the
-state moves on mid-chain and `.run()` applies a transaction built from the state
-before it: **`RangeError: Applying a mismatched transaction`, and the whole chain
-is silently lost.** What that cost, all Safari-only:
-
-- **every frontend editor threw as it opened** — core's `frontendEditors.js`
-  calls `e.editor.focus()` from its own `instanceReady` handler (line ~174), and
-  the throw aborted the rest of core's handler, including its scroll-to-the-editor;
-- a **toolbar button pressed while the editable was not focused did nothing**;
-- the **outline rail could not move the caret** (silently — its `try/catch`).
-
-The way out is Tiptap's own guard, `if ( view.hasFocus() && position === null )
-return true;` — so take the DOM focus **first, outside any transaction**, where it
-is free to dispatch whatever it likes.
-
-- **`CompatInstance.focus()` uses `view.focus()`, not `commands.focus()`** — no
-  transaction is built, so there is nothing to mismatch, and it is the more
-  faithful reading of CKEditor's `focus()`, which focused the editing surface and
-  never moved the caret. Same in `maximize.js` (whose `try/catch` had been
-  swallowing exactly this).
-- **`chain().focus( pos )` is NOT protected by `focusEditable()`** — passing a
-  position deliberately skips the `hasFocus()` guard. Use
-  `setTextSelection( pos )` on the chain instead; that is what `outline.js` does.
-- The harness pages carry the same discipline as `edFocus( ed )`, because a
-  synthetic test drives the editor from an unfocused editable where a real user's
-  click would have focused it natively.
-
-## Light / dark mode
-
-The toggle (`.tiptap-theme-toggle`) is rendered **right-aligned in the footer
-status bar**. A toolbar config can instead place it in the toolbar with the button
-name `Theme` (or `DarkMode`), in which case the footer does not get one; if the
-footer is disabled (`wordcount = false`) it falls back to the far right of the
-toolbar (`.tiptap-toolbar-right`). `buildToolbar()` returns
-`{ themeEnabled, themeRendered }` so the facade can make that call. Disable the
-control entirely per site/field with `defaultConfigs.darkMode = false`.
-
-- **Chrome only** — dark mode adds `.tiptap-dark` to the container; the stored
-  content is untouched, so `getData()` is identical in either mode.
-- **`src/theme.js`** owns the state: the choice is a per-USER preference in
-  `localStorage` (`presideTiptapTheme`), not per-field, so toggling one editor
-  re-themes every editor on the page (it walks the live DOM rather than keeping a
-  listener registry — editors are created/destroyed freely) and the preference is
-  re-applied on mount. Default is light.
-- **`src/tiptap.css`** drives all chrome colours through `--tt-*` custom
-  properties declared on `.tiptap-editor-container`, so the dark theme is one
-  variable override block at the bottom of the file. Add new colours as variables,
-  not literals. The picker/anchor overlays live outside the container (on `<body>`,
-  hosting admin forms in an iframe) and stay light deliberately.
-- **THE OVERRIDE BLOCK IS DECLARED FOR BOTH DOCUMENTS**
-  (`.tiptap-editor-container.tiptap-dark,.tiptap-editor-doc.tiptap-dark`), exactly
-  as the light block is, and the mount-scoped dark rules are prefixed with a bare
-  `.tiptap-dark` rather than the container. This was a real bug for as long as the
-  editing frame has existed: with the override on the container alone it **could not
-  match inside the frame** — `theme.js` mirrors the class onto the frame's own
-  `<html>` precisely because a container selector means nothing in there — so every
-  `--tt-*` variable kept its LIGHT value inside the editable's document. Dark mode
-  drew a dark surface (the container, behind a transparent frame) under **black
-  content text**, with light table borders, light embed placeholders and a light
-  selected-cell highlight. Anything new that colours the editable or the chrome
-  inside the frame must be reachable from the frame root, never from the container.
-- A field's own content stylesheets (`contentsCss`/`stylesheets`) are authored
-  for a light page, so any explicit colour they set still wins inside the
-  editable — intentional (WYSIWYG fidelity), so dark mode is a chrome-comfort
-  feature, not a content preview.
-- Strings are the `toolbar.theme.dark` / `toolbar.theme.light` i18n keys (the
-  tooltip describes what a click will do; the icon shows the current mode).
-
-## Frontend (in-page) editors: clearing the site's own chrome
-
-Core opens a frontend editor as `position:fixed; top:100px; z-index:100` with a
-`z-index:99` sheen (`system/assets/css/admin/frontend/frontendEditor.less`) —
-numbers that predate sticky site headers. A theme header above that band paints
-**over** the editor, and being anchored to the top of the viewport it lands
-exactly on the toolbar: the toolbar is simply not there. `src/frontendFit.js`
-fixes that, in two steps, and both are **frontend-only**.
-
-1. **Win the stack.** The site's own fixed/sticky chrome is measured
-   (`siteChromeZ()`) and `--tt-z-base` is set above the highest of it.
-   **Every z-index this extension owns is expressed against that one variable**
-   in `src/tiptap.css`, so the whole ladder lifts together and keeps its order:
-   sheen (`base-1`) < frontend container (`base`) < maximized (`base+10`) <
-   picker overlay (`base+960`) < anchor overlay / slash menu (`base+1060`).
-   **Never write a literal z-index for those** — a fixed rung is one that stops
-   moving with the rest, which is exactly how a maximized editor ended up under
-   a site header while the un-maximized one was fine.
-   - The var's **default is 1040**, chosen so the rungs compute to the previous
-     literals (1039/1040/1050/2000/2100). In the admin the var is never set, so
-     admin stacking is byte-identical to before — asserted on `/tiptap.html`.
-   - Painting over the header is the right answer, not a compromise: the editor
-     is modal and the sheen already dims the page behind it.
-2. **Push down whatever still covers us** — an element with a z we refused to
-   out-bid (the sweep ignores anything ≥ 2e9, to leave the ladder headroom), or
-   one that only appears later. The test is `document.elementsFromPoint()` at the
-   editor's own top edge, **not** more z-index arithmetic: it asks the question
-   that matters ("is something drawn on top of us *here*?") in real paint order,
-   so nested stacking contexts, opacity and transform layers resolve for free.
-   The push is published as `--tt-frontend-offset` and the editable's max-height
-   gives back exactly that much, so core's fixed save bar stays clear.
-
-- The `getComputedStyle` sweep is affordable because it runs **once per editor
-  open** (the page's chrome does not change while a modal editor is open), not
-  per frame. The geometric pass re-runs rAF-throttled on resize/scroll.
-- Our own elements are excluded from the sweep or it ratchets against itself
-  every time an editor opens. `.content-editor-editor-container` and the sheen
-  are listed in their own right because `frontendEditors.js` re-parents both to
-  `<body>`, so neither is inside `.content-editor` by then.
-- Everything is undone by a teardown registered on `instance._cleanups` (run by
-  `destroy()`) — frontend editors are created and destroyed on **every** edit-mode
-  toggle, so leaving the var or the inline `top` behind would leak.
-- `harness/test-frontend-maximize.html` carries a `z-index:5000` site header, so
-  it reproduces the original bug and exercises step 1; bumping that header to
-  `2147483647` in the console exercises step 2.
-
-## jQuery insert-order fix (src/jqueryOrderFix.js)
-
-Some Preside builds ship a jQuery ("2.2.5-jqnext") whose **`after()` and
-`prepend()` insert multi-node HTML strings in REVERSE order** (fixed-reference
-`insertBefore` loop instead of a fragment; `before()`/`append()` are fine).
-Core frontendEditors.js re-renders an edited region with
-`$( startComment ).after( data.rendered )` after **every save**, so on an
-affected build the whole region came back in reverse block order — in Classic
-and Modern alike. The editor itself always looked right (it renders from the
-textarea), so the scrambling only showed once editing closed — the original
-symptom was "my content disappears when I switch Quick edit off".
-
-- **Feature-detected per method at facade parse time** (a real 2-node probe
-  insert) — a healthy build is left completely untouched, and the shim
-  self-disables the day the build is fixed upstream.
-- When broken, the wrapper **pre-reverses string content that parses to 2+
-  top-level nodes and delegates to the ORIGINAL method** — its reversing loop
-  re-reverses into the correct order, and jQuery's own internals (script
-  evaluation, multi-target cloning) still run. Deliberately NOT a
-  reimplementation: node/jQuery-object/function content passes through
-  untouched.
-- `harness/test-frontend-inline.html` **emulates the broken build** (a shim
-  before the facade loads), so T0 plus every save-path case exercises the
-  healed path; the DB content was never affected (only the client DOM), so a
-  reload always showed the truth.
-
-## Frontend edit-mode dropdown (Off / Classic / Modern) + Modern inline editing
-
-Core's admin frontend toolbar has a binary "Quick edit" checkbox switch. The
-extension replaces it — **JS-only, zero core edits** — with a 3-option dropdown
-styled like the adjacent Draft-view dropdown: **Off**, **Classic** (core's
-overlays → fixed modal editor, unchanged), and **Modern** — inline, gutentap-style
-editing of the page's single rich region. Four modules:
-`src/editModeSwitch.js` (the dropdown), `src/inlineMode.js` (enter/exit + the
-mount swap), `src/selectionBubble.js` (the only toolbar Modern has), plus small
-refactors of `toolbar.js` (`renderNames()` exported) and `frontendFit.js`
-(`liftChromeZ()` exported).
-
-- **Core's checkbox stays in the DOM (hidden) and stays the source of truth for
-  "is editing on"** — Off/Classic drive it programmatically, so core's
-  `_presideEditMode` cookie, delegated handler and "e" hotkey keep working
-  untouched. Our `_presideEditModeStyle` cookie (`classic|modern`) is the only
-  new state. The dropdown needs **no JS binding of its own**: core's patched
-  bootstrap delegates `[data-toggle$=dropdown]` on `document`.
-- **Init on DOMContentLoaded** (`facade.js` `initChrome`) — core's
-  `frontendEditors.js` is a parse-time IIFE, so by then its handlers are wired
-  and its cookie restored; we compose on top, never race it.
-- **Modern reuses core's flow end-to-end** (the load-bearing design):
-  `inlineMode.enter()` marks the textarea `data-tiptap-inline=<containerId>` and
-  triggers core's own overlay click → `toggleEditMode(true)` →
-  `new PresideRichEditor(ta)`. The facade sees the marker at construction time,
-  detaches the rendered nodes between the region's
-  `<!-- container: _x -->…<!-- !container: _x -->` comments (detached, NOT
-  display:none — core's 1s geometry interval must measure the live editor) and
-  mounts `.tiptap-editor-container.tiptap-inline` in their place. Save / Publish
-  / Cancel / Esc / ctrl+Enter / version-restore are core's untouched closures.
-- **Save-vs-cancel is DERIVED from connectivity, never flagged**:
-  `instance._cleanups` run at the top of `destroy()`. Cancel path → our container
-  is still connected between the comments → remove it, re-insert the stored
-  originals (byte-identical restore; asserted). Save path → core's
-  `setContent(data.rendered)` already replaced the region and detached us → keep
-  the fresh render. Policy (user decisions): **every exit lands on Off** —
-  cancel/Esc discards and leaves edit mode; save/publish also drop to Off
-  because the page re-rendering with the saved content IS the visible "it
-  saved" confirmation (revised from an earlier re-enter-after-save behaviour,
-  which looked identical to before the save and read as "nothing happened").
-- **Switching Off/Classic with unsaved edits prompts** (`editmode.unsaved.confirm`,
-  presideBootbox with a window.confirm fallback): OK saves the draft through
-  core's own button — the region re-renders, so the edits stay visible after
-  the switch — Cancel discards them, exactly like the Cancel button. Dirtiness
-  is `getData() !== initialdata` on the facade instance (core's `isDirty()` is
-  hard-coded true and unusable). The "e" hotkey path re-checks the checkbox and
-  routes through the same guard. **The after-save target mode rides ON the
-  inline session** (`saveDraft({ after })` → `onExit( reason, after )`) —
-  deliberately NOT switch-module state: onExit callbacks dispatch via
-  setTimeout, so a stale one from a previous session can fire between "prompt
-  accepted" and "save completed" and would consume it (the bug was Modern
-  re-entering instead of landing on Off; T6b).
-- **The container is kept, chrome-less** (`.tiptap-inline`): it still carries the
-  `--tt-*` variables, `position:relative`, and the key-isolation boundary that
-  the table bubble / drag handle / maximize all need. No toolbar/footer, no
-  height caps, and no content CSS injected (the editable IS the site page and
-  inherits its own). The **outline navigator stays**, in its `fixed` variant
-  (`outline.js` `opts.fixed`): pinned to the viewport's right edge (`.is-fixed`,
-  `--tt-z-base + 40` rung) with capacity measured from the viewport instead of
-  the editable — the page is the scroller inline, so an editable-centred rail
-  would sit mid-document mostly off-screen. Still a container CHILD (the
-  `--tt-*` vars keep cascading); the click-scroll / active-tracking paths
-  already handled the window-as-scroller case. The drag-handle gutter is given back as negative
-  `margin-left` so the content column stays exactly where the rendered page had
-  it.
-- **Modern availability = exactly one `.content-editor.richeditor`** on the
-  page; otherwise the option is disabled with a tooltip and the style cookie is
-  left untouched (the next qualifying page resumes Modern). While Modern is
-  active the OTHER regions' overlays are hidden (`visibility:hidden`, not
-  `display:none` — core scrolls to `$editor.offset()` on open, and a 0,0 overlay
-  would yank the page to the top) **and re-absoluted**: core's
-  `frontend-editors-editing` state flips `.content-editor` to
-  `position:relative` (in flow, at the end of `<body>` where core appended it)
-  while its 1s sizing interval sets an explicit region-height on it —
-  `visibility:hidden` keeps layout space, so without `position:absolute`
-  (core's own non-editing value) Modern showed a region-sized band of invisible
-  whitespace under the page. The same stale inline sizes also outlived the
-  session (core never clears them, and with edit mode OFF `.content-editor` is
-  position:STATIC — in flow), so `editModeSwitch.js` clears them on every
-  off-landing (`clearRegionSizes()`, run from the document-level checkbox
-  change handler, which fires after core's own delegate on every path —
-  dropdown, "e" hotkey, cancel-button exit).
-- **`src/selectionBubble.js`** appears for any FOCUSED text context: a
-  selection, a clicked caret, or the caret being typed at — the block having
-  focus IS the context, and it only drops on blur or a non-text selection
-  (NodeSelections belong to imageTools, cell selections to the table bubble).
-  A `mouseup` listener covers the click that moves no caret (no
-  selectionUpdate fires for it), and the button set is **rebuilt only when the
-  caret changes block** (`contextKey()`), not per keystroke — otherwise it just
-  refreshes is-active states and repositions. Positioning: 24px clear of the
-  text (GAP; flips below under the admin toolbar), **left-aligned to the
-  caret's BLOCK** — never centred on / following the caret, so typing moves it
-  only vertically. **Idle fade**: ~2.5s with no click/keystroke adds `is-idle`
-  (opacity 0, pointer-events none — still is-open); any activity or hovering
-  the bubble fades it back. It renders the field's
-  configured toolbar via the SAME `renderNames()` the main toolbar uses, minus
-  the never-in-bubble set (Maximize/Source/Undo/Redo/Theme/HR/Table/pickers),
-  filtered per block by its own `BUBBLE_APPLIES` map (Outdent/Indent only in
-  lists, Unlink only in links, **Format always** — `can().setParagraph()` is
-  false in a paragraph, which would hide it exactly where it is most wanted).
-  Body-portalled on the `--tt-z-base + 1060` rung, **always light** (the site
-  page is the editing surface — deliberately no `prefers-color-scheme` block);
-  a capture-phase `mousedown` preventDefault keeps the editor selection through
-  any interaction.
-- **The drag rail is body-portalled in inline mode** (`dragHandle.js`
-  `{ fixed: true }`): the container sits in the SITE's page flow, where a gutter
-  carved out of the theme's layout (or hung off it with negative margin) is one
-  `overflow:hidden` ancestor away from being clipped into invisibility — the
-  original "why is the + / grip missing?" bug. Fixed mode reserves NO gutter
-  (the content column keeps the rendered page's exact geometry), positions the
-  rail in viewport coords just left of the mount — **except on a full-width
-  layout** (mount left < 60px: nowhere to float, the rail sat at negative x,
-  the bug's second life), where it falls back to reserving an interior gutter
-  (`tiptap-gutter-*` re-asserted for `.tiptap-inline` in the css, since the
-  inline padding reset would otherwise win) — hides on window scroll, and
-  carves out container→rail mouse travel so the grip is not yanked away en
-  route. It carries its own light styling (outside the `--tt-*` scope) and is
-  removed on destroy (leak-audited).
-- The dropdown trigger's icon is **our own inline SVG** (`ICONS.EditMode`,
-  Tabler "article") — not font-awesome's pencil, which already means "Full
-  edit" one control to the right.
-- **`liftChromeZ()`** (frontendFit step 1, now exported) runs on Modern entry:
-  the inline editor is in page flow (nothing to push down) but the bubble /
-  slash menu / picker overlays still have to out-bid a sticky site header.
-- **Churn-safety is load-bearing**: Modern destroys and recreates the editor on
-  every save. `instanceReady` is guarded with `tiptap.isDestroyed` (consumers
-  call `getData()` in that handler), the slash-menu popup is removed in the
-  extension's `onDestroy` (it used to leak one `<body>` div per cycle — T18),
-  and the bubble/table/drag clamps use the **mount∩viewport** intersection (the
-  raw mount rect is page-height inline, which parked chrome off screen).
-- Tests: `harness/test-frontend-inline.html` (self-running, 56 assertions,
-  backed by `harness/mockFrontendEditors.js` — a faithful trimmed transcription
-  of core's contract — and `/mock/frontend/*` endpoints in `server.mjs`);
-  `test-realworld.html` T18 covers the slash-menu leak. **jQuery's
-  `.trigger("click")` skips native handlers on `<a>`** — the dropdown items need
-  native `.click()` in tests.
-- i18n keys: `editmode.*`, `bubble.title` (the three usual places).
+# Part 7 — Dev, testing, history
 
 ## Local dev server
 
@@ -1925,12 +2113,18 @@ Environment-independent facts:
    **link**, **image/asset**, and **widget** pickers open, insert, AND re-open
    (double-click an inserted widget to prepopulate). These three picker flows are
    the historically fragile paths.
+4. **Only when a second `preside-ext-tiptap-*` extension is in play**: with one
+   installed that appends a key from its own bundle to `settings.tiptap.i18nKeys`,
+   check `cfrequest.tiptapI18n` in the page source contains **both** that key and
+   all of this extension's own. That is the one thing the browser harness cannot
+   see, because the key list is resolved server-side.
 
 The browser harness (`harness/`) covers most of this without a Preside boot —
-including a CKEditor-vs-Tiptap fidelity matrix (`/fidelity.html`) and
+including a CKEditor-vs-Tiptap fidelity matrix (`/fidelity.html`),
 `/test-realworld.html`, self-running tests whose cases are real customisation
 patterns found in Pixl8 sites (named toolbars, unmapped CKEditor buttons,
-stylesSet appends, custom config files). See `harness/README.md`.
+stylesSet appends, custom config files), and `/test-plugin-api.html` (the plugin
+API for dependent extensions). See `harness/README.md`.
 
 ## Gotchas / history
 

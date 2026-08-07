@@ -18,9 +18,9 @@
  * document beyond running that command, so getData() is unaffected by the menu's
  * existence.
  */
-import { ICONS } from "./icons.js";
-import { COMMANDS } from "./toolbar.js";
-import { t } from "./i18n.js";
+import { command, iconFor } from "./toolbar.js";
+import { t, tIf } from "./i18n.js";
+import { pluginSlashItems } from "./pluginHost.js";
 import { pageRect, frameOf, containerOf } from "./editorFrame.js";
 import { focusEditable } from "./editorFocus.js";
 
@@ -121,22 +121,42 @@ function hostRectOf( editor, clientRect ) {
 	};
 }
 
-function itemsFor( cfg ) {
+function itemsFor( cfg, editor ) {
 	const items = [];
 	baseItems().forEach( function( it ) {
 		// Drop anything whose command this build/field does not have (a toolbar
 		// without pickers, a Preside extension not registered).
-		if ( it.cmd && !COMMANDS[ it.cmd ] ) { return; }
+		if ( it.cmd && !command( it.cmd, cfg ) ) { return; }
 		items.push( {
 			  label   : t( "slash." + it.key )
 			, hint    : t( "slash." + it.key + ".hint" )
 			, icon    : it.icon
 			, group   : it.group
 			, keywords: it.keywords || ""
-			, run     : it.run || ( e => COMMANDS[ it.cmd ].run( e ) )
+			, run     : it.run || ( e => command( it.cmd, cfg ).run( e, cfg ) )
 		} );
 	} );
 	widgetItems( cfg ).forEach( it => items.push( it ) );
+
+	// Plugin-contributed entries (src/plugins.js `slashItems`), in the same shape
+	// and under the SAME rule as everything above: an item whose command is not
+	// available in this build/field is dropped rather than shown broken.
+	// `label`/`hint` may be given literally (as the widget entries do) or left to
+	// the "slash.<key>" i18n keys; a hint that resolves nowhere becomes "" rather
+	// than printing its own key under the label.
+	pluginSlashItems( { cfg: cfg, editor: editor || null, api: window.PresideTiptap && window.PresideTiptap.api } )
+		.forEach( function( it ) {
+			if ( it.cmd && !command( it.cmd, cfg ) ) { return; }
+			if ( !it.cmd && typeof it.run !== "function" ) { return; }
+			items.push( {
+				  label   : it.label || ( it.key ? t( "slash." + it.key ) : it.cmd )
+				, hint    : it.hint  || ( it.key ? tIf( "slash." + it.key + ".hint" ) : "" )
+				, icon    : it.icon
+				, group   : it.group || "preside"
+				, keywords: it.keywords || ""
+				, run     : it.run || ( e => command( it.cmd, cfg ).run( e, cfg ) )
+			} );
+		} );
 	return items;
 }
 
@@ -160,8 +180,6 @@ function filterItems( items, query ) {
  * widgetCategories + the opt-out).
  */
 export function createSlashMenu( T, cfg ) {
-	const items = () => itemsFor( cfg );
-
 	return T.Extension.create( {
 		  name: "presideSlashMenu"
 
@@ -177,6 +195,9 @@ export function createSlashMenu( T, cfg ) {
 
 		, addProseMirrorPlugins() {
 			const editor = this.editor;
+			// Built here rather than in createSlashMenu(): a plugin's slashItems()
+			// hook is handed the live editor, which does not exist until now.
+			const items  = () => itemsFor( cfg, editor );
 			const popup  = createPopup( editor );
 			this.storage.popup = popup;
 
@@ -197,7 +218,7 @@ export function createSlashMenu( T, cfg ) {
 					popup.move( currentRect );
 				}
 				function refilter() {
-					list = filterItems( itemsFor( cfg ), query );
+					list = filterItems( items(), query );
 					if ( active >= list.length ) { active = 0; }
 					paint();
 				}
@@ -391,7 +412,9 @@ function createPopup( editor ) {
 					lastGroup = it.group;
 					const h = document.createElement( "div" );
 					h.className = "tiptap-slash-group";
-					h.textContent = t( "slash.group." + it.group );
+					// A plugin may name a group of its own; without a matching i18n key
+					// t() would print the raw "slash.group.x", so fall back to the name.
+					h.textContent = tIf( "slash.group." + it.group ) || it.group;
 					box.appendChild( h );
 				}
 
@@ -402,7 +425,9 @@ function createPopup( editor ) {
 
 				const ico = document.createElement( "span" );
 				ico.className = "tiptap-slash-icon";
-				ico.innerHTML = ICONS[ it.icon ] || "";
+				// One of our icon names, a plugin command's name, or a raw SVG string
+				// a plugin item supplied directly.
+				ico.innerHTML = iconFor( it.icon ) || ( /^\s*</.test( it.icon || "" ) ? it.icon : "" );
 				row.appendChild( ico );
 
 				const txt = document.createElement( "span" );

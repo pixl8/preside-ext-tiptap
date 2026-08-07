@@ -26,6 +26,7 @@
  */
 import { renderNames, normaliseToolbar, styleItems } from "./toolbar.js";
 import { t } from "./i18n.js";
+import { pluginBubbleTests } from "./pluginHost.js";
 
 // Never in the bubble: view/global commands and block-level INSERTION, which
 // belong to the persistent chrome (admin) or the slash menu (inline). Table
@@ -106,6 +107,10 @@ export function createSelectionBubble( editor, container, parsedToolbar, cfg ) {
 	el.addEventListener( "mousedown", function( e ) { e.preventDefault(); }, true );
 
 	var allNames  = flattenNames( parsedToolbar );
+	// A plugin's `bubble` map answers the same question for ITS command names.
+	// Merged over ours rather than under it: the entries can only be for names
+	// that plugin contributed, since a built-in already has its own answer here.
+	var applies   = Object.assign( {}, APPLIES, pluginBubbleTests( cfg ) );
 	var updaters  = [];
 	var visible   = false;
 	var showTimer = null;
@@ -128,7 +133,7 @@ export function createSelectionBubble( editor, container, parsedToolbar, cfg ) {
 		el.innerHTML = "";
 		updaters = [];
 		var names = allNames.filter( function( n ) {
-			var test = APPLIES[ n ];
+			var test = applies[ n ];
 			if ( !test ) { return true; }
 			try { return !!test( editor, cfg ); } catch ( e ) { return false; }
 		} );

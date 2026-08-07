@@ -4,3 +4,5 @@ npm-debug.log*
 *.map
 devlocal.md
 .playwright-mcp/
+AIplan.md
+ExtensibilityPlan.md

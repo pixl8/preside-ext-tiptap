@@ -13,12 +13,23 @@
  *   1. window.cfrequest.tiptapI18n[ key ]   (server-translated, Preside)
  *   2. window.PresideTiptapI18n[ key ]      (manual override, harness/standalone)
  *   3. DEFAULTS[ key ]                      (built-in English)
+ *   4. a registered plugin's i18nDefaults[ key ]  (an add-on's own English)
+ *
+ * A dependent extension adds SERVER-translated strings by appending to
+ * `settings.tiptap.i18nKeys` in its own config (entries may name their own
+ * resource bundle, "tiptapai:ai.button"); the JS key stays unprefixed, so
+ * nothing here has to know which bundle a string came from. Its i18nDefaults
+ * are the English fallback for when that key is missing from every bundle -
+ * which is why they sit UNDER ours: a plugin can add keys, never silently
+ * restate one of the editor's own.
  *
  * Strings are resolved at RENDER time, never at script-parse time - the
  * cfrequest data block may be emitted after this bundle executes.
  *
  * `t( key, subs )` substitutes `{name}` placeholders from subs.
  */
+
+import { pluginI18nDefaults } from "./pluginHost.js";
 
 export const DEFAULTS = {
 	  "toolbar.bold"             : "Bold"
@@ -193,6 +204,7 @@ function overrides() {
 export function t( key, subs ) {
 	var o = overrides();
 	var s = ( o[ key ] !== undefined && o[ key ] !== null && String( o[ key ] ).length ) ? o[ key ] : DEFAULTS[ key ];
+	if ( s === undefined || s === null ) { s = pluginI18nDefaults()[ key ]; }
 	if ( s === undefined || s === null ) { return key; }
 	s = String( s );
 	if ( subs ) {
@@ -201,4 +213,17 @@ export function t( key, subs ) {
 		} );
 	}
 	return s;
+}
+
+/**
+ * t(), but "" for a key that resolves nowhere.
+ *
+ * `t()` returns the KEY when it finds nothing, which is the right behaviour for
+ * a string that must exist (it shows up in the UI and gets fixed). It is the
+ * wrong behaviour for an OPTIONAL one - a plugin's "/" menu item with no hint
+ * would render the literal text "slash.foo.hint" underneath its label.
+ */
+export function tIf( key, subs ) {
+	var s = t( key, subs );
+	return s === key ? "" : s;
 }

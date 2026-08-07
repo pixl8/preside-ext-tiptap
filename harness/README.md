@@ -147,8 +147,29 @@ markup and sample content (headings, bold/italic, a `{{link:…}}` link, an
   (exactly one rich region), cookie/hotkey behaviour, inline mount between the
   region comments, save/publish round-trips with Modern re-entry, byte-identical
   cancel restore, per-block selection-bubble filtering, maximize from inline,
-  and a 10-cycle enter/exit leak audit. Results on `window.__results` /
-  `window.__done`.
+  and a 10-cycle enter/exit leak audit. It also loads `plugin-fixture.js` for
+  T29's two Modern-mode context assertions (`ctx.mode === "inline"`,
+  `ctx.frame === null`) — the half of the plugin API that a boxed editor cannot
+  exercise. Results on `window.__results` / `window.__done`.
+
+- **`/test-plugin-api.html`** (T29) — the plugin API for dependent extensions
+  (`preside-ext-tiptap-*`), driven by **`plugin-fixture.js`**: a dummy add-on
+  loaded *after* the facade, exactly as Sticker orders a real one, registering
+  one of everything against `PresideTiptap.plugins`. Covers: the whole
+  `PresideTiptap.api` surface and `apiVersion`, duplicate/nameless/late
+  `register()` handling, a contributed Tiptap extension reaching the built
+  editor, a contributed toolbar button (its own icon, its `i18nDefaults` title,
+  a working active state, and **no leading/trailing/doubled separator** around
+  it — nor left behind when it is switched off), `slashItems` filtering and the
+  dropping of an item whose command does not exist, the `ctx` object (mode,
+  frame, container, and `api.containerOf()` resolving from inside the frame —
+  the `closest()` trap), the lifecycle order
+  `beforeExtensions → toolbarReady → instanceReady → beforeDestroy` with
+  `beforeDestroy` firing **before** `_cleanups` and with the editor still alive,
+  `chrome()`'s teardown running on `destroy()`, the per-field
+  `defaultConfigs.<name> = false` opt-out gating all of it, and — the point of
+  the whole exercise — **`getData()` byte-identical with the plugin registered
+  and idle**. Results on `window.__results` / `window.__done`.
 
 ## Driving with Playwright
 

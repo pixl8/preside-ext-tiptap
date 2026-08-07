@@ -10,8 +10,11 @@
  * phases.
  */
 import { Editor, Extension, Node, Mark, mergeAttributes } from "@tiptap/core";
-import { Plugin, PluginKey, NodeSelection } from "@tiptap/pm/state";
+import { Plugin, PluginKey, NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { Slice, Fragment, DOMSerializer, DOMParser } from "@tiptap/pm/model";
+import { Transform } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { createPluginRegistry, API_VERSION } from "./plugins.js";
 import { Suggestion } from "@tiptap/suggestion";
 import StarterKit from "@tiptap/starter-kit";
 import { Subscript } from "@tiptap/extension-subscript";
@@ -132,6 +135,25 @@ window.PresideTiptap = {
 	// Whole-block selection, for the drag handle (src/dragHandle.js): dragging a
 	// block means selecting the node, not a text range.
 	, NodeSelection
+	// For PLUGINS (see `plugins` below). Nothing in this repo needs these yet, and
+	// they cost nothing - all four are already in the bundle via @tiptap/pm, so
+	// only the reference is new - but an add-on that puts content anywhere other
+	// than straight into the document cannot be written without them:
+	//   Slice / Fragment          - hold content OUTSIDE the document (a proposed
+	//                               AI rewrite, a diff, a preview) before deciding
+	//                               whether to apply it
+	//   DOMSerializer / DOMParser - content <-> DOM without going through the
+	//                               editor, i.e. without dirtying the form
+	//   TextSelection             - place a selection over a range that was
+	//                               computed rather than clicked
+	//   Transform                 - build a document change and inspect it before
+	//                               it is ever dispatched
+	, Slice
+	, Fragment
+	, DOMSerializer
+	, DOMParser
+	, TextSelection
+	, Transform
 	// The "/" menu's trigger detection (src/slashMenu.js). @tiptap/suggestion is
 	// framework-agnostic - only the popup renderer is ours - and pulls nothing but
 	// core/pm/floating-ui, unlike @tiptap/extension-drag-handle (see CLAUDE.md).
@@ -147,5 +169,12 @@ window.PresideTiptap = {
 		, createPresideAttributes  // Phase 4b (class/style on blocks)
 		, createPresideInlineStyle // Phase 4b (class/style on spans)
 	  }
+	// The plugin registry for dependent extensions (preside-ext-tiptap-*). It is
+	// created HERE, in the first bundle on the page, so a plugin's parse-time
+	// register() can never run before the registry exists - see src/plugins.js.
+	// `PresideTiptap.api` (the shared helpers) is populated by the FACADE bundle,
+	// which is where those helpers live.
+	, plugins    : createPluginRegistry()
+	, apiVersion : API_VERSION
 	, version    : "0.0.1"
 };

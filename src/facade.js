@@ -29,7 +29,13 @@ import { createTableTools, tableToolsEnabled } from "./tableTools.js";
 import { createSlashMenu, slashMenuEnabled } from "./slashMenu.js";
 import { createDragHandle, dragHandleEnabled } from "./dragHandle.js";
 import { createResizer, resizeEnabled } from "./resize.js";
-import { createFrame, containerOf } from "./editorFrame.js";
+import { createFrame, containerOf, frameOf, surfaceOf, pageRect } from "./editorFrame.js";
+import { focusEditable } from "./editorFocus.js";
+import { openDialog, closeDialog } from "./dialog.js";
+import { placeBubble, bubbleButton } from "./embedBubble.js";
+import { ICONS } from "./icons.js";
+import { isDark } from "./theme.js";
+import { activePlugins, emitLifecycle, noteEditorCreated } from "./pluginHost.js";
 import { fitFrontendEditor } from "./frontendFit.js";
 import { resolveInlineMount } from "./inlineMode.js";
 import { initEditModeSwitch } from "./editModeSwitch.js";
@@ -66,6 +72,70 @@ import { t } from "./i18n.js";
 	// it, so the nested dialog never appears.
 	if ( !CK.document ) { CK.document = { $: document }; }
 	if ( typeof CK.on !== "function" ) { CK.on = function() {}; }
+
+	// ---- PresideTiptap.api: the helpers, re-exported as-is ------------------
+	//
+	// Published at PARSE time (a plugin bundle declares .after("tiptap-facade"),
+	// so it parses after this line and before formFields.js mounts anything) and
+	// living on the VENDOR global, because that is the one object a plugin can
+	// count on. The registry itself is over there too - see src/plugins.js.
+	//
+	// Nothing here is wrapped. Each entry is the module's own function, because
+	// the value is not the convenience - it is that a plugin does NOT reimplement
+	// these, since each one encodes a trap that cost a release:
+	//
+	//   containerOf( el )      closest() stops at the root of the editable's OWN
+	//                          document, so from inside the editing frame it
+	//                          returns null and the caller silently operates on
+	//                          nothing. This is how Maximize stopped working.
+	//   frameOf / surfaceOf /  the frame boundary generally: which element is the
+	//   pageRect               visible editor box, and how to translate content
+	//                          geometry into host coordinates. Chrome positioned
+	//                          without these lands at the top-left of the admin.
+	//   focusEditable( ed )    Tiptap's focus command takes DOM focus SYNCHRONOUSLY
+	//                          on Safari, which dispatches a selection correction
+	//                          mid-chain: "Applying a mismatched transaction", and
+	//                          the whole chain is silently lost. Take DOM focus
+	//                          first, then chain off the return value.
+	//   openDialog             dialog chrome in a SHADOW ROOT. The admin's own
+	//                          legend/label/input rules - several of them
+	//                          !important - mangle a light-DOM panel, and no
+	//                          amount of specificity wins that fight.
+	//   placeBubble            left-anchor then clamp, flip below when there is no
+	//                          room, and measure against mount ∩ viewport (inline,
+	//                          the mount is page-height, so the raw rect answers
+	//                          the wrong question).
+	//   tokenize / detokenize  the {{...}} <-> HTML conversion, and
+	//   normalizeOutput        the output normaliser. Exported deliberately: a
+	//                          plugin that touches document content MUST be able to
+	//                          see what getData() will really store, or it cannot
+	//                          verify it has not broken fidelity.
+	//
+	// t() resolves at render time; ICONS is our MIT (Tabler) set; isDark reads the
+	// CONTAINER, not the stored preference (an inline editor stays light).
+	if ( T ) {
+		T.api = {
+			  t              : t
+			, openDialog     : openDialog
+			, closeDialog    : closeDialog
+			, surfaceOf      : surfaceOf
+			, pageRect       : pageRect
+			, containerOf    : containerOf
+			, frameOf        : frameOf
+			, focusEditable  : focusEditable
+			, placeBubble    : placeBubble
+			, bubbleButton   : bubbleButton
+			, ICONS          : ICONS
+			, applyTheme     : applyTheme
+			, isDark         : isDark
+			, tokenize       : tokenize
+			, detokenize     : detokenize
+			, normalizeOutput: normalizeOutput
+			// The plan's name for it; the same function, so a plugin can use either.
+			, normalize      : normalizeOutput
+			, apiVersion     : T.apiVersion || 1
+		};
+	}
 
 	function cfreq() { return window.cfrequest || {}; }
 
@@ -116,6 +186,21 @@ import { t } from "./i18n.js";
 			                     : ( cf.ckeditorAutoParagraph !== undefined ? cf.ckeditorAutoParagraph : fileCfg.autoParagraph )
 			, defaultConfigs     : defaultConfigs
 		};
+	}
+
+	/**
+	 * Fire a lifecycle event on BOTH buses.
+	 *
+	 * The facade instance's own CKEditor-shaped `on`/`fire` is the public one and
+	 * the one core already uses (instanceReady), so anything that has an instance
+	 * gets it there. The registry's global bus (src/plugins.js) exists because
+	 * `beforeExtensions` fires before the instance does - there is nothing else to
+	 * fire it on - and a plugin registered at parse time has no instance to attach
+	 * to yet either. Both carry the same ctx.
+	 */
+	function fireLifecycle( instance, evt, ctx ) {
+		if ( instance ) { try { instance.fire( evt, ctx ); } catch ( e ) {} }
+		emitLifecycle( evt, ctx );
 	}
 
 	// ---- Compat instance: CKEditor-shaped API over a Tiptap editor --------
@@ -228,6 +313,12 @@ import { t } from "./i18n.js";
 	// textarea so a later `new PresideRichEditor()` on the same element starts
 	// clean (frontend editors create/destroy on every edit-mode toggle).
 	CompatInstance.prototype.destroy = function() {
+		// FIRST, before the cleanups: a plugin that applied something to the
+		// DOCUMENT (a pending suggestion, a decoration-backed preview) has to be
+		// able to revert it while the editor is still alive and the change can
+		// still be undone. Once _cleanups have run there is no editor left to
+		// revert into.
+		fireLifecycle( this, "beforeDestroy", this._ctx || { instance: this, editor: this._t } );
 		try {
 			if ( this._domListeners && this._t.view && this._t.view.dom ) {
 				var dom = this._t.view.dom;
@@ -365,10 +456,27 @@ import { t } from "./i18n.js";
 		// via CKEDITOR.filter on paste - see preside.richeditor.js).
 		var pasteTransform = createPasteTransform( cfg.defaultConfigs );
 
+		// The plugin context (src/plugins.js). Created HERE - before the editor -
+		// and then FILLED IN as the pieces come into existence, deliberately as one
+		// object: the tiptapExtensions hook has to run before there is an editor at
+		// all, and a plugin that keeps the ctx it was handed then sees `editor` and
+		// `instance` appear rather than holding a permanently-null copy.
+		var ctx = {
+			  editor   : null
+			, instance : null
+			, cfg      : cfg
+			, container: container
+			, toolbar  : isInline ? null : toolbarEl
+			, frame    : frameApi ? frameApi.frame : null   // null in Modern inline mode
+			, mode     : isInline ? "inline" : "boxed"
+			, api      : T && T.api
+		};
+		this._ctx = ctx;
+
 		var self   = this;
 		var tiptap = new T.Editor( {
 			  element    : mount
-			, extensions : this.buildExtensions( cfg )
+			, extensions : this.buildExtensions( cfg, ctx )
 			, content    : detokenize( ta.value || "" )
 			, editorProps: pasteTransform ? { transformPastedHTML: pasteTransform } : {}
 		} );
@@ -400,9 +508,16 @@ import { t } from "./i18n.js";
 			tiptap.on( "update", frameApi.refit );
 		}
 
+		ctx.editor = tiptap;
+		// From now on a register() is too late for the editors already on the page,
+		// and the registry says so out loud rather than doing nothing visible.
+		noteEditorCreated();
+
 		var instance = new CompatInstance( name, tiptap, cfg, ta, container );
 		instance.initialdata = instance.getData();
 		ta.value = instance.initialdata;
+		ctx.instance = instance;
+		instance._ctx = ctx;
 
 		// Toolbar: a config file may set config.toolbar to a CKEditor array
 		// directly, and a bare toolbar NAME that reached the client unresolved
@@ -449,6 +564,12 @@ import { t } from "./i18n.js";
 			}
 		}
 
+		// The toolbar exists (or, inline, has been decided against - ctx.toolbar is
+		// null there and the selection bubble is what a plugin would sit next to).
+		// For chrome that must be positioned RELATIVE to the toolbar; ordinary
+		// after-mount work belongs in the registry's `chrome` hook, below.
+		fireLifecycle( instance, "toolbarReady", ctx );
+
 		// Document outline navigator: a hover-expanding rail of heading markers on
 		// the right edge of the container (chrome only - see src/outline.js).
 		// Inline (Modern) it pins to the right edge of the VIEWPORT instead - the
@@ -494,6 +615,21 @@ import { t } from "./i18n.js";
 			} );
 		}
 
+		// Plugin chrome, LAST: it runs with everything built and the editor live, and
+		// whatever it hands back is torn down with the rest. A plugin that returns no
+		// teardown is taken at its word - anything it put inside the container goes
+		// when the container does.
+		var pluginCleanups = [];
+		activePlugins( cfg ).forEach( function( p ) {
+			if ( typeof p.chrome !== "function" ) { return; }
+			try {
+				var teardown = p.chrome( ctx );
+				if ( typeof teardown === "function" ) { pluginCleanups.push( teardown ); }
+			} catch ( e ) {
+				if ( window.console ) { window.console.error( '[tiptap] plugin "' + p.name + '" chrome() failed', e ); }
+			}
+		} );
+
 		// Teardown registry, run FIRST in destroy() - everything here wrote outside
 		// the container (CSS vars on <html>, body-portalled elements, the inline
 		// mount's original page nodes), so it must not outlive the editor.
@@ -502,7 +638,7 @@ import { t } from "./i18n.js";
 			  fitFrontendEditor( container )
 			, isInline ? inlineMount.cleanup : null
 			, bubbleCleanup
-		].filter( Boolean );
+		].filter( Boolean ).concat( pluginCleanups );
 
 		if ( name ) { CK.instances[ name ] = instance; }
 		$ta.data( "ckeditorinstance", instance );
@@ -513,10 +649,13 @@ import { t } from "./i18n.js";
 		// first. Guarded: a frontend editor can legitimately be destroyed within
 		// the same tick it was created (Modern mode's save -> re-enter churn), and
 		// consumers' instanceReady handlers call getData() on a live editor.
-		setTimeout( function() { if ( !tiptap.isDestroyed ) { instance.fire( "instanceReady" ); } }, 0 );
+		setTimeout( function() { if ( !tiptap.isDestroyed ) { fireLifecycle( instance, "instanceReady", ctx ); } }, 0 );
 	};
 
-	PresideRichEditor.prototype.buildExtensions = function( cfg ) {
+	// `ctx` is the plugin context (see init). It is optional so the old
+	// one-argument form - which is what an existing site monkey-patching this
+	// prototype calls - keeps working unchanged.
+	PresideRichEditor.prototype.buildExtensions = function( cfg, ctx ) {
 		// Disable StarterKit's own link mark - PresideLink owns link serialization.
 		var exts = [ T.StarterKit.configure( { link: false } ) ];
 		var ext  = T.extensions || {};
@@ -577,6 +716,32 @@ import { t } from "./i18n.js";
 				}
 			} ) );
 		}
+
+		// Plugin-contributed Tiptap extensions. THIS is the only moment they can be
+		// added: a Tiptap editor's extension list is fixed at construction, so no
+		// post-mount hook could do it. The context is handed over with
+		// `editor`/`instance` still null for exactly that reason - it is the same
+		// object init() fills in a moment later, so a plugin that keeps it will see
+		// them appear.
+		var pctx = ctx || {
+			  editor: null, instance: null, cfg: cfg, container: null, toolbar: null
+			, frame : null, mode: "boxed", api: T && T.api
+		};
+		activePlugins( cfg ).forEach( function( p ) {
+			if ( typeof p.tiptapExtensions !== "function" ) { return; }
+			try {
+				var got = p.tiptapExtensions( pctx ) || [];
+				( Array.isArray( got ) ? got : [ got ] ).forEach( function( e ) { if ( e ) { exts.push( e ); } } );
+			} catch ( e ) {
+				if ( window.console ) { window.console.error( '[tiptap] plugin "' + p.name + '" tiptapExtensions() failed', e ); }
+			}
+		} );
+
+		// The array is exposed on the ctx so a `beforeExtensions` listener can push
+		// onto it - that is the whole point of firing before the return. There is no
+		// instance yet, so this event reaches the registry's global bus only.
+		pctx.extensions = exts;
+		emitLifecycle( "beforeExtensions", pctx );
 
 		return exts;
 	};

@@ -20,6 +20,7 @@ import { containerOf } from "./editorFrame.js";
 import { openFindReplace } from "./findReplace.js";
 import { openSpecialChar } from "./specialChar.js";
 import { setBidi, currentDir } from "./bidi.js";
+import { pluginCommand, pluginIcon } from "./pluginHost.js";
 
 // containerOf(), not closest(): the editable is in the editing IFRAME, so a
 // same-document closest() from view.dom finds nothing (see editorFrame.js).
@@ -74,6 +75,34 @@ export const COMMANDS = {
 	, AttachmentPicker : { run: e => e.commands.openPresideAttachmentPicker() }
 	, CodeSnippet      : { run: e => e.chain().focus().toggleCodeBlock().run(), active: e => e.isActive( "codeBlock" ) }
 };
+
+/**
+ * Resolve a toolbar button name to its command - OURS first, then any a
+ * registered plugin contributes for this field (src/pluginHost.js).
+ *
+ * Everything that renders or tests a button name goes through here rather than
+ * indexing COMMANDS directly, which is what lets a dependent extension add a
+ * button name at all. Built-ins always win: a plugin must not be able to
+ * silently re-point `Bold`.
+ *
+ * Returns null for an unknown name, exactly as `COMMANDS[ name ]` did - so
+ * every existing "unknown names are skipped gracefully" path is unchanged, and
+ * a plugin whose `enabled( cfg )` says no is indistinguishable from one that
+ * never registered (which is what keeps the separator tidying honest - see
+ * tidySeparators).
+ */
+export function command( name, cfg ) {
+	return COMMANDS[ name ] || pluginCommand( name, cfg );
+}
+
+/**
+ * The icon markup for a button name: our own set, else the raw SVG string a
+ * plugin's command carries. Returns "" when there is neither, so callers can
+ * fall back to a text label as they always did.
+ */
+export function iconFor( name, cmd ) {
+	return ICONS[ name ] || ( cmd && cmd.icon ) || pluginIcon( name ) || "";
+}
 
 // Format dropdown entries come from defaultConfigs.format_tags (CKEditor's
 // `format_tags`, core default 'p;h1;h2;h3;h4;h5;h6;pre;div') filtered to the
@@ -198,16 +227,18 @@ export function renderNames( rowEl, names, editor, cfg, updaters, opts ) {
 			return;
 		}
 
-		const cmd = COMMANDS[ name ];
+		// Ours, or a plugin's - and an unknown/disabled name is still simply skipped.
+		const cmd = command( name, cfg );
 		if ( !cmd ) { return; } // unknown / not-implemented button — skip
 
 		const btn   = document.createElement( "button" );
 		const title = t( "toolbar." + name.toLowerCase() );
+		const icon  = iconFor( name, cmd );
 		btn.type = "button";
 		btn.className = "tiptap-btn";
 		btn.title = title;
 		btn.setAttribute( "aria-label", title );
-		if ( ICONS[ name ] ) { btn.innerHTML = ICONS[ name ]; }
+		if ( icon ) { btn.innerHTML = icon; }
 		else { btn.textContent = cmd.label || name; }
 		btn.setAttribute( "data-cmd", name );
 		// Refresh the is-active states straight after the click, not only on the next

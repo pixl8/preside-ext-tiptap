@@ -103,6 +103,11 @@
 	</script>
 	<script src="/dist/tiptap.bundle.min.js"></script>
 	<script src="/dist/facade.min.js"></script>
+	<!-- A dependent extension, for T29's two Modern-mode context assertions. It
+	     contributes no toolbar name this page's field uses, so the only thing it
+	     adds to the page is its own chrome marker inside our container (removed
+	     with it - the leak checks below still hold). -->
+	<script src="/plugin-fixture.js"></script>
 	<script>
 	// Fill the region's base64 editor template (what renderFrontendEditor.cfm +
 	// _editorTemplate.cfm emit) BEFORE the frontendEditors mock decodes it.
@@ -294,6 +299,14 @@
 			check( "T4 sheen suppressed", getComputedStyle( document.querySelector( ".frontend-editor-modal-sheen" ) ).display === "none" );
 			check( "T4 style cookie is modern", cookie( "_presideEditModeStyle" ) === "modern" );
 			check( "T4 editor registered under core's expected name", !!CKEDITOR.instances.content );
+			// The plugin API's view of Modern mode (the other half of T29, which can
+			// only assert the boxed shape): there is NO editing frame here - the
+			// editable IS the site page - and a plugin must be told so rather than
+			// having to work it out. plugin-fixture.js is loaded on this page for
+			// exactly these two assertions.
+			check( "T29 ctx.mode is 'inline' in Modern mode", window.__demo.ctxs.chrome.mode === "inline" );
+			check( "T29 ...and ctx.frame is null (there is no editing iframe)",
+				window.__demo.ctxs.chrome.frame === null );
 			check( "T4 no height cap on the inline mount",
 				inlineC && !inlineC.querySelector( ".tiptap-editor-mount" ).style.maxHeight );
 			// The hidden .content-editor div sits at the end of <body>. Core's

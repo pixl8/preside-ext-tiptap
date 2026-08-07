@@ -26,6 +26,20 @@ export function getTheme() {
 	return stored === "dark" ? "dark" : "light";
 }
 
+/**
+ * Is THIS editor dark? (PresideTiptap.api.isDark)
+ *
+ * A container argument is the honest question for chrome, and it is not the same
+ * as getTheme(): an inline (Modern) editor is deliberately left light whatever
+ * the stored preference is, because the editable there IS the site page. Chrome
+ * portalled to <body> - a menu, a bubble, a panel - must read the CONTAINER, not
+ * the preference, or a dark-preference user gets dark chrome over a light editor.
+ */
+export function isDark( container ) {
+	if ( container && container.classList ) { return container.classList.contains( DARK_CLASS ); }
+	return getTheme() === "dark";
+}
+
 // Called for every editor as it mounts, so a stored preference applies without
 // the user having to toggle again.
 export function applyTheme( container, mode ) {
