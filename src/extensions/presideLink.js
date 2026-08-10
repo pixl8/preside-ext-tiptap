@@ -31,12 +31,20 @@ export function createPresideLink( deps ) {
 		},
 
 		addAttributes() {
+			// `class` and `style` back the Styles dropdown's `a.*` object styles
+			// (issue #1) — and, independently of that, stop a class on a legacy
+			// CKEditor-authored link being DROPPED on save (ProseMirror discards
+			// undeclared attributes). `class` is declared first because CKEditor 4's
+			// writer sorted attributes alphabetically, so the common stored shape is
+			// `<a class="x" href="...">` — declaration order is emission order here.
 			return {
-				  href          : { default: null }
+				  "class"       : { default: null }
+				, href          : { default: null }
 				, target        : { default: null }
 				, rel           : { default: null }
 				, title         : { default: null }
 				, referrerpolicy: { default: null }
+				, style         : { default: null }
 			};
 		},
 

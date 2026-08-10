@@ -1060,9 +1060,21 @@ from two element tables in the `CKEDITOR.style` constructor
 
 | type | test | our tags |
 |---|---|---|
-| OBJECT | `elementPath.contains( element )` | ul, ol, li, table |
+| OBJECT | `elementPath.contains( element )` | ul, ol, li, table, blockquote, td, th, tr, a |
 | BLOCK  | `elementPath.blockLimit.getDtd()[ element ]` | p, h1–h6, pre, div |
 | INLINE | unconditionally `true` | span, small, strong, b, em, i |
+
+- **`a` is the one OBJECT entry backed by a MARK** (`presideLink`), not a node —
+  CKEditor's `L` table lists `a`, so a stylesSet `{ element: 'a' }` entry (issue
+  #1's "Button link") is offered exactly when the caret is inside a link.
+  Applying/toggling **re-classes the mark and never unsets it** (CKEditor's
+  `removeObjectStyle` likewise stripped the style's attributes and kept the
+  element) — unsetting would delete the link itself. This is also why
+  `presideLink` carries `class`/`style` attributes at all, which independently
+  stops a class on a legacy CKEditor-authored link being dropped on save;
+  `class` is declared FIRST so the common stored shape
+  `<a class="x" href="…">` (CKEditor's writer sorted attributes) round-trips
+  byte-identically. T4d covers both halves.
 
 `onOpen` then `hideItem`s every inapplicable entry, `hideGroup`s a type group whose
 count is 0, and **`refresh` sets the whole combo `TRISTATE_DISABLED` when nothing
@@ -1167,7 +1179,9 @@ frame with the sheet linked unmodified, and no content CSS in the admin document
 the `@layer` leak regression), **T3b** (both combos as their own blocks, the dropped
 separator, the 6px gap), **T3c** (disabled in a paragraph on an object-only sheet,
 enabled inside a table), **T4b** (the inline tags: appearance, round-trip per tag, the
-`<b>`→`<strong>` collapse, no churn on unclassed marks, and removeStyle semantics).
+`<b>`→`<strong>` collapse, no churn on unclassed marks, and removeStyle semantics),
+**T4d** (`a.*` object styles: offered only inside a link, apply/toggle re-classes the
+mark and keeps the link, classed-link round-trip, no churn on unclassed links).
 `harness/content-sample.css` carries the Bootstrap-shaped selectors plus a `:where()`
 rule and an `@layer` block — the shapes the old preview path provably could not style.
 

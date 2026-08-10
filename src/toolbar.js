@@ -752,8 +752,14 @@ function renderTable( editor, updaters ) {
  *   (INLINE falls through to `return true` - always applicable)
  *
  * Over the tags we can actually apply that is BLOCK: p,h1..h6,pre,div / OBJECT:
- * ul,ol,li,table / INLINE: span - which is exactly the old `existingOnly` flag,
- * so the partition was already right; it was simply never used to filter.
+ * ul,ol,li,table,a,blockquote,td,th,tr / INLINE: span,small,strong,b,em,i. A tag
+ * with no entry here is dropped from the list entirely, and that was issue #1:
+ * `a` is in CKEditor's OBJECT table, so a stylesSet `{ element: 'a' }` entry
+ * appeared there whenever the caret was inside a link - here it was silently
+ * discarded. `a` is the one OBJECT entry backed by a MARK (presideLink), not a
+ * node; applying/toggling re-classes the mark and never unsets it, since
+ * removing the mark would delete the link itself (CKEditor's removeObjectStyle
+ * likewise stripped the style's attributes and left the element alone).
  */
 const BLOCK = 1, INLINE = 2, OBJECT = 3;   // CKEDITOR.STYLE_BLOCK / _INLINE / _OBJECT
 
@@ -771,6 +777,14 @@ const STYLE_TYPES = {
 	, ol   : { type: OBJECT, node: "orderedList" }
 	, li   : { type: OBJECT, node: "listItem" }
 	, table: { type: OBJECT, node: "table" }
+	// The rest of CKEditor's OBJECT table that this schema can represent. All
+	// four nodes already carry class/style via presideAttributes' BLOCK_TYPES;
+	// `a` is the presideLink MARK, whose class attribute exists for this.
+	, blockquote: { type: OBJECT, node: "blockquote" }
+	, td   : { type: OBJECT, node: "tableCell" }
+	, th   : { type: OBJECT, node: "tableHeader" }
+	, tr   : { type: OBJECT, node: "tableRow" }
+	, a    : { type: OBJECT, mark: "presideLink" }
 	// INLINE. Every one of these is a tag Preside's own default
 	// stylesheetParser_validSelectors allows, and CKEditor lists them
 	// unconditionally (checkApplicable returns true for INLINE), so a Bootstrap-ish
@@ -812,7 +826,9 @@ function styleApplicable( editor, item ) {
 	const d = STYLE_TYPES[ item.tag ];
 	if ( !d ) { return false; }
 	if ( d.type === INLINE ) { return true; }
-	if ( d.type === OBJECT ) { return editor.isActive( d.node ); }
+	// `isActive( name )` answers `path.contains( element )` for a mark-backed
+	// entry (`a`) exactly as it does for a node-backed one: is the caret inside?
+	if ( d.type === OBJECT ) { return editor.isActive( d.mark || d.node ); }
 	if ( editor.isActive( d.node, d.attrs || {} ) ) { return true; }
 	try { return editor.can().setNode( d.node, d.attrs || {} ); } catch ( e ) { return true; }
 }
@@ -900,7 +916,7 @@ export function styleItems( cfg, editor ) {
 
 function applyStyle( editor, item ) {
 	const inline = STYLE_TYPES[ item.tag ];
-	if ( inline && inline.mark ) {
+	if ( inline && inline.mark && inline.type === INLINE ) {
 		// CKEditor's onClick calls removeStyle when the style is already active,
 		// which takes the element AND its class off - so toggling off unsets the
 		// whole mark rather than just clearing the class.
@@ -915,6 +931,17 @@ function applyStyle( editor, item ) {
 
 	const d = STYLE_TYPES[ item.tag ];
 	if ( !d || !styleApplicable( editor, item ) ) { return; }
+
+	// An OBJECT style backed by a MARK (`a` -> presideLink): re-class the mark
+	// the caret is inside, toggling the class off if it is already set - but
+	// NEVER unset the mark, which would delete the link itself. CKEditor's
+	// removeObjectStyle had the same semantics: attributes off, element kept.
+	if ( d.mark ) {
+		const cls = editor.getAttributes( d.mark )[ "class" ];
+		focusEditable( editor ).chain().focus().extendMarkRange( d.mark )
+			.updateAttributes( d.mark, { "class": cls === item.className ? null : item.className } ).run();
+		return;
+	}
 
 	// A BLOCK style names the element it applies, so it converts the block too
 	// (`h2.intro` on a paragraph makes it an h2). An OBJECT style only ever
