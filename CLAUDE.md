@@ -385,9 +385,42 @@ fidelity-critical core stays small and a site ships no code for a feature it
 does not use. `apiVersion` is **1**; there are no compatibility shims, so a
 plugin can check and refuse, and that is the whole negotiation.
 
-The Preside half needs nothing new: declare `dependsOn: ["preside-ext-tiptap"]`,
-register a Sticker bundle with `.dependsOn("tiptap-facade").after("tiptap-facade")`,
-and append your keys to `settings.tiptap.i18nKeys` (above). The JS half is:
+The Preside half needs nothing new — and, importantly, **needs no change to this
+extension either**. Declare `dependsOn: ["preside-ext-tiptap"]` and append your
+strings to `settings.tiptap.i18nKeys` (above). Getting your bundle *onto the
+page* is pure Sticker:
+
+```cfml
+bundle.asset( "tiptap-myaddon" )
+      .dependsOn( "ckeditor" )         // window.PresideTiptap + the plugin registry
+      .dependents( "tiptap-facade" );  // ...and THIS is what includes us at all
+```
+
+**`dependents()` is the reverse of `dependsOn()`.** Sticker's
+`BundleManager._mapDependencies()` rewrites `A.dependents = [B]` into
+`B.dependsOn( A )`, and at render time `Sticker._addIncludeDependencies()` walks
+the `dependsOn` graph of everything that *was* included and pulls those in too.
+`ckEditorJs.cfm` already includes `tiptap-facade`, so naming it as your dependent
+is enough. **Never override that view to add an `include()`** — a view can only
+be overridden once, so the last override wins and silently drops this
+extension's own includes and strings. That is also why the i18n key list is a
+setting.
+
+The one thing it costs: `dependents()` implies `before()`, so **you load before
+the facade, and `PresideTiptap.api` is not populated when your bundle parses**
+(the facade publishes it). That is fine for anything that reaches the helpers
+through `ctx.api` at runtime — which is the normal shape — and it is still well
+before `formFields.js` mounts editors on DOM-ready, the only deadline
+`register()` actually has. A plugin that genuinely needs `var api = T.api` at
+module top cannot use this pattern; nothing in the ecosystem does yet, and the
+fix would be a host seam rather than a Sticker rule.
+
+CSS wants the opposite order, so an add-on stylesheet pairs
+`.dependsOn( "tiptap-css" )` (cascade after ours) with the same
+`.dependents( "tiptap-facade" )` for the pull — Sticker renders each type in its
+own pass, so that cross-type constraint cannot disturb CSS order.
+
+The JS half is:
 
 - **`window.PresideTiptap.plugins`** (`src/plugins.js`) — `register( spec )`,
   `all()`, `get( name )`, plus a lifecycle bus (`on`/`off`/`emit`). It lives in
