@@ -36,7 +36,9 @@ safe.
   a lifecycle bus `on( evt, fn )` / `off` / `emit`.
 - **`PresideTiptap.api`** — the shared helpers, populated by the *facade*
   bundle. **Use these; do not reimplement them.** Each encodes a trap that cost
-  the core extension a release (see "The helpers" below).
+  the core extension a release (see "The helpers" below). Your bundle parses
+  *before* the facade, so **read them off `ctx.api` at runtime**, never as
+  `var api = T.api` at module top.
 
 Also exported for plugin use: `Editor`, `Extension`, `Node`, `Mark`,
 `mergeAttributes`, `Plugin`, `PluginKey`, `Decoration`, `DecorationSet`,
@@ -50,11 +52,16 @@ copies of ProseMirror on one page is a class of bug you do not want to debug.
 ## Registering
 
 Call at your bundle's **parse time**. Your Sticker asset declares
-`.dependsOn("tiptap-facade").after("tiptap-facade")`, so you parse after both
-editor bundles and before `formFields.js` mounts textareas on DOM-ready — the
-only window that affects the editors on the page. Registering later still
-applies to editors created *afterwards* and logs a `console.warn`; a predictable
-half-failure beats a silent one.
+`.dependsOn("ckeditor").dependents("tiptap-facade")` (see the bundle section
+below), so you parse after the **vendor** bundle — which is what defines
+`window.PresideTiptap` and the registry — and well before `formFields.js` mounts
+textareas on DOM-ready, the only window that affects the editors on the page.
+Registering later still applies to editors created *afterwards* and logs a
+`console.warn`; a predictable half-failure beats a silent one.
+
+Note you parse **before the facade**, so `PresideTiptap.api` is not there yet.
+Reach the helpers through `ctx.api` at runtime rather than capturing `T.api` at
+module top.
 
 ```js
 ( function() {
@@ -232,20 +239,62 @@ preside-ext-tiptap-spellcheck/
 ```cfml
 component output=false {
     public void function configure( required any bundle ) {
-        bundle.addAsset( id="tiptap-spellcheck", path="/dist/spellcheck.*.min.js" );
+        bundle.addAsset( id="tiptap-spellcheck"    , path="/dist/spellcheck.*.min.js"  );
+        bundle.addAsset( id="tiptap-spellcheck-css", path="/dist/spellcheck.*.min.css" );
 
-        // AFTER the facade: PresideTiptap.api only exists once the facade has
-        // parsed, and register() must land before formFields.js mounts editors.
         bundle.asset( "tiptap-spellcheck" )
-              .dependsOn( "tiptap-facade" )
-              .after( "tiptap-facade" );
+              .dependsOn( "ckeditor" )         // window.PresideTiptap + the registry
+              .dependents( "tiptap-facade" );  // ...and THIS is what includes us at all
+
+        bundle.asset( "tiptap-spellcheck-css" )
+              .dependsOn( "tiptap-css" )       // our cascade must follow the host's
+              .dependents( "tiptap-facade" );  // pull only - cross-type, no CSS reorder
     }
 }
 ```
 
-The asset still has to be **included** on the page — Sticker only emits what is
-explicitly included. Load **`sticker-assets`** for how, and for why the dist
-directory must be real files.
+### `dependents()` is what gets you onto the page
+
+Sticker only renders an asset something explicitly **includes**, and the editor's
+includes live in the host's `ckEditorJs.cfm`. **Never override that view to add
+your own `include()`** — a view can only be overridden once, so the last override
+wins and silently drops the host's includes *and* its i18n strings. (That is the
+same reason the key list is a setting.)
+
+You do not need to. `dependents()` is the documented reverse of `dependsOn()`:
+
+- `BundleManager._mapDependencies()` rewrites `A.dependents = [B]` into
+  `B.dependsOn( A )` when bundles are assembled;
+- at render time `Sticker._addIncludeDependencies()` walks the `dependsOn` graph
+  of everything that *was* included and pulls those in too.
+
+The host already includes `tiptap-facade`, so naming it as your dependent is
+enough. **No host change, no setting, and it works against a host release that
+knows nothing about your extension.**
+
+### What it costs: you load BEFORE the facade
+
+`dependents()` implies `before()` — a thing you depend on loads first — so the
+pull and the order are one decision, and Sticker's transitive walk only follows
+`dependsOn`. Anything auto-pulled therefore lands *before* its puller. There is
+no way to be pulled in and still land after.
+
+Consequences, both manageable:
+
+- **`PresideTiptap.api` is NOT populated when your bundle parses** — the facade
+  publishes it. Reach the helpers through `ctx.api` at runtime (the normal shape)
+  and this never comes up; a module-top `var api = T.api` gets `undefined`.
+- You still need `dependsOn( "ckeditor" )`, because the **vendor** bundle is what
+  defines `window.PresideTiptap` and the plugin registry. Landing between the
+  vendor bundle and the facade is comfortably before `formFields.js` mounts any
+  editor on DOM-ready, which is the only deadline `register()` actually has.
+
+CSS wants the opposite order, hence the explicit `dependsOn( "tiptap-css" )`
+above: Sticker renders each type in its own pass, so a JS-asset `dependents`
+constraint cannot disturb where your stylesheet lands.
+
+Load **`sticker-assets`** for the rest, and for why the dist directory must be
+real files.
 
 **`src/index.js`**
 
@@ -254,7 +303,6 @@ directory must be real files.
     "use strict";
     var T = window.PresideTiptap;
     if ( !T || !T.plugins || T.apiVersion !== 1 ) { return; }
-    var api = T.api;
 
     var ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"'
         + ' stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
@@ -290,8 +338,10 @@ directory must be real files.
                   icon  : ICON
                 , label : "Sp"
                 , run   : function( editor, cfg ) {
-                    // focusEditable FIRST - see the helpers table.
-                    api.focusEditable( editor );
+                    // T.api is only there at RUNTIME - this bundle parsed before
+                    // the facade published it. focusEditable FIRST, see the
+                    // helpers table.
+                    T.api.focusEditable( editor );
                     /* …run the check, dispatch a decoration transaction… */
                     return true;
                   }

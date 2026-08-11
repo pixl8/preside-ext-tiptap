@@ -202,7 +202,11 @@
 		// What preside-ext-ready-membership-cms-basics does server-side, as it
 		// reaches the client (ckEditorJs.cfm includeData -> cfrequest).
 		window.cfrequest.ckeditorDefaultConfigs.stylesSet = [
-			{ name: "table.compact", element: "table", attributes: { "class": "table table-compact" } }
+			{ name: "table.compact", element: "table", attributes: { "class": "table table-compact" } },
+			// Issue #1: an `element: 'a'` entry is an OBJECT style in CKEditor
+			// (its L table lists `a`), offered whenever the caret is inside a
+			// link. It used to be dropped here because STYLE_TYPES had no `a`.
+			{ name: "Button link", element: "a", attributes: { "class": "button" } }
 		];
 	</script>
 	<script src="/dist/tiptap.bundle.min.js"></script>
@@ -2377,6 +2381,68 @@
 					clickStyle( "strong.text-danger" );
 					check( "T4b toggling it off removes the <strong> as well as the class (removeStyle)",
 						tip.getHTML() === '<p><small class="text-muted">hello</small> world</p>', tip.getHTML() );
+
+					tip.commands.setContent( orig );
+				} )();
+
+				// ---- T4d: OBJECT styles on links (issue #1) -------------------------
+				// A stylesSet `{ element: 'a' }` entry is an OBJECT style in CKEditor
+				// (`a` is in its L table), listed exactly when the element path
+				// contains an <a>. It is backed by the presideLink MARK here, so
+				// toggling re-classes the mark and never unsets it - removing the
+				// mark would delete the link itself.
+				( function() {
+					var tip  = CKEDITOR.instances.t3._t;
+					var orig = tip.getHTML();
+					var $tr  = toolbarOf( "t3" ).find( '.tiptap-dropdown-trigger[data-cmd="Styles"]' );
+
+					function menuLabels() {
+						$tr.trigger( "click" );
+						var host = document.querySelector( ".tiptap-combo-panel.is-open" );
+						var fd   = host && host.querySelector( "iframe" ).contentDocument;
+						var out  = fd ? [].slice.call( fd.querySelectorAll( ".tiptap-fmt-preview" ) )
+							.map( function( e ) { return e.textContent; } ) : [];
+						if ( host ) { $tr.trigger( "click" ); }
+						return out;
+					}
+					function clickStyle( label ) {
+						$tr.trigger( "click" );
+						var fd = document.querySelector( ".tiptap-combo-panel.is-open iframe" ).contentDocument;
+						var it = [].slice.call( fd.querySelectorAll( ".tiptap-fmt-preview" ) ).filter( function( e ) { return e.textContent === label; } )[ 0 ];
+						if ( !it ) { $tr.trigger( "click" ); return false; }
+						it.dispatchEvent( new fd.defaultView.MouseEvent( "mousedown", { bubbles: true, cancelable: true } ) );
+						return true;
+					}
+
+					tip.commands.setContent( '<p>go <a href="https://example.com/x">somewhere</a> now</p>' );
+					tip.commands.focus();
+					tip.commands.setTextSelection( 2 );   // in "go ", outside the link
+					check( "T4d a.button is NOT offered outside a link (OBJECT applicability)",
+						menuLabels().indexOf( "Button link" ) === -1 );
+
+					tip.commands.focus();
+					tip.commands.setTextSelection( 7 );   // inside "somewhere"
+					check( "T4d a.button IS offered with the caret inside a link, under its authored name",
+						menuLabels().indexOf( "Button link" ) > -1 );
+
+					clickStyle( "Button link" );
+					check( "T4d applying it re-classes the link (class first, as CKEditor's sorted output stored it)",
+						tip.getHTML() === '<p>go <a class="button" href="https://example.com/x">somewhere</a> now</p>', tip.getHTML() );
+
+					tip.commands.focus();
+					tip.commands.setTextSelection( 7 );
+					clickStyle( "Button link" );
+					check( "T4d toggling it off removes the class but KEEPS the link",
+						tip.getHTML() === '<p>go <a href="https://example.com/x">somewhere</a> now</p>', tip.getHTML() );
+
+					// The round-trip half of the issue: a classed link in legacy
+					// CKEditor-authored content used to lose its class on save
+					// (ProseMirror drops undeclared attributes).
+					function roundTrips( html ) { tip.commands.setContent( html ); return tip.getHTML() === html; }
+					check( "T4d a legacy <a class href> round-trips byte-identically",
+						roundTrips( '<p><a class="button" href="https://example.com/">x</a></p>' ), tip.getHTML() );
+					check( "T4d an UNCLASSED link is byte-identical (no churn)",
+						roundTrips( '<p><a href="https://example.com/">x</a></p>' ), tip.getHTML() );
 
 					tip.commands.setContent( orig );
 				} )();

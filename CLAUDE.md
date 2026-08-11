@@ -385,9 +385,42 @@ fidelity-critical core stays small and a site ships no code for a feature it
 does not use. `apiVersion` is **1**; there are no compatibility shims, so a
 plugin can check and refuse, and that is the whole negotiation.
 
-The Preside half needs nothing new: declare `dependsOn: ["preside-ext-tiptap"]`,
-register a Sticker bundle with `.dependsOn("tiptap-facade").after("tiptap-facade")`,
-and append your keys to `settings.tiptap.i18nKeys` (above). The JS half is:
+The Preside half needs nothing new — and, importantly, **needs no change to this
+extension either**. Declare `dependsOn: ["preside-ext-tiptap"]` and append your
+strings to `settings.tiptap.i18nKeys` (above). Getting your bundle *onto the
+page* is pure Sticker:
+
+```cfml
+bundle.asset( "tiptap-myaddon" )
+      .dependsOn( "ckeditor" )         // window.PresideTiptap + the plugin registry
+      .dependents( "tiptap-facade" );  // ...and THIS is what includes us at all
+```
+
+**`dependents()` is the reverse of `dependsOn()`.** Sticker's
+`BundleManager._mapDependencies()` rewrites `A.dependents = [B]` into
+`B.dependsOn( A )`, and at render time `Sticker._addIncludeDependencies()` walks
+the `dependsOn` graph of everything that *was* included and pulls those in too.
+`ckEditorJs.cfm` already includes `tiptap-facade`, so naming it as your dependent
+is enough. **Never override that view to add an `include()`** — a view can only
+be overridden once, so the last override wins and silently drops this
+extension's own includes and strings. That is also why the i18n key list is a
+setting.
+
+The one thing it costs: `dependents()` implies `before()`, so **you load before
+the facade, and `PresideTiptap.api` is not populated when your bundle parses**
+(the facade publishes it). That is fine for anything that reaches the helpers
+through `ctx.api` at runtime — which is the normal shape — and it is still well
+before `formFields.js` mounts editors on DOM-ready, the only deadline
+`register()` actually has. A plugin that genuinely needs `var api = T.api` at
+module top cannot use this pattern; nothing in the ecosystem does yet, and the
+fix would be a host seam rather than a Sticker rule.
+
+CSS wants the opposite order, so an add-on stylesheet pairs
+`.dependsOn( "tiptap-css" )` (cascade after ours) with the same
+`.dependents( "tiptap-facade" )` for the pull — Sticker renders each type in its
+own pass, so that cross-type constraint cannot disturb CSS order.
+
+The JS half is:
 
 - **`window.PresideTiptap.plugins`** (`src/plugins.js`) — `register( spec )`,
   `all()`, `get( name )`, plus a lifecycle bus (`on`/`off`/`emit`). It lives in
@@ -1027,9 +1060,21 @@ from two element tables in the `CKEDITOR.style` constructor
 
 | type | test | our tags |
 |---|---|---|
-| OBJECT | `elementPath.contains( element )` | ul, ol, li, table |
+| OBJECT | `elementPath.contains( element )` | ul, ol, li, table, blockquote, td, th, tr, a |
 | BLOCK  | `elementPath.blockLimit.getDtd()[ element ]` | p, h1–h6, pre, div |
 | INLINE | unconditionally `true` | span, small, strong, b, em, i |
+
+- **`a` is the one OBJECT entry backed by a MARK** (`presideLink`), not a node —
+  CKEditor's `L` table lists `a`, so a stylesSet `{ element: 'a' }` entry (issue
+  #1's "Button link") is offered exactly when the caret is inside a link.
+  Applying/toggling **re-classes the mark and never unsets it** (CKEditor's
+  `removeObjectStyle` likewise stripped the style's attributes and kept the
+  element) — unsetting would delete the link itself. This is also why
+  `presideLink` carries `class`/`style` attributes at all, which independently
+  stops a class on a legacy CKEditor-authored link being dropped on save;
+  `class` is declared FIRST so the common stored shape
+  `<a class="x" href="…">` (CKEditor's writer sorted attributes) round-trips
+  byte-identically. T4d covers both halves.
 
 `onOpen` then `hideItem`s every inapplicable entry, `hideGroup`s a type group whose
 count is 0, and **`refresh` sets the whole combo `TRISTATE_DISABLED` when nothing
@@ -1134,7 +1179,9 @@ frame with the sheet linked unmodified, and no content CSS in the admin document
 the `@layer` leak regression), **T3b** (both combos as their own blocks, the dropped
 separator, the 6px gap), **T3c** (disabled in a paragraph on an object-only sheet,
 enabled inside a table), **T4b** (the inline tags: appearance, round-trip per tag, the
-`<b>`→`<strong>` collapse, no churn on unclassed marks, and removeStyle semantics).
+`<b>`→`<strong>` collapse, no churn on unclassed marks, and removeStyle semantics),
+**T4d** (`a.*` object styles: offered only inside a link, apply/toggle re-classes the
+mark and keeps the link, classed-link round-trip, no churn on unclassed links).
 `harness/content-sample.css` carries the Bootstrap-shaped selectors plus a `:where()`
 rule and an `@layer` block — the shapes the old preview path provably could not style.
 
