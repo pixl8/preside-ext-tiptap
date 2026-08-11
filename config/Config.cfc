@@ -15,6 +15,8 @@ component {
 	public void function configure( required struct config ) {
 		var settings = arguments.config.settings ?: {};
 
+		settings.features.tiptapEditor = { enabled=true };
+
 		// Which rich-editor engine is active (kept explicit for rollout/rollback; unread by core).
 		settings.richeditorEngine = "tiptap";
 
